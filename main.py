@@ -1,12 +1,14 @@
 """
-Strava Training Log Printer.
+Strava Training Log Fetcher & Google Sheets Sync.
 
 Connects to the Strava API and prints recent activities
-with key metrics including heart rate, pace, calories, and more.
+with key metrics. Optionally syncs to a Google Sheet.
 """
 
+import argparse
 import time
-from datetime import datetime
+from collections import defaultdict
+from datetime import datetime, date
 
 import requests
 
@@ -28,7 +30,7 @@ def fetch_activities(access_token: str, per_page: int = 30) -> list[dict]:
 
 
 def fetch_activity_detail(access_token: str, activity_id: int) -> dict:
-    """Fetch detailed info for a single activity (includes description, calories, temp)."""
+    """Fetch detailed info for a single activity."""
     response = requests.get(
         f"{ACTIVITY_DETAIL_URL}/{activity_id}",
         headers={"Authorization": f"Bearer {access_token}"},
@@ -52,15 +54,24 @@ def format_pace(speed_mps: float, sport_type: str) -> str:
     if speed_mps <= 0:
         return "—"
     if "Run" in sport_type or "Walk" in sport_type or "Hike" in sport_type:
-        # Pace in min/km
         pace_sec_per_km = 1000 / speed_mps
         mins = int(pace_sec_per_km // 60)
         secs = int(pace_sec_per_km % 60)
         return f"{mins}:{secs:02d} /km"
     else:
-        # Speed in km/h
         kmh = speed_mps * 3.6
         return f"{kmh:.1f} km/h"
+
+
+def group_activities_by_date(activities: list[dict]) -> dict[date, list[dict]]:
+    """Group activities by their local date."""
+    grouped = defaultdict(list)
+    for activity in activities:
+        start_date = datetime.fromisoformat(
+            activity["start_date_local"].replace("Z", "+00:00")
+        )
+        grouped[start_date.date()].append(activity)
+    return dict(grouped)
 
 
 def print_activities(activities: list[dict], details: dict[int, dict]) -> None:
@@ -73,17 +84,15 @@ def print_activities(activities: list[dict], details: dict[int, dict]) -> None:
     print(f"{'STRAVA TRAINING LOG':^100}")
     print(f"{'='*100}")
 
-    for i, activity in enumerate(activities):
+    for activity in activities:
         act_id = activity["id"]
         detail = details.get(act_id, {})
 
-        # Parse date
         start_date = datetime.fromisoformat(
             activity["start_date_local"].replace("Z", "+00:00")
         )
         date_str = start_date.strftime("%a %Y-%m-%d %H:%M")
 
-        # Basic metrics
         name = activity.get("name", "Untitled")
         sport_type = activity.get("sport_type", activity.get("type", "Unknown"))
         distance_km = activity.get("distance", 0) / 1000
@@ -92,23 +101,19 @@ def print_activities(activities: list[dict], details: dict[int, dict]) -> None:
         avg_speed = activity.get("average_speed", 0)
         pace = format_pace(avg_speed, sport_type)
 
-        # Heart rate (from summary endpoint)
         has_hr = activity.get("has_heartrate", False)
         avg_hr = activity.get("average_heartrate")
         max_hr = activity.get("max_heartrate")
 
-        # From detailed endpoint
         calories = detail.get("calories", None)
         avg_temp = detail.get("average_temp", None)
         description = detail.get("description", "")
         suffer_score = detail.get("suffer_score", None)
 
-        # Print activity header
         print(f"\n  📌 {name}")
         print(f"     {date_str}  •  {sport_type}")
         print(f"     {'─'*60}")
 
-        # Row 1: Distance, Duration, Pace, Elevation
         metrics = []
         if distance_km > 0:
             metrics.append(f"📏 {distance_km:.2f} km")
@@ -119,14 +124,12 @@ def print_activities(activities: list[dict], details: dict[int, dict]) -> None:
             metrics.append(f"⛰️  {elevation:.0f}m gain")
         print(f"     {' │ '.join(metrics)}")
 
-        # Row 2: Heart rate
         if has_hr and avg_hr:
             hr_str = f"❤️  Avg HR: {avg_hr:.0f} bpm │ Max HR: {max_hr:.0f} bpm"
             if suffer_score:
                 hr_str += f" │ Suffer Score: {suffer_score}"
             print(f"     {hr_str}")
 
-        # Row 3: Calories, Temperature
         extras = []
         if calories:
             extras.append(f"🔥 {calories:.0f} cal")
@@ -135,7 +138,6 @@ def print_activities(activities: list[dict], details: dict[int, dict]) -> None:
         if extras:
             print(f"     {' │ '.join(extras)}")
 
-        # Row 4: Description
         if description and description.strip():
             desc_preview = description.strip().replace("\n", " ")
             if len(desc_preview) > 80:
@@ -148,16 +150,30 @@ def print_activities(activities: list[dict], details: dict[int, dict]) -> None:
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Strava Training Log Fetcher")
+    parser.add_argument(
+        "--sheet",
+        action="store_true",
+        help="Sync activities to Google Sheet",
+    )
+    parser.add_argument(
+        "--count",
+        type=int,
+        default=30,
+        help="Number of activities to fetch (default: 30)",
+    )
+    args = parser.parse_args()
+
     print("🏃 Strava Training Log Fetcher\n")
 
-    # Step 1: Authenticate
+    # Step 1: Authenticate with Strava
     access_token = get_access_token()
 
     # Step 2: Fetch summary activities
-    print("\n📥 Fetching recent activities from Strava...")
-    activities = fetch_activities(access_token)
+    print(f"\n📥 Fetching last {args.count} activities from Strava...")
+    activities = fetch_activities(access_token, per_page=args.count)
 
-    # Step 3: Fetch detailed info for each activity (for calories, temp, description)
+    # Step 3: Fetch detailed info for each activity
     print(f"📋 Fetching details for {len(activities)} activities", end="", flush=True)
     details = {}
     for activity in activities:
@@ -165,13 +181,21 @@ def main():
         try:
             details[act_id] = fetch_activity_detail(access_token, act_id)
             print(".", end="", flush=True)
-            time.sleep(0.1)  # Be nice to rate limits (200 req / 15 min)
+            time.sleep(0.1)
         except Exception as e:
             print(f"\n  ⚠️  Could not fetch details for {act_id}: {e}")
     print(" done!")
 
     # Step 4: Print them
     print_activities(activities, details)
+
+    # Step 5: Optionally sync to Google Sheet
+    if args.sheet:
+        from google_sheets import write_to_sheet
+
+        print("\n📊 Syncing to Google Sheet...")
+        activities_by_date = group_activities_by_date(activities)
+        write_to_sheet(activities_by_date, details)
 
 
 if __name__ == "__main__":

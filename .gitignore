@@ -4,8 +4,12 @@
 # Environment variables (contains secrets)
 .env
 
-# Cached Strava OAuth tokens (contains secrets)
+# Cached OAuth tokens (contain secrets)
 token.json
+gsheets_token.json
+
+# Google OAuth credentials (contains secrets)
+credentials.json
 
 # Python
 __pycache__/
