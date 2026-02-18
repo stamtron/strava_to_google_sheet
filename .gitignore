@@ -1,0 +1,13 @@
+# Virtual environment
+.venv/
+
+# Environment variables (contains secrets)
+.env
+
+# Cached Strava OAuth tokens (contains secrets)
+token.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
