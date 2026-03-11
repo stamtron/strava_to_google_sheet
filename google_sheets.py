@@ -11,6 +11,7 @@ import re
 from datetime import date, datetime, timedelta
 
 from dotenv import load_dotenv
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -68,8 +69,13 @@ def get_sheets_service():
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             print("🔄 Refreshing Google Sheets token...")
-            creds.refresh(Request())
-        else:
+            try:
+                creds.refresh(Request())
+            except RefreshError:
+                print("⚠️ Refresh token expired or revoked. Forcing re-authentication...")
+                creds = None
+
+        if not creds or not creds.valid:
             if not os.path.exists(CREDENTIALS_FILE):
                 raise FileNotFoundError(
                     f"Missing {CREDENTIALS_FILE}. Download it from Google Cloud Console."

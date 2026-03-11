@@ -163,8 +163,13 @@ def get_access_token() -> str:
             print("✅ Using cached access token (still valid)")
             return token_data["access_token"]
         else:
-            token_data = _refresh_token(token_data["refresh_token"])
-            return token_data["access_token"]
+            try:
+                token_data = _refresh_token(token_data["refresh_token"])
+                return token_data["access_token"]
+            except requests.exceptions.RequestException:
+                print("⚠️ Strava refresh token expired or invalid. Forcing re-authorization...")
+                token_data = _authorize()
+                return token_data["access_token"]
     else:
         token_data = _authorize()
         return token_data["access_token"]
