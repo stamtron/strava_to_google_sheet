@@ -96,16 +96,110 @@ def _get_week_start(target_date: date) -> date:
     return target_date - timedelta(days=target_date.weekday())
 
 
-def _calculate_row_for_date(target_date: date) -> int:
+def parse_date_range(text: str) -> tuple[date, date] | None:
+    """Parse a date range string from the coaching sheet (e.g. '13-19/7/\'26')."""
+    if not text:
+        return None
+    # Clean up text: take only the first line, strip whitespace
+    first_line = text.split('\n')[0].strip()
+    # Normalize spaces
+    first_line = first_line.replace(' ', '')
+    # Normalize dashes (hyphen, en-dash, em-dash)
+    first_line = first_line.replace('–', '-').replace('—', '-')
+    # Normalize quotes
+    first_line = first_line.replace('’', "'").replace('‘', "'").replace('`', "'")
+    
+    # Try to match: Day-Day/Month/'Year
+    # e.g., 1-7/9/'25 or 10-16/3/'25
+    m1 = re.match(r"^(\d+)-(\d+)/(\d+)/'(\d+)$", first_line)
+    if m1:
+        start_day = int(m1.group(1))
+        end_day = int(m1.group(2))
+        month = int(m1.group(3))
+        year = 2000 + int(m1.group(4))
+        if start_day > end_day:
+            start_month = month - 1 if month > 1 else 12
+            start_year = year if month > 1 else year - 1
+        else:
+            start_month = month
+            start_year = year
+        try:
+            return date(start_year, start_month, start_day), date(year, month, end_day)
+        except ValueError:
+            return None
+        
+    # Try to match: Day/Month-Day/Month/'Year
+    # e.g., 29/9-5/10/'25 or 31/3-6/4/'25
+    m2 = re.match(r"^(\d+)/(\d+)-(\d+)/(\d+)/'(\d+)$", first_line)
+    if m2:
+        start_day = int(m2.group(1))
+        start_month = int(m2.group(2))
+        end_day = int(m2.group(3))
+        end_month = int(m2.group(4))
+        year = 2000 + int(m2.group(5))
+        start_year = year if start_month <= end_month else year - 1
+        try:
+            return date(start_year, start_month, start_day), date(year, end_month, end_day)
+        except ValueError:
+            return None
+        
+    # Try to match: Day/Month/'Year-Day/Month/'Year
+    # e.g., 29/12/'25-4/1/'26
+    m3 = re.match(r"^(\d+)/(\d+)/'(\d+)-(\d+)/(\d+)/'(\d+)$", first_line)
+    if m3:
+        start_day = int(m3.group(1))
+        start_month = int(m3.group(2))
+        start_year = 2000 + int(m3.group(3))
+        end_day = int(m3.group(4))
+        end_month = int(m3.group(5))
+        end_year = 2000 + int(m3.group(6))
+        try:
+            return date(start_year, start_month, start_day), date(end_year, end_month, end_day)
+        except ValueError:
+            return None
+
+    return None
+
+
+def build_row_mapping(service) -> dict[date, int]:
+    """Fetch Column A from Google Sheet and map week start dates (Mondays) to row numbers."""
+    result = service.spreadsheets().values().get(
+        spreadsheetId=SPREADSHEET_ID,
+        range=f"'{SHEET_NAME}'!A:A"
+    ).execute()
+    values = result.get('values', [])
+    
+    mapping = {}
+    for i, val_list in enumerate(values):
+        row_num = i + 1
+        val = val_list[0] if val_list else ""
+        parsed = parse_date_range(val)
+        if parsed:
+            start_date, end_date = parsed
+            # Normalize to the Monday of that week
+            monday = start_date - timedelta(days=start_date.weekday())
+            mapping[monday] = row_num
+    return mapping
+
+
+def _calculate_row_for_date(target_date: date, mapping: dict[date, int] = None) -> int:
     """
     Calculate the sheet row for a given date.
-
-    The sheet has a 14-row block per week starting at row 13.
-    Week 1 starts on 2025-09-01 (Monday).
+    
+    Uses dynamic mapping from Column A if available, otherwise falls back to
+    the mathematical calculation based on FIRST_WEEK_START.
     """
     week_start = _get_week_start(target_date)
-    first_week_start = _get_week_start(FIRST_WEEK_START)
 
+    if mapping is not None:
+        row = mapping.get(week_start)
+        if row is not None:
+            return row
+        else:
+            print(f"  ⚠️  Week starting {week_start} not found in dynamic mapping. Falling back to math.")
+
+    # Fallback mathematical calculation
+    first_week_start = _get_week_start(FIRST_WEEK_START)
     weeks_diff = (week_start - first_week_start).days // 7
     row = FIRST_WEEK_ROW + (weeks_diff * ROWS_PER_WEEK)
     return row
@@ -219,9 +313,15 @@ def write_to_sheet(
     sheet = service.spreadsheets()
 
     # Build list of cells we need to write to
+    try:
+        mapping = build_row_mapping(service)
+    except Exception as e:
+        print(f"  ⚠️  Could not load dynamic row mapping: {e}. Using mathematical mapping fallback.")
+        mapping = None
+
     cell_info = []
     for target_date, day_activities in sorted(activities_by_date.items()):
-        row = _calculate_row_for_date(target_date)
+        row = _calculate_row_for_date(target_date, mapping)
         col = _day_to_column(target_date)
         cell_ref = f"'{SHEET_NAME}'!{col}{row}"
         cell_info.append((target_date, day_activities, row, col, cell_ref))
@@ -292,7 +392,13 @@ def write_to_sheet(
 
 def verify_cell_mapping(target_date: date) -> None:
     """Debug helper: print which cell a date maps to."""
-    row = _calculate_row_for_date(target_date)
+    mapping = None
+    try:
+        service = get_sheets_service()
+        mapping = build_row_mapping(service)
+    except Exception:
+        pass
+    row = _calculate_row_for_date(target_date, mapping)
     col = _day_to_column(target_date)
     week_start = _get_week_start(target_date)
     print(
