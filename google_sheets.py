@@ -234,6 +234,55 @@ def format_duration(seconds: int) -> str:
     return f"{minutes}λ {secs}δ"
 
 
+def format_duration_short(seconds: int) -> str:
+    """Convert seconds to a short duration string (hours/minutes, no seconds)."""
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    if hours > 0:
+        return f"{hours}ω {minutes}λ"
+    return f"{minutes}λ"
+
+
+def calculate_weekly_totals(activities: list[dict]) -> tuple[float, int, float, int, float, float, int, int]:
+    """
+    Calculate weekly totals for Running, Cycling, Swimming, and Strength activities.
+    Returns: (run_dist, run_time, bike_dist, bike_time, bike_elev, swim_dist_m, swim_time, strength_time)
+    """
+    run_dist = 0.0
+    run_time = 0
+    bike_dist = 0.0
+    bike_time = 0
+    bike_elev = 0.0
+    swim_dist_m = 0.0
+    swim_time = 0
+    strength_time = 0
+
+    for activity in activities:
+        sport_type = activity.get("sport_type", activity.get("type", "Unknown"))
+        dist = activity.get("distance", 0)
+        moving_time = int(activity.get("moving_time", 0))
+        elev = activity.get("total_elevation_gain", 0)
+
+        if sport_type in ["Run", "TrailRun"]:
+            run_dist += dist / 1000.0
+            run_time += moving_time
+        elif sport_type in ["Ride", "VirtualRide"]:
+            d_km = dist / 1000.0
+            if activity.get("trainer", False) and d_km < 0.1:
+                d_km = (moving_time / 3600.0) * 21.0
+            bike_dist += d_km
+            bike_time += moving_time
+            bike_elev += elev
+        elif sport_type == "Swim":
+            # Swimming distance is divided by 2
+            swim_dist_m += (dist / 2.0)
+            swim_time += moving_time
+        elif sport_type == "WeightTraining":
+            strength_time += moving_time
+
+    return run_dist, run_time, bike_dist, bike_time, bike_elev, swim_dist_m, swim_time, strength_time
+
+
 def format_activities_for_cell(activities: list[dict], details: dict) -> str:
     """
     Format all activities for a single day into one multi-line text block.
@@ -248,9 +297,19 @@ def format_activities_for_cell(activities: list[dict], details: dict) -> str:
         sport_type = activity.get("sport_type", activity.get("type", "Unknown"))
         sport_greek = SPORT_TYPE_GREEK.get(sport_type, sport_type)
         name = activity.get("name", "")
-        distance_km = activity.get("distance", 0) / 1000
         moving_time = int(activity.get("moving_time", 0))
+        
+        distance_km = activity.get("distance", 0) / 1000.0
         avg_speed = activity.get("average_speed", 0)
+
+        # Apply adjustments
+        if sport_type == "Swim":
+            distance_km = distance_km / 2.0
+            avg_speed = avg_speed / 2.0
+        elif sport_type in ["Ride", "VirtualRide"]:
+            if activity.get("trainer", False) and distance_km < 0.1:
+                distance_km = (moving_time / 3600.0) * 21.0
+                avg_speed = 21.0 / 3.6
         has_hr = activity.get("has_heartrate", False)
         avg_hr = activity.get("average_heartrate")
         max_hr = activity.get("max_heartrate")
@@ -307,8 +366,10 @@ def write_to_sheet(
     Write training data to the Google Sheet.
 
     Reads existing cell content first and APPENDS the Strava data below it,
-    preserving any coach instructions already in the cell.
+    preserving any coach instructions already in the cell. Also calculates
+    weekly totals and updates Column A.
     """
+    from collections import defaultdict
     service = get_sheets_service()
     sheet = service.spreadsheets()
 
@@ -320,41 +381,55 @@ def write_to_sheet(
         mapping = None
 
     cell_info = []
+    activities_by_row = defaultdict(list)
+
     for target_date, day_activities in sorted(activities_by_date.items()):
         row = _calculate_row_for_date(target_date, mapping)
         col = _day_to_column(target_date)
         cell_ref = f"'{SHEET_NAME}'!{col}{row}"
         cell_info.append((target_date, day_activities, row, col, cell_ref))
+        activities_by_row[row].extend(day_activities)
 
     if not cell_info:
         print("  ℹ️  No activities to write.")
         return
 
-    # Batch-read existing content from all target cells
+    # Batch-read existing content from all target cells (daily columns B-H and weekly column A)
     ranges = [info[4] for info in cell_info]
+    unique_rows = sorted(list(activities_by_row.keys()))
+    for r in unique_rows:
+        ranges.append(f"'{SHEET_NAME}'!A{r}")
+
     existing_result = (
         sheet.values()
         .batchGet(spreadsheetId=SPREADSHEET_ID, ranges=ranges)
         .execute()
     )
+
     existing_values = {}
     for vr in existing_result.get("valueRanges", []):
         range_key = vr.get("range", "")
         values = vr.get("values", [[]])
         existing_values[range_key] = values[0][0] if values and values[0] else ""
 
+    def get_existing_value(col_letter: str, row_num: int) -> str:
+        cell_coord = f"{col_letter}{row_num}"
+        for key, val in existing_values.items():
+            parts = key.split('!')
+            if len(parts) > 1:
+                coord_part = parts[1].replace('$', '')
+                if cell_coord in coord_part:
+                    return val
+        return ""
+
     # Build updates: append Strava data below existing content
     SEPARATOR = "\n\n── Strava Data ──\n"
     updates = []
+
+    # Update daily cells (B-H)
     for target_date, day_activities, row, col, cell_ref in cell_info:
         formatted = format_activities_for_cell(day_activities, details)
-
-        # Find existing content (range key format may differ slightly)
-        existing = ""
-        for key, val in existing_values.items():
-            if f"{col}{row}" in key:
-                existing = val
-                break
+        existing = get_existing_value(col, row)
 
         if existing and existing.strip():
             # Check if Strava data was already appended (avoid duplicates)
@@ -379,6 +454,68 @@ def write_to_sheet(
             f"  {status} {target_date.strftime('%a %Y-%m-%d')} → cell {col}{row} "
             f"({len(day_activities)} activities)"
         )
+
+    # Update Column A weekly totals
+    for row in unique_rows:
+        existing_a = get_existing_value("A", row)
+        if not existing_a or not existing_a.strip():
+            continue
+
+        # Compute weekly totals from all activities on this row (week)
+        row_activities = activities_by_row[row]
+        run_dist, run_time, bike_dist, bike_time, bike_elev, swim_dist_m, swim_time, strength_time = calculate_weekly_totals(row_activities)
+
+        # Format strings
+        running_str = f" {run_dist:.2f} χλμ / {format_duration_short(run_time)}" if run_time > 0 else " 0.00 χλμ / 0λ"
+        cycling_str = f" {bike_dist:.2f} χλμ / {format_duration_short(bike_time)}" if bike_time > 0 else " 0.00 χλμ / 0λ"
+        if bike_time > 0 and bike_elev > 0:
+            cycling_str += f" / {bike_elev:.0f}μ"
+        swimming_str = f" {swim_dist_m:.0f}μ / {format_duration_short(swim_time)}" if swim_time > 0 else " 0μ / 0λ"
+        strength_str = f" {format_duration_short(strength_time)}" if strength_time > 0 else " 0λ"
+
+        # Overall training time (sum of all activities in that week)
+        total_time = sum(int(activity.get("moving_time", 0)) for activity in row_activities)
+        total_str = f" {format_duration_short(total_time)}"
+
+        # Perform replacements for targets in Column A
+        new_a = existing_a
+        new_a = re.sub(r"^(\s*Τρέξιμο\s*:).*$", rf"\1{running_str}", new_a, flags=re.M)
+        new_a = re.sub(r"^(\s*Ποδηλασία\s*:).*$", rf"\1{cycling_str}", new_a, flags=re.M)
+        new_a = re.sub(r"^(\s*Κολύμβηση\s*:).*$", rf"\1{swimming_str}", new_a, flags=re.M)
+        new_a = re.sub(r"^(\s*Κολύμπι\s*:).*$", rf"\1{swimming_str}", new_a, flags=re.M)
+
+        # Insert / Update Strength Training (Ενδυνάμωση)
+        if "Ενδυνάμωση" in new_a:
+            new_a = re.sub(r"^(\s*Ενδυνάμωση\s*:).*$", rf"\1{strength_str}", new_a, flags=re.M)
+        else:
+            if "Κολύμβηση" in new_a:
+                new_a = re.sub(r"^(\s*Κολύμβηση\s*:.*)$", rf"\1\nΕνδυνάμωση :{strength_str}", new_a, flags=re.M)
+            elif "Κολύμπι" in new_a:
+                new_a = re.sub(r"^(\s*Κολύμπι\s*:.*)$", rf"\1\nΕνδυνάμωση :{strength_str}", new_a, flags=re.M)
+            elif "Αίσθηση κούρασης" in new_a:
+                new_a = re.sub(r"^(\s*Αίσθηση κούρασης.*)$", rf"Ενδυνάμωση :{strength_str}\n\1", new_a, flags=re.M)
+
+        # Insert / Update Total Training Hours (Συνολικές ώρες προπόνησης)
+        if "Συνολικές ώρες προπόνησης" in new_a:
+            new_a = re.sub(r"^(\s*Συνολικές ώρες προπόνησης\s*:).*$", rf"\1{total_str}", new_a, flags=re.M)
+        else:
+            if "Ενδυνάμωση" in new_a:
+                new_a = re.sub(r"^(\s*Ενδυνάμωση\s*:.*)$", rf"\1\nΣυνολικές ώρες προπόνησης :{total_str}", new_a, flags=re.M)
+            elif "Κολύμβηση" in new_a:
+                new_a = re.sub(r"^(\s*Κολύμβηση\s*:.*)$", rf"\1\nΣυνολικές ώρες προπόνησης :{total_str}", new_a, flags=re.M)
+            elif "Κολύμπι" in new_a:
+                new_a = re.sub(r"^(\s*Κολύμπι\s*:.*)$", rf"\1\nΣυνολικές ώρες προπόνησης :{total_str}", new_a, flags=re.M)
+            elif "Αίσθηση κούρασης" in new_a:
+                new_a = re.sub(r"^(\s*Αίσθηση κούρασης.*)$", rf"Συνολικές ώρες προπόνησης :{total_str}\n\1", new_a, flags=re.M)
+
+        if new_a != existing_a:
+            updates.append(
+                {
+                    "range": f"'{SHEET_NAME}'!A{row}",
+                    "values": [[new_a]],
+                }
+            )
+            print(f"  📝 Column A (Row {row}) totals updated")
 
     body = {"valueInputOption": "RAW", "data": updates}
     result = (
