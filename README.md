@@ -9,7 +9,10 @@ Automatically fetch your training logs from **Strava** and sync them to your **G
 - ✅ Google Sheets sync — writes to the correct cell by date
 - ✅ **Appends** below existing coach instructions (never overwrites)
 - ✅ Greek formatting matching the coaching sheet style
-- ✅ Idempotent — re-running replaces only the Strava data section
+- ✅ **Weekly Totals (Column A)**: Automatically sums and writes weekly totals for Running, Cycling, Swimming, Strength Training (Ενδυνάμωση), and overall Training Hours (Συνολικές ώρες προπόνησης) by replacing placeholders in Column A.
+- ✅ **Swimming Distance Correction**: Halves all swimming distances and average speeds (divided by 2) to correct watch double-counting.
+- ✅ **Indoor Cycling Estimation**: Automatically estimates distance for indoor trainer rides (marked as trainer and with `< 0.1 km` distance) based on moving time at a 21 km/h average speed.
+- ✅ Idempotent — re-running replaces only the Strava data section and updates the weekly totals correctly
 - ✅ Optional weekly automation via cron
 
 ---
