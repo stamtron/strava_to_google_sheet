@@ -14,10 +14,15 @@ credentials.json
 
 # Cache files
 .activities_cache.json
+.garmin_cache.json
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
+
+# macOS
+.DS_Store
 
 
