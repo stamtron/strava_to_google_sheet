@@ -28,6 +28,16 @@
       </div>
     </header>
 
+    <!-- Navigation Tabs -->
+    <div class="nav-tabs">
+      <button id="tabWeeklyBtn" class="tab-btn active">
+        <span>⚡ Εβδομαδιαία Ανάλυση</span>
+      </button>
+      <button id="tabProgressionBtn" class="tab-btn">
+        <span>📈 Μακροπρόθεσμη Πρόοδος & Φορτίο (Multi-Week)</span>
+      </button>
+    </div>
+
     <!-- Executive Metrics Grid -->
     <div class="metrics-grid">
       <!-- Total Hours Card -->
@@ -38,6 +48,16 @@
         </div>
         <div id="metricTotalHours" class="metric-value">0ω 0λ</div>
         <div id="metricActivitiesCount" class="metric-subvalue">0 προπονήσεις αυτή την εβδομάδα</div>
+      </div>
+
+      <!-- Relative Effort / Suffer Score Card -->
+      <div class="glass-panel metric-card card-effort">
+        <div class="metric-header">
+          <span class="metric-title">ΣΧΕΤΙΚΗ ΠΡΟΣΠΑΘΕΙΑ (STRAVA)</span>
+          <span class="metric-icon">🔥</span>
+        </div>
+        <div id="metricRelativeEffort" class="metric-value">0</div>
+        <div id="metricAcwrBadge" class="acwr-badge">ACWR: 1.0 (Optimal)</div>
       </div>
 
       <!-- Running Card -->
@@ -84,8 +104,8 @@
       </div>
     </div>
 
-    <!-- Main Content Layout -->
-    <div class="main-layout">
+    <!-- VIEW 1: Weekly Dashboard & Calendar -->
+    <div id="weeklyView" class="main-layout">
       <!-- Left Column: Visual Charts & Calendar -->
       <div class="content-left">
         <!-- Interactive Charts Grid -->
@@ -151,7 +171,7 @@
         <!-- Athlete Feedback & Notes Editor -->
         <div class="glass-panel feedback-editor">
           <div class="section-header" style="margin-bottom: 12px;">
-            <h3 style="font-size: 16px;">Σημειώσεις Αθλητή & Αίσθηση</h3>
+            <h3 style="font-size: 15px;">Σημειώσεις Αθλητή & Αίσθηση</h3>
           </div>
 
           <textarea id="athleteNotesText" class="editor-textarea" placeholder="Γράψτε παρατηρήσεις, αίσθηση κόπωσης ή σχόλιο εβδομάδας..."></textarea>
@@ -175,7 +195,7 @@
         <!-- Race Predictions Card -->
         <div class="glass-panel ai-card">
           <div class="ai-header">
-            <h3 style="font-size: 16px;">🏆 Πρόβλεψη Χρόνων Αγώνα</h3>
+            <h3 style="font-size: 15px;">🏆 Πρόβλεψη Χρόνων Αγώνα</h3>
             <span id="basePaceBadge" class="bio-badge">Βάση: 5:00 /χλμ</span>
           </div>
           <table class="predictions-table">
@@ -190,6 +210,45 @@
               <!-- Rendered dynamically -->
             </tbody>
           </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW 2: Long-Term Progression Analytics -->
+    <div id="progressionView" class="progression-section">
+      <div class="progression-grid">
+        <!-- Relative Effort & Hours Trend -->
+        <div class="glass-panel progression-chart-card">
+          <h3>Εξέλιξη Σχετικής Προσπάθειας (Relative Effort) & Ώρες ανά Εβδομάδα</h3>
+          <div class="chart-wrapper">
+            <canvas id="effortProgressionChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Discipline Mileage Stacked Trend -->
+        <div class="glass-panel progression-chart-card">
+          <h3>Εξέλιξη Χιλιομέτρων ανά Άθλημα (Τρέξιμο / Ποδήλατο / Κολύμπι)</h3>
+          <div class="chart-wrapper">
+            <canvas id="volumeProgressionChart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="progression-grid">
+        <!-- Elevation Climbed Progression -->
+        <div class="glass-panel progression-chart-card">
+          <h3>Εξέλιξη Συνολικών Υψομετρικών (⛰️ Elevation Gain σε μέτρα)</h3>
+          <div class="chart-wrapper">
+            <canvas id="elevationProgressionChart"></canvas>
+          </div>
+        </div>
+
+        <!-- ACWR / Workload Balance -->
+        <div class="glass-panel progression-chart-card">
+          <h3>Αναλογία Οξέος/Χρόνιου Φορτίου (ACWR - Overtraining Index)</h3>
+          <div class="chart-wrapper">
+            <canvas id="acwrProgressionChart"></canvas>
+          </div>
         </div>
       </div>
     </div>

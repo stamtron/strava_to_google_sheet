@@ -1,25 +1,16 @@
 """
-Garmin Connect Integration Module.
-
-Authenticates with Garmin Connect, caches session tokens,
-and fetches 24/7 health biometrics (Sleep, Resting HR, HRV).
+Garmin Connect API Client and Health Biometrics.
 """
 
 import os
 from datetime import date, timedelta
-from dotenv import load_dotenv
 from garminconnect import (
     Garmin,
     GarminConnectAuthenticationError,
     GarminConnectConnectionError,
     GarminConnectTooManyRequestsError,
 )
-
-load_dotenv()
-
-GARMIN_EMAIL = os.getenv("GARMIN_EMAIL")
-GARMIN_PASSWORD = os.getenv("GARMIN_PASSWORD")
-GARMIN_TOKEN_DIR = os.path.join(os.path.dirname(__file__), ".garmin_tokens")
+from src.config import GARMIN_EMAIL, GARMIN_PASSWORD, GARMIN_TOKEN_DIR
 
 
 def get_garmin_client() -> Garmin | None:

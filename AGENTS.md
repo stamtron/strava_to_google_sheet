@@ -6,142 +6,85 @@ This document serves as the primary technical guide for AI agents and developers
 
 ## 📌 Project Overview
 
-`strava_to_google_sheet` is an automated fitness tracking integration that fetches workout activities from **Strava** and 24/7 health biometrics (Sleep, Resting Heart Rate, HRV) from **Garmin Connect**, formatting and synchronizing them into a structured Greek coaching spreadsheet in **Google Sheets**.
+`strava_to_google_sheet` is an automated fitness tracking integration that fetches workout activities from **Strava** and 24/7 health biometrics (Sleep, Resting Heart Rate, HRV) from **Garmin Connect**, formatting and synchronizing them into a structured Greek coaching spreadsheet in **Google Sheets**, while providing a modern **FastAPI + Chart.js** analytics web app with **AI Coaching (Gemini)** and **Acute:Chronic Workload Ratio (ACWR)** tracking.
 
 ---
 
-## 🏗️ Architecture & Component Overview
+## 🏗️ Architecture & Module Organization
 
 ```
-                   ┌──────────────┐
-                   │  Strava API  │
-                   └──────┬───────┘
-                          │ Activities & Workouts
-                          ▼
-┌──────────────────┐  ┌───────────┐  ┌──────────────────┐
-│  Garmin Connect  │─▶│  main.py  │◀─│  Google Sheets   │
-│  (Sleep/RHR/HRV) │  └─────┬─────┘  │   OAuth2 Token   │
-└──────────────────┘        │        └──────────────────┘
-                            ▼
-                  ┌──────────────────┐
-                  │ google_sheets.py │
-                  └─────────┬────────┘
-                            ▼
-              ┌───────────────────────────┐
-              │  Google Sheets Coaching   │
-              │  (Old & New Formats)      │
-              └───────────────────────────┘
+strava_to_google_sheet/
+├── src/                          # Core backend package
+│   ├── config.py                 # Centralized configuration & environment variables
+│   ├── integrations/             # External service APIs
+│   │   ├── strava.py             # Strava OAuth2 & activity fetcher
+│   │   ├── garmin.py             # Garmin Connect authentication & biometrics
+│   │   └── sheets.py             # Google Sheets API & dual-layout sync engine
+│   ├── analytics/                # Data processing & AI
+│   │   ├── metrics.py            # Relative Effort (Suffer Score), ACWR, weekly/monthly volume
+│   │   └── ai_coach.py           # Gemini 2.5 Flash LLM coach & Peter Riegel race predictor
+│   └── api/                      # Web API Server
+│       └── server.py             # FastAPI REST endpoints & static routes
+├── web/                          # Frontend Single Page App
+│   ├── index.html                # Dashboard with Progression Analytics
+│   ├── styles.css                # Custom glassmorphic design system
+│   └── app.js                    # Chart.js charts & dynamic interaction logic
+├── main.py                       # Root CLI entry point
+├── server.py                     # Root Web server entry point
+├── pyproject.toml                # Project configuration
+├── README.md                     # Documentation
+└── .env
 ```
 
-### Key Modules:
+---
 
-1. **[`main.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/main.py)**
-   - Entry point for the CLI application.
-   - CLI Flags:
-     - `--count <int>`: Number of recent activities to fetch (default: 30).
-     - `--sheet`: Synchronize fetched data into Google Sheets.
-   - Fetches activity summaries and detailed stats (elevation, HR, suffer score, temperature, calories) from Strava.
-   - Groups activities by local date and prints a formatted terminal summary.
+## 🔑 Key Backend Components
 
-2. **[`google_sheets.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/google_sheets.py)**
-   - Authenticates with Google Sheets API via desktop OAuth2 (`credentials.json` -> `gsheets_token.json`).
-   - **Date Range Parsing (`parse_date_range`)**: Normalizes dashes and quotes; parses both 2-digit years (`'25`, `'26`) and 4-digit years (`2025`, `2026`).
-   - **Dynamic Layout Detection**:
-     - Inspects Column A 4 rows below the week start (`A{R+4}`).
-     - If it contains `ΑΝΑΤΡΟΦΟΔΟΤΗΣΗ`, handles the week using the **New Block Layout**.
-     - Otherwise, handles the week using the **Old Single-Row Layout**.
-   - **Daily Activity Logging**:
-     - *Old Layout:* Appends Strava details under `── Strava Data ──` in Columns B–H of row $R$.
-     - *New Layout:* Appends Strava details in Columns B–H of the `ΑΝΑΤΡΟΦΟΔΟΤΗΣΗ` row (row $R+4$).
-     - *Swimming Pace:* Formatted as time per 100 meters (e.g. `1:24 /100μ`).
-     - *Running/Walking Pace:* Formatted as time per km (e.g. `5:10 /χλμ`).
-     - *Cycling Speed:* Formatted in km/h (e.g. `27.5 χλμ/ω`).
-   - **Weekly Totals Calculation**:
-     - Sums distance and duration for Running, Cycling, Swimming (distance halved), and Strength Training.
-     - Fetches Garmin Connect health summary for the week (Sleep, Resting HR, HRV).
-     - *Old Layout:* Updates Column A of row $R$, including `Ύπνος {sleep}h • HRrest {rhr} • HRV {hrv}`.
-     - *New Layout:* Updates Column B of row $R+5$ (`ΕΒΔΟΜΑΔΑ`), populating placeholders in the template in-place.
+1. **[`src/config.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/config.py)**
+   - Centralizes project constants, sheet names, token paths, and `.env` loading.
 
-3. **[`garmin_client.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/garmin_client.py)**
+2. **[`src/integrations/strava.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/integrations/strava.py)**
+   - Manages Strava OAuth2 browser authorization, token caching in `token.json`, and automatic token refreshes.
+   - Fetches activity summaries (`fetch_activities`) and detailed metrics (`fetch_activity_detail`).
+
+3. **[`src/integrations/garmin.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/integrations/garmin.py)**
    - Connects to Garmin Connect using credentials from `.env` (`GARMIN_EMAIL`, `GARMIN_PASSWORD`).
-   - Caches session tokens in `.garmin_tokens/` to avoid repeated logins.
-   - `get_weekly_health_summary(start_date, end_date)`: Queries each day in the date range to compute total weekly sleep hours, weekly average resting heart rate (HRrest), and overnight HRV average.
+   - Caches session tokens in `.garmin_tokens/` to prevent repeated logins.
+   - Queries daily sleep seconds, resting heart rate (RHR), and overnight HRV for any week range.
 
-5. **[`server.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/server.py)**
-   - FastAPI backend providing REST endpoints:
-     - `GET /api/dashboard`: Aggregated weekly volumes, Strava workouts, and Garmin biometrics.
-     - `POST /api/ai/coach`: Generates LLM coaching feedback and readiness evaluation.
-     - `GET /api/predictions`: Computes race predictions (5K, 10K, 21.1K, 42.2K).
-     - `POST /api/sheet/sync`: Triggers Google Sheets synchronization from the web interface.
-   - Serves the Single Page Application from `web/`.
+4. **[`src/integrations/sheets.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/integrations/sheets.py)**
+   - Authenticates via desktop OAuth2 (`credentials.json` -> `gsheets_token.json`).
+   - Dynamic layout detection: batch inspects $A(R+4)$ for `ΑΝΑΤΡΟΦΟΔΟΤΗΣΗ` to distinguish **New Block Layout** from **Old Single-Row Layout**.
+   - Formats swimming pace in `/100μ` (with distance halved), running pace in `/χλμ`, cycling in `χλμ/ω`.
+   - Populates weekly sport totals and Garmin health tracker in Column A (Old) or Column B of `ΕΒΔΟΜΑΔΑ` (New).
 
-6. **[`ai_coach.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/ai_coach.py)**
-   - AI Coaching & Race Prediction engine.
-   - Integrates with Gemini LLM (`gemini-2.5-flash`) when `GEMINI_API_KEY` is present, with robust heuristic coaching fallbacks.
-   - Implements Peter Riegel formula for race time & pacing predictions.
+5. **[`src/analytics/metrics.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/analytics/metrics.py)**
+   - Extracts Strava Relative Effort (`suffer_score`) or computes HR-based TRIMP stress.
+   - Computes **Acute:Chronic Workload Ratio (ACWR)** comparing current 7-day load to 28-day rolling baseline.
+   - Builds multi-week progression datasets for charting volume, elevation, and load.
 
-7. **[`web/`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/web/)**
-   - Single Page Web App with a responsive dark-mode glassmorphism design:
-     - `index.html`: Dashboard structure, metrics cards, 7-day coaching calendar, AI panel, feedback editor.
-     - `styles.css`: Custom CSS design system with Outfit/Inter typography, neon gradients, and micro-animations.
-     - `app.js`: Chart.js charts, dynamic week selection, AI coaching generation, and Google Sheets sync triggers.
+6. **[`src/analytics/ai_coach.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/analytics/ai_coach.py)**
+   - Generates qualitative coach feedback and readiness scoring using Gemini (`gemini-2.5-flash`, `gemini-3.6-flash`) with sports-science heuristic fallbacks.
+   - Computes Peter Riegel race finish time predictions for 5K, 10K, 21.1K, and 42.2K.
 
-
----
-
-## 📊 Google Sheets Layout Formats
-
-### 1. Old Layout (Rows 13 – 66)
-*   **Structure:** 1 row per week.
-*   **Column A:** Week date range (e.g. `17-23/8/'26`), sport totals, total training hours, and sleep/HRV tracker.
-*   **Columns B–H (Mon–Sun):** Contains coach program and appended daily Strava data.
-
-### 2. New Layout (Row 67 onwards)
-*   **Structure:** 7-row block per week.
-    *   **Row 1 ($R$):** Week date range (e.g. `24/8–30/8/2026`) in Column A, Phase in Column E.
-    *   **Row 2 ($R+1$):** Empty spacer.
-    *   **Row 3 ($R+2$):** Day headers (`ΔΕΥ 24/8`, etc.).
-    *   **Row 4 ($R+3$):** `ΠΡΟΓΡΑΜΜΑ` (Coach program).
-    *   **Row 5 ($R+4$):** `ΑΝΑΤΡΟΦΟΔΟΤΗΣΗ` (Athlete feedback & daily Strava workout logs).
-    *   **Row 6 ($R+5$):** `ΕΒΔΟΜΑΔΑ` (Weekly summary & totals: Running, Cycling, Swimming, Sleep, HRrest, HRV).
-    *   **Row 7 ($R+6$):** Empty spacer.
-
----
-
-## ⚙️ Environment Variables (`.env`)
-
-```env
-STRAVA_CLIENT_ID=your_strava_client_id
-STRAVA_CLIENT_SECRET=your_strava_client_secret
-GOOGLE_SHEET_ID=your_google_sheet_id
-GARMIN_EMAIL=your_garmin_email@example.com
-GARMIN_PASSWORD=your_garmin_password
-GEMINI_API_KEY=your_gemini_api_key
-```
+7. **[`src/api/server.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/api/server.py)**
+   - FastAPI backend providing `GET /api/dashboard`, `POST /api/ai/coach`, `POST /api/sheet/sync`.
+   - Local activity caching in `.activities_cache.json` with automatic rate-limit fallbacks.
 
 ---
 
 ## 🛠️ Development & Execution Commands
 
-This project uses [`uv`](https://astral.sh/uv) for fast Python package and environment management.
-
 ```bash
-# Install dependencies
-uv sync
-
-# Fetch & display Strava activities in terminal only
+# Run CLI tool
 uv run python main.py --count 30
 
-# Fetch & sync activities to Google Sheets (including Garmin health metrics)
+# Sync to Google Sheets via CLI
 uv run python main.py --sheet --count 30
 
-# Test code syntax & compile
-uv run python -m py_compile main.py google_sheets.py garmin_client.py strava_auth.py
+# Run Web Dashboard Server
+uv run python server.py
+
+# Type / compile check
+uv run python -m py_compile main.py server.py src/config.py src/integrations/*.py src/analytics/*.py src/api/*.py
 ```
-
----
-
-## 🔒 Security & Best Practices
-
-- **Never commit credentials or tokens**: Ensure `.env`, `credentials.json`, `token.json`, `gsheets_token.json`, and `.garmin_tokens/` remain in [`.gitignore`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/.gitignore).
-- **Idempotent Sync**: All sync operations can be run repeatedly without duplicating Strava entries or overwriting manual feedback notes.

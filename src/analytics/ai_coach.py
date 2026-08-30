@@ -2,17 +2,11 @@
 AI Coach and Race Prediction Engine.
 
 Generates automated workout feedback, readiness advice,
-and race predictions using LLMs (Gemini / OpenAI) with robust heuristic fallbacks.
+and race predictions using LLMs (Gemini) with robust heuristic fallbacks.
 """
 
 import math
-import os
-from datetime import datetime
-from dotenv import load_dotenv
-
-load_dotenv()
-
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+from src.config import GEMINI_API_KEY
 
 
 def _get_gemini_client():
@@ -63,27 +57,23 @@ def predict_race_performances(activities: list[dict], custom_5k_pace_sec: float 
     best_5k_pace = custom_5k_pace_sec
 
     if not best_5k_pace:
-        # Search activities for fastest run >= 3km
         candidates = []
         for a in activities:
             sport = a.get("sport_type") or a.get("type", "")
             dist_km = (a.get("distance", 0) or 0) / 1000.0
             moving_time = a.get("moving_time", 0) or 0
             if sport in ["Run", "TrailRun"] and dist_km >= 3.0 and moving_time > 0:
-                pace = moving_time / dist_km  # sec/km
+                pace = moving_time / dist_km
                 candidates.append((dist_km, moving_time, pace))
 
         if candidates:
-            # Sort by fastest pace
             candidates.sort(key=lambda x: x[2])
-            # Take top 10% average or fastest
             best_run = candidates[0]
             best_dist, best_time, best_pace = best_run
             best_5k_pace = best_pace
         else:
             best_5k_pace = 300.0  # Default 5:00/km
 
-    # 5K base
     base_5k_time = best_5k_pace * 5.0
 
     races = [
@@ -118,8 +108,8 @@ def generate_weekly_coaching_insights(
     target_language: str = "el",
 ) -> dict:
     """
-    Generate AI coaching evaluation and feedback recommendations.
-    Uses Gemini API if available, otherwise high-quality heuristic expert coaching feedback.
+    Generate AI coaching evaluation, Relative Effort assessment, and recommendations.
+    Uses Gemini API if available, otherwise smart sports-science heuristic coach.
     """
     client = _get_gemini_client()
 
@@ -128,14 +118,15 @@ def generate_weekly_coaching_insights(
     swim_dist = week_summary.get("swim_dist", 0.0)
     total_time_h = week_summary.get("total_time_seconds", 0) / 3600.0
     activities_count = week_summary.get("activities_count", 0)
+    relative_effort = week_summary.get("relative_effort", 0.0)
+    elevation_m = week_summary.get("elevation_m", 0.0)
 
     sleep_h = garmin_health.get("total_sleep_h") if garmin_health else None
     rhr = garmin_health.get("avg_rhr") if garmin_health else None
     hrv = garmin_health.get("avg_hrv") if garmin_health else None
 
-    # Determine readiness score
+    # Determine physiological readiness score
     readiness_score = 80
-    readiness_status = "Καλή Ετοιμότητα (Good)"
     if sleep_h and sleep_h < 45:
         readiness_score -= 15
     elif sleep_h and sleep_h > 52:
@@ -157,14 +148,16 @@ def generate_weekly_coaching_insights(
 - Ποδηλασία: {bike_dist:.1f} km
 - Κολύμβηση: {swim_dist:.0f} m
 - Συνολικές Ώρες Προπόνησης: {total_time_h:.1f} ώρες ({activities_count} προπονήσεις)
+- Σχετική Προσπάθεια Strava (Relative Effort / Suffer Score): {relative_effort:.0f}
+- Συνολικά Υψομετρικά: {elevation_m:.0f} m
 - Ύπνος (Garmin Connect): {sleep_h or 'N/A'} ώρες
 - Resting HR (HRrest): {rhr or 'N/A'} bpm
 - Overnight HRV: {hrv or 'N/A'} ms
-- Σχόλιο/Αίσθηση Αθλητή: {athlete_notes or 'Καμία επιπλέον σημείωση'}
+- Σημειώσεις Αθλητή: {athlete_notes or 'Καμία επιπλέον σημείωση'}
 
 Παρακαλώ δώσε σε μορφή JSON:
-1. "feedback": Ένα προπονητικό σχόλιο/ανατροφοδότηση 2-3 παραγράφων στα Ελληνικά για τον προπονητή και τον αθλητή.
-2. "readiness_evaluation": Εκτίμηση κόπωσης και αποκατάστασης (Recovery & Fatigue analysis).
+1. "feedback": Ένα εμπεριστατωμένο προπονητικό σχόλιο/ανατροφοδότηση 2-3 παραγράφων στα Ελληνικά για τον προπονητή και τον αθλητή.
+2. "readiness_evaluation": Εκτίμηση κόπωσης, σχετικής προσπάθειας και αποκατάστασης (Recovery & Relative Effort load).
 3. "recommendations": Λίστα με 3 συγκεκριμένες συμβουλές για την επόμενη εβδομάδα.
 4. "readiness_score": Αριθμός 1-100.
 """
@@ -190,10 +183,12 @@ def generate_weekly_coaching_insights(
 
     # Heuristic Coach Fallback
     feedback_text = (
-        f"Εξαιρετική εβδομάδα με συνολικό όγκο {total_time_h:.1f} ωρών σε {activities_count} συνεδρίες. "
+        f"Εξαιρετική εβδομάδα με συνολικό όγκο {total_time_h:.1f} ωρών σε {activities_count} συνεδρίες και Σχετική Προσπάθεια {relative_effort:.0f}. "
         f"Η κατανομή σε τρέξιμο ({run_dist:.1f} χλμ), ποδηλασία ({bike_dist:.1f} χλμ) και κολύμπι ({swim_dist:.0f} μ) "
         f"έδειξε σταθερή προπονητική συνέπεια."
     )
+    if elevation_m > 0:
+        feedback_text += f" Καταγράφηκαν {elevation_m:.0f}μ συνολικών υψομετρικών."
     if sleep_h:
         feedback_text += f" Ο συνολικός ύπνος ({sleep_h:.1f}h) και το HRV ({hrv or 'N/A'}) δείχνουν " + (
             "πολύ καλή αποκατάσταση του νευρικού συστήματος." if (hrv or 60) >= 60 else "αυξημένη κόπωση που απαιτεί έμφαση στην αποκατάσταση."
@@ -201,7 +196,7 @@ def generate_weekly_coaching_insights(
 
     return {
         "feedback": feedback_text,
-        "readiness_evaluation": f"Δείκτης ετοιμότητας στο {readiness_score}%. Το σώμα ανταποκρίνεται καλά στον τρέχοντα προπονητικό όγκο.",
+        "readiness_evaluation": f"Δείκτης ετοιμότητας στο {readiness_score}%. Το σώμα ανταποκρίνεται καλά στον τρέχοντα προπονητικό όγκο και το φορτίο σχετικής προσπάθειας ({relative_effort:.0f}).",
         "recommendations": [
             "Διατήρησε την ένταση στις ζώνες Z1-Z2 στις ενδιάμεσες προπονήσεις για βέλτιστη αποκατάσταση.",
             "Εστίασε στη σταθερή ενυδάτωση και πρόσληψη ηλεκτρολυτών στα μεγάλα ποδηλατικά sessions.",

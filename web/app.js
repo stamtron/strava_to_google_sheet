@@ -5,6 +5,12 @@ let currentWeekKey = null;
 let disciplineChart = null;
 let recoveryChart = null;
 
+// Progression Charts
+let effortProgressionChart = null;
+let volumeProgressionChart = null;
+let elevationProgressionChart = null;
+let acwrProgressionChart = null;
+
 const DAY_NAMES_EL = ["Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο", "Κυριακή"];
 const DAY_SHORT_EL = ["ΔΕΥ", "ΤΡΙ", "ΤΕΤ", "ΠΕΜ", "ΠΑΡ", "ΣΑΒ", "ΚΥΡ"];
 
@@ -22,6 +28,7 @@ async function initApp() {
 
     populateWeekSelector();
     initCharts();
+    initProgressionCharts();
 
     const weekKeys = Object.keys(dashboardData.weeks || {}).sort().reverse();
     if (weekKeys.length > 0) {
@@ -29,6 +36,7 @@ async function initApp() {
     }
 
     renderPredictions(dashboardData.predictions);
+    updateProgressionCharts(dashboardData.progression);
   } catch (err) {
     console.error("Initialization error:", err);
     showToast("Σφάλμα φόρτωσης δεδομένων: " + err.message, "error");
@@ -42,6 +50,31 @@ function setupEventListeners() {
 
   document.getElementById("syncSheetBtn").addEventListener("click", handleSheetSync);
   document.getElementById("generateAiBtn").addEventListener("click", handleGenerateAiFeedback);
+
+  // Tab Navigation
+  const tabWeekly = document.getElementById("tabWeeklyBtn");
+  const tabProgression = document.getElementById("tabProgressionBtn");
+  const weeklyView = document.getElementById("weeklyView");
+  const progressionView = document.getElementById("progressionView");
+
+  tabWeekly.addEventListener("click", () => {
+    tabWeekly.classList.add("active");
+    tabProgression.classList.remove("active");
+    weeklyView.style.display = "grid";
+    progressionView.classList.remove("active");
+  });
+
+  tabProgression.addEventListener("click", () => {
+    tabProgression.classList.add("active");
+    tabWeekly.classList.remove("active");
+    weeklyView.style.display = "none";
+    progressionView.classList.add("active");
+    // Trigger chart resize
+    if (effortProgressionChart) effortProgressionChart.resize();
+    if (volumeProgressionChart) volumeProgressionChart.resize();
+    if (elevationProgressionChart) elevationProgressionChart.resize();
+    if (acwrProgressionChart) acwrProgressionChart.resize();
+  });
 
   // Sliders
   setupSlider("fatigueSlider", "fatigueVal", "/10");
@@ -66,8 +99,8 @@ function populateWeekSelector() {
   const weekKeys = Object.keys(dashboardData.weeks || {}).sort().reverse();
   weekKeys.forEach((key, idx) => {
     const w = dashboardData.weeks[key];
-    const mDate = new Date(w.week_monday);
-    const sDate = new Date(w.week_sunday);
+    const mDate = new Date(w.week_monday + "T00:00:00");
+    const sDate = new Date(w.week_sunday + "T00:00:00");
     const opt = document.createElement("option");
     opt.value = key;
     opt.textContent = `${mDate.toLocaleDateString("el-GR", { day: "numeric", month: "short" })} – ${sDate.toLocaleDateString("el-GR", { day: "numeric", month: "short", year: "numeric" })} ${idx === 0 ? "(Τρέχουσα)" : ""}`;
@@ -104,6 +137,18 @@ function renderMetricCards(week, garmin) {
   document.getElementById("metricTotalHours").textContent = formatDuration(week.total_time_sec);
   document.getElementById("metricActivitiesCount").textContent = `${week.activities.length} προπονήσεις αυτή την εβδομάδα`;
 
+  // Relative Effort & ACWR
+  const effort = Math.round(week.total_relative_effort || 0);
+  document.getElementById("metricRelativeEffort").textContent = effort;
+
+  const acwr = week.acwr || {};
+  const acwrBadge = document.getElementById("metricAcwrBadge");
+  if (acwr && acwr.acwr_ratio) {
+    acwrBadge.textContent = `ACWR: ${acwr.acwr_ratio} (${acwr.status ? acwr.status.split('(')[0].trim() : 'Active'})`;
+    acwrBadge.style.color = acwr.badge_color || "var(--accent-emerald)";
+    acwrBadge.style.borderColor = acwr.badge_color || "rgba(16, 185, 129, 0.3)";
+  }
+
   document.getElementById("metricRunDist").textContent = `${week.run_dist_km.toFixed(2)} χλμ`;
   document.getElementById("metricRunTime").textContent = formatDuration(week.run_time_sec);
 
@@ -127,18 +172,15 @@ function renderMetricCards(week, garmin) {
 function formatPace(sport, movingTime, distanceMeters) {
   if (!movingTime || movingTime <= 0 || !distanceMeters || distanceMeters <= 0) return "";
   if (sport === "Swim") {
-    // Swimming pace per 100m (with halved distance)
     const adjDistM = distanceMeters / 2.0;
     const paceSec = movingTime / (adjDistM / 100.0);
     const m = Math.floor(paceSec / 60);
     const s = Math.floor(paceSec % 60);
     return `${m}:${s.toString().padStart(2, "0")} /100m`;
   } else if (sport.includes("Ride")) {
-    // Speed km/h
     const speedKmh = (distanceMeters / 1000.0) / (movingTime / 3600.0);
     return `${speedKmh.toFixed(1)} km/h`;
   } else {
-    // Running pace /km
     const paceSec = movingTime / (distanceMeters / 1000.0);
     const m = Math.floor(paceSec / 60);
     const s = Math.floor(paceSec % 60);
@@ -150,13 +192,12 @@ function renderCalendar(week) {
   const grid = document.getElementById("daysGrid");
   grid.innerHTML = "";
 
-  const mDateStr = week.week_monday; // e.g. "2026-08-24"
+  const mDateStr = week.week_monday;
   const mDate = new Date(mDateStr + "T00:00:00");
   const sDate = new Date(week.week_sunday + "T00:00:00");
   const dateRangeEl = document.getElementById("calendarDateRange");
   dateRangeEl.textContent = `${mDate.toLocaleDateString("el-GR", { day: "numeric", month: "long" })} – ${sDate.toLocaleDateString("el-GR", { day: "numeric", month: "long", year: "numeric" })}`;
 
-  // Bucket activities by weekday (0 = Monday, 6 = Sunday) using exact calendar day calculation
   const daysActivities = [[], [], [], [], [], [], []];
   week.activities.forEach((act) => {
     const rawDt = act.start_date_local || "";
@@ -219,7 +260,6 @@ function renderCalendar(week) {
           icon = "🏋️";
           distStr = "";
         } else {
-          // Run / Hike / Walk
           const distKm = (rawDistM / 1000.0).toFixed(2);
           distStr = `${distKm} km`;
         }
@@ -242,7 +282,6 @@ function renderCalendar(week) {
 }
 
 function initCharts() {
-  // 1. Discipline Breakdown (Doughnut)
   const ctxDisc = document.getElementById("disciplineChart").getContext("2d");
   disciplineChart = new Chart(ctxDisc, {
     type: "doughnut",
@@ -260,14 +299,13 @@ function initCharts() {
       plugins: {
         legend: {
           position: "bottom",
-          labels: { color: "#94a3b8", font: { family: "Inter", size: 12 } },
+          labels: { color: "#94a3b8", font: { family: "Inter", size: 11 } },
         },
       },
       cutout: "70%",
     },
   });
 
-  // 2. Recovery & Health (Bar / Line)
   const ctxRec = document.getElementById("recoveryChart").getContext("2d");
   recoveryChart = new Chart(ctxRec, {
     type: "bar",
@@ -277,7 +315,7 @@ function initCharts() {
         label: "Garmin Health",
         data: [50, 65, 48],
         backgroundColor: ["#7928ca", "#00f2fe", "#ff0080"],
-        borderRadius: 8,
+        borderRadius: 6,
       }],
     },
     options: {
@@ -288,6 +326,153 @@ function initCharts() {
         x: { grid: { display: false }, ticks: { color: "#94a3b8" } },
       },
       plugins: { legend: { display: false } },
+    },
+  });
+}
+
+function initProgressionCharts() {
+  // 1. Effort & Hours Progression
+  const ctxEffort = document.getElementById("effortProgressionChart").getContext("2d");
+  effortProgressionChart = new Chart(ctxEffort, {
+    type: "bar",
+    data: {
+      labels: [],
+      datasets: [
+        {
+          label: "Σχετική Προσπάθεια (Relative Effort)",
+          data: [],
+          backgroundColor: "rgba(255, 0, 128, 0.65)",
+          borderColor: "#ff0080",
+          borderWidth: 1,
+          borderRadius: 6,
+          yAxisID: "yEffort",
+        },
+        {
+          label: "Ώρες Προπόνησης",
+          data: [],
+          type: "line",
+          borderColor: "#00f2fe",
+          backgroundColor: "rgba(0, 242, 254, 0.15)",
+          borderWidth: 2,
+          pointRadius: 4,
+          fill: false,
+          yAxisID: "yHours",
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        yEffort: {
+          type: "linear",
+          position: "left",
+          grid: { color: "rgba(255, 255, 255, 0.05)" },
+          ticks: { color: "#ff0080" },
+          title: { display: true, text: "Relative Effort", color: "#ff0080" },
+        },
+        yHours: {
+          type: "linear",
+          position: "right",
+          grid: { display: false },
+          ticks: { color: "#00f2fe" },
+          title: { display: true, text: "Ώρες", color: "#00f2fe" },
+        },
+        x: { grid: { display: false }, ticks: { color: "#94a3b8" } },
+      },
+      plugins: {
+        legend: { labels: { color: "#94a3b8", font: { family: "Inter", size: 11 } } },
+      },
+    },
+  });
+
+  // 2. Volume Progression (Stacked Bar)
+  const ctxVol = document.getElementById("volumeProgressionChart").getContext("2d");
+  volumeProgressionChart = new Chart(ctxVol, {
+    type: "bar",
+    data: {
+      labels: [],
+      datasets: [
+        { label: "Τρέξιμο (χλμ)", data: [], backgroundColor: "#f97316", borderRadius: 4 },
+        { label: "Ποδηλασία (χλμ)", data: [], backgroundColor: "#00f2fe", borderRadius: 4 },
+        { label: "Κολύμβηση (χλμ)", data: [], backgroundColor: "#38f9d7", borderRadius: 4 },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        y: { stacked: true, grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } },
+        x: { stacked: true, grid: { display: false }, ticks: { color: "#94a3b8" } },
+      },
+      plugins: {
+        legend: { labels: { color: "#94a3b8", font: { family: "Inter", size: 11 } } },
+      },
+    },
+  });
+
+  // 3. Elevation Progression
+  const ctxElev = document.getElementById("elevationProgressionChart").getContext("2d");
+  elevationProgressionChart = new Chart(ctxElev, {
+    type: "line",
+    data: {
+      labels: [],
+      datasets: [{
+        label: "Υψομετρικά (μ)",
+        data: [],
+        borderColor: "#b224ef",
+        backgroundColor: "rgba(178, 36, 239, 0.2)",
+        fill: true,
+        tension: 0.3,
+        borderWidth: 2,
+        pointRadius: 4,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        y: { grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } },
+        x: { grid: { display: false }, ticks: { color: "#94a3b8" } },
+      },
+      plugins: {
+        legend: { labels: { color: "#94a3b8", font: { family: "Inter", size: 11 } } },
+      },
+    },
+  });
+
+  // 4. ACWR Chart
+  const ctxAcwr = document.getElementById("acwrProgressionChart").getContext("2d");
+  acwrProgressionChart = new Chart(ctxAcwr, {
+    type: "line",
+    data: {
+      labels: [],
+      datasets: [
+        {
+          label: "ACWR Ratio (Sweet Spot: 0.8 - 1.3)",
+          data: [],
+          borderColor: "#10b981",
+          borderWidth: 2,
+          pointRadius: 5,
+          pointBackgroundColor: "#10b981",
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        y: {
+          min: 0.5,
+          max: 2.0,
+          grid: { color: "rgba(255, 255, 255, 0.05)" },
+          ticks: { color: "#94a3b8" },
+        },
+        x: { grid: { display: false }, ticks: { color: "#94a3b8" } },
+      },
+      plugins: {
+        legend: { labels: { color: "#94a3b8", font: { family: "Inter", size: 11 } } },
+      },
     },
   });
 }
@@ -310,6 +495,46 @@ function updateCharts(week, garmin) {
       garmin.avg_rhr || 0,
     ];
     recoveryChart.update();
+  }
+}
+
+function updateProgressionCharts(progression) {
+  if (!progression || progression.length === 0) return;
+
+  const labels = progression.map(p => p.label);
+  const efforts = progression.map(p => p.relative_effort);
+  const hours = progression.map(p => p.total_hours);
+  const runs = progression.map(p => p.run_km);
+  const bikes = progression.map(p => p.bike_km);
+  const swims = progression.map(p => p.swim_km);
+  const elevs = progression.map(p => p.elevation_m);
+  const acwrs = progression.map(p => (p.acwr ? p.acwr.acwr_ratio : 1.0));
+
+  if (effortProgressionChart) {
+    effortProgressionChart.data.labels = labels;
+    effortProgressionChart.data.datasets[0].data = efforts;
+    effortProgressionChart.data.datasets[1].data = hours;
+    effortProgressionChart.update();
+  }
+
+  if (volumeProgressionChart) {
+    volumeProgressionChart.data.labels = labels;
+    volumeProgressionChart.data.datasets[0].data = runs;
+    volumeProgressionChart.data.datasets[1].data = bikes;
+    volumeProgressionChart.data.datasets[2].data = swims;
+    volumeProgressionChart.update();
+  }
+
+  if (elevationProgressionChart) {
+    elevationProgressionChart.data.labels = labels;
+    elevationProgressionChart.data.datasets[0].data = elevs;
+    elevationProgressionChart.update();
+  }
+
+  if (acwrProgressionChart) {
+    acwrProgressionChart.data.labels = labels;
+    acwrProgressionChart.data.datasets[0].data = acwrs;
+    acwrProgressionChart.update();
   }
 }
 
@@ -356,6 +581,8 @@ async function handleGenerateAiFeedback() {
         swim_dist: week.swim_dist_m,
         total_time_seconds: week.total_time_sec,
         activities_count: week.activities.length,
+        relative_effort: week.total_relative_effort,
+        elevation_m: week.total_elevation_m,
       },
       garmin_health: garmin,
       athlete_notes: `${athleteNotes} [Κόπωση: ${fatigue}/10, Ενόχληση: ${soreness}/10, Διάθεση: ${mood}/10]`,
@@ -370,7 +597,6 @@ async function handleGenerateAiFeedback() {
     if (!res.ok) throw new Error("AI Coaching API error");
     const data = await res.json();
 
-    // Update UI
     let fullText = data.feedback + "\n\n📌 Συμβουλές Προπονητή:\n";
     (data.recommendations || []).forEach((r, idx) => {
       fullText += `${idx + 1}. ${r}\n`;
@@ -382,7 +608,7 @@ async function handleGenerateAiFeedback() {
       document.getElementById("readinessCircle").style.setProperty("--score", data.readiness_score);
     }
     if (data.source) {
-      document.getElementById("aiSourceBadge").textContent = data.source === "gemini-2.5-flash" ? "Gemini 2.5 Flash" : "AI Heuristics";
+      document.getElementById("aiSourceBadge").textContent = data.source.includes("gemini") ? data.source : "AI Heuristics";
     }
 
     showToast("✨ Η ανάλυση προπόνησης ολοκληρώθηκε επιτυχώς!", "success");
@@ -412,7 +638,6 @@ async function handleSheetSync() {
     const data = await res.json();
 
     showToast(`✅ Επιτυχής συγχρονισμός ${data.synced_activities} προπονήσεων στο Google Sheet!`, "success");
-    // Reload dashboard
     await initApp();
   } catch (err) {
     console.error("Sync error:", err);
