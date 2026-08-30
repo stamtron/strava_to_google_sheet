@@ -15,3 +15,17 @@ dependencies = [
     "uvicorn[standard]>=0.52.4",
     "google-genai>=2.20.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The project is imported as `src.*` from the repo root, which isn't installed.
+pythonpath = ["."]
+
+[[tool.uv.index]]
+url = "https://pypi.apple.com/simple"
+default = true
