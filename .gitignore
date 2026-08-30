@@ -12,8 +12,12 @@ gsheets_token.json
 # Google OAuth credentials (contains secrets)
 credentials.json
 
+# Cache files
+.activities_cache.json
+
 # Python
 __pycache__/
 *.pyc
 *.pyo
+
 

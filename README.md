@@ -1,21 +1,19 @@
-# 🏃 Strava to Google Sheet
+# 🏃 Strava & Garmin to Google Sheet
 
-Automatically fetch your training logs from **Strava** and sync them to your **Google Sheet** coaching log — organized by date, formatted in Greek, with all key metrics.
+Automatically fetch your workout logs from **Strava** and 24/7 health biometrics from **Garmin Connect** (Sleep, Resting HR, HRV), syncing them into your **Google Sheet** coaching log — organized by date, formatted in Greek, with all key metrics.
 
 ## Features
 
-- ✅ Strava OAuth2 authentication with automatic token refresh
-- ✅ Detailed activity data: distance, pace, HR, calories, temperature, RPE
-- ✅ Google Sheets sync — writes to the correct cell by date
-- ✅ **Appends** below existing coach instructions (never overwrites)
-- ✅ Greek formatting matching the coaching sheet style
-- ✅ **Weekly Totals**: Automatically sums and writes weekly totals for Running, Cycling, Swimming, Strength Training (Ενδυνάμωση), and overall Training Hours (Συνολικές ώρες προπόνησης).
-- ✅ **Garmin 24/7 Health Metrics**: Automatically fetches total Sleep hours, weekly average Resting Heart Rate (HRrest), and overnight HRV from Garmin Connect.
-- ✅ **Swimming Distance Correction**: Halves all swimming distances and average speeds (divided by 2) to correct watch double-counting.
+- ✅ **Strava Workouts**: OAuth2 authentication with automatic token refresh.
+- ✅ **Garmin 24/7 Health Metrics**: Automatically fetches total weekly Sleep hours, weekly average Resting Heart Rate (HRrest), and overnight HRV from Garmin Connect.
+- ✅ **Google Sheets Sync**: Dynamically supports both **Old Single-Row Layout** (rows 13–66) and **New 7-Row Block Layout** (row 67+).
+- ✅ **Appends Below Coach Notes**: Preserves coach training instructions and appends Strava data under `── Strava Data ──`.
+- ✅ **Weekly Totals**: Automatically sums and writes weekly totals for Running, Cycling, Swimming, Strength Training (Ενδυνάμωση), Total Training Hours, and Garmin Health Tracker (`Ύπνος __h • HRrest __ • HRV __`).
 - ✅ **Swimming Pace in /100m**: Formats swimming pace in time per 100 meters (e.g. `1:24 /100μ`).
-- ✅ **Indoor Cycling Estimation**: Automatically estimates distance for indoor trainer rides (marked as trainer and with `< 0.1 km` distance) based on moving time at a 21 km/h average speed.
-- ✅ Idempotent — re-running replaces only the Strava data section and updates the weekly totals correctly
-- ✅ Optional weekly automation via cron
+- ✅ **Swimming Distance Correction**: Halves all swimming distances and average speeds (divided by 2) to correct watch double-counting.
+- ✅ **Indoor Cycling Estimation**: Automatically estimates distance for indoor trainer rides based on moving time at a 21 km/h average speed.
+- ✅ **Idempotent**: Re-running replaces only the Strava/Garmin data sections and updates weekly totals without duplication.
+- ✅ **Optional Automation**: Easy weekly automation via cron.
 
 ---
 
@@ -32,13 +30,13 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # 3. Install dependencies
 uv sync
 
-# 4. Configure (see Setup sections below)
-cp .env.example .env    # Edit with your credentials
+# 4. Configure credentials (see Setup below)
+cp .env.example .env
 
 # 5. Run
-uv run python main.py              # Print activities only
-uv run python main.py --sheet      # Print + sync to Google Sheet
-uv run python main.py --sheet --count 50   # Fetch more activities
+uv run python main.py              # Print Strava activities only
+uv run python main.py --sheet      # Sync Strava + Garmin to Google Sheet
+uv run python main.py --sheet --count 50   # Fetch last 50 activities
 ```
 
 ---
@@ -49,35 +47,37 @@ uv run python main.py --sheet --count 50   # Fetch more activities
 
 1. Go to [strava.com/settings/api](https://www.strava.com/settings/api)
 2. Create an application:
-   - **Application Name**: anything (e.g., `strava_to_google_sheet`)
-   - **Category**: choose any
+   - **Application Name**: `strava_to_google_sheet`
    - **Callback Domain**: `localhost`
-3. Note your **Client ID** and **Client Secret**
+3. Copy your **Client ID** and **Client Secret** into `.env`.
 
 ### 2. Google Sheets API
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com) — log in with a **personal Gmail** (not a Workspace account)
-2. Create a new project (e.g., `strava-sheets`)
-3. Enable the **Google Sheets API**:
-   - Go to **APIs & Services → Library**
-   - Search "Google Sheets API" → **Enable**
-4. Configure **OAuth consent screen**:
-   - Go to **APIs & Services → OAuth consent screen**
-   - Choose **External** → fill in app name + your email
-   - Under **Test users**, add your Gmail address
-   - Click **Save and Continue** through all steps
-5. Create **OAuth credentials**:
-   - Go to **APIs & Services → Credentials**
-   - Click **Create Credentials → OAuth client ID**
-   - Application type: **Desktop app**
-   - Click **Create** → **Download JSON**
-   - Rename the file to `credentials.json` and place it in the project root
+1. Go to [Google Cloud Console](https://console.cloud.google.com) — log in with a personal Gmail.
+2. Create a new project (e.g., `strava-sheets`).
+3. Enable the **Google Sheets API** under **APIs & Services → Library**.
+4. Configure the **OAuth consent screen** (External, add your email under Test Users).
+5. Create **OAuth Client ID** credentials (type: **Desktop app**), download the JSON, rename it to `credentials.json`, and place it in the project root.
 
-### 3. Garmin Connect (Optional - for Sleep, HRrest & HRV)
+### 3. Garmin Connect (Sleep, HRrest & HRV)
 
-Add your Garmin Connect email and password to `.env`. Session tokens are cached in `.garmin_tokens/` so you don't have to re-enter your password on subsequent runs.
+1. Add your Garmin Connect email and password to `.env`:
+   ```env
+   GARMIN_EMAIL=your_garmin_email@example.com
+   GARMIN_PASSWORD=your_password
+   ```
+2. Session tokens are securely cached in `.garmin_tokens/` so you do not need to re-authenticate or re-enter your password on subsequent runs.
+3. If your account has 2-Factor Authentication (2FA) enabled, you will be prompted once in the terminal for the verification code.
 
-### 4. Environment Variables
+### 4. Gemini API Key (Optional - for AI Coach & LLM Insights)
+
+1. Get a free API key from [aistudio.google.com](https://aistudio.google.com/) (Free tier includes 1,500 requests/day for Gemini 2.5 Flash).
+2. Add your key to `.env`:
+   ```env
+   GEMINI_API_KEY=your_gemini_api_key
+   ```
+
+### 5. Environment Variables (`.env`)
 
 Create a `.env` file in the project root:
 
@@ -87,63 +87,32 @@ STRAVA_CLIENT_SECRET=your_strava_client_secret
 GOOGLE_SHEET_ID=your_sheet_id
 GARMIN_EMAIL=your_garmin_email@example.com
 GARMIN_PASSWORD=your_garmin_password
+GEMINI_API_KEY=your_gemini_api_key
 ```
 
-> **Tip**: Your Google Sheet ID is the long string in the URL:
-> `docs.google.com/spreadsheets/d/`**`THIS_PART`**`/edit`
-
-### 4. First Run (Interactive)
-
-The first run opens your browser twice for authorization:
-
-```bash
-uv run python main.py --sheet --count 5
-```
-
-1. **Strava**: Log in and authorize → token saved to `token.json`
-2. **Google**: Choose your Gmail account → click "Continue" past the unverified app warning → token saved to `gsheets_token.json`
-
-Subsequent runs use cached tokens automatically (no browser needed).
+> **Tip**: Your Google Sheet ID is the string in the URL: `docs.google.com/spreadsheets/d/`**`THIS_PART`**`/edit`
 
 ---
 
 ## How It Works
 
-### Sheet Mapping
+### Sheet Layout Detection
 
-Each activity is placed in the correct cell based on its date:
+The sync engine automatically detects the layout of each week in the Google Sheet:
+- **Old Single-Row Layout (Rows 13–66):** 1 row per week. Daily workouts are appended to Columns B–H of the row, and sport totals + Garmin health data are updated in Column A.
+- **New 7-Row Block Layout (Row 67 onwards):** 7 rows per week. Daily workouts are written into the `ΑΝΑΤΡΟΦΟΔΟΤΗΣΗ` row (Row 5 of the block), and weekly totals + Garmin health metrics are updated in Column B of the `ΕΒΔΟΜΑΔΑ` row (Row 6 of the block).
 
-| Column | Day |
-|--------|-----|
-| B | Δευτέρα (Monday) |
-| C | Τρίτη (Tuesday) |
-| D | Τετάρτη (Wednesday) |
-| E | Πέμπτη (Thursday) |
-| F | Παρασκευή (Friday) |
-| G | Σάββατο (Saturday) |
-| H | Κυριακή (Sunday) |
+### Garmin Biometric Calculations
 
-The row is calculated from the week date range in Column A (starting from `1-7/9/'25`).
+For each week, the sync queries Garmin Connect from Monday to Sunday:
+- **Total Sleep:** Sums all verified sleep durations across the week (e.g., `51.6h`).
+- **Resting Heart Rate (HRrest):** Computes the 7-day average resting heart rate in bpm (e.g., `49`).
+- **Overnight HRV:** Computes the weekly average overnight HRV in ms (e.g., `75`).
 
-### Cell Format
-
-Strava data is appended below existing content with a separator:
-
+These are written directly to the sheet:
+```text
+Ύπνος 51.6h • HRrest 49 • HRV 75
 ```
-[Coach's training instructions stay here]
-
-── Strava Data ──
-Τρέξιμο: Morning Run
-Απόσταση: 10.01 χλμ
-Συνολικός χρόνος: 54λ 41δ
-Μέσος ρυθμός: 5:27 /χλμ
-Μέσοι καρδιακοί παλμοί: 155
-Μέγιστοι καρδιακοί παλμοί: 172
-Θερμίδες: 845
-Αντιληπτή κόπωση προπόνησης - RPE (1-10): 8
-```
-
-Multiple activities on the same day are separated with `---`.
 
 ---
 
@@ -153,60 +122,40 @@ You can schedule the script to run automatically every week using cron.
 
 ### Setup
 
-1. **Make sure the first run is done** (tokens must already exist)
-
-2. **Open your crontab**:
+1. **Open your crontab**:
    ```bash
    crontab -e
    ```
 
-3. **Add this line** (runs every Sunday at 10 PM):
+2. **Add this line** (runs every Sunday at 10 PM):
    ```cron
-   0 22 * * 0 cd /Users/YOUR_USERNAME/Documents/strava_to_google_sheet && /Users/YOUR_USERNAME/.local/bin/uv run python main.py --sheet --count 10 >> /tmp/strava_sync.log 2>&1
+   0 22 * * 0 cd /Users/YOUR_USERNAME/Documents/strava_to_google_sheet && /Users/YOUR_USERNAME/.local/bin/uv run python main.py --sheet --count 30 >> /tmp/strava_sync.log 2>&1
    ```
-
-   > Replace `YOUR_USERNAME` with your actual username. Adjust the schedule as needed.
-
-### Cron Schedule Examples
-
-| Schedule | Cron Expression |
-|----------|----------------|
-| Every Sunday at 10 PM | `0 22 * * 0` |
-| Every Monday at 8 AM | `0 8 * * 1` |
-| Every day at midnight | `0 0 * * *` |
-| Every 6 hours | `0 */6 * * *` |
-
-### Verify It Works
-
-```bash
-# Check the log after the scheduled time
-cat /tmp/strava_sync.log
-```
 
 ---
 
 ## Project Structure
 
 ```
-├── main.py              # CLI entry point
-├── strava_auth.py       # Strava OAuth2 authentication
-├── google_sheets.py     # Google Sheets integration & formatting
+├── main.py              # CLI entry point & terminal display
+├── google_sheets.py     # Google Sheets integration, dynamic layout & formatting
+├── garmin_client.py     # Garmin Connect API client & biometric calculations
+├── strava_auth.py       # Strava OAuth2 authentication & token refresh
+├── AGENTS.md            # Technical architecture guide for AI agents & developers
 ├── credentials.json     # Google OAuth credentials (git-ignored)
 ├── .env                 # API credentials (git-ignored)
 ├── token.json           # Strava token cache (git-ignored, auto-generated)
 ├── gsheets_token.json   # Google token cache (git-ignored, auto-generated)
+├── .garmin_tokens/      # Garmin session cache (git-ignored, auto-generated)
 ├── pyproject.toml       # Dependencies
 └── README.md
 ```
-
-## API Limitations
-
-- **Weather**: Not available via Strava API. Device temperature is included when recorded.
-- **AI Analysis**: Strava's "Athlete Intelligence" is not exposed via the API.
 
 ## Tech Stack
 
 - Python 3.11+ / [uv](https://docs.astral.sh/uv/)
 - [requests](https://docs.python-requests.org/) — Strava API
+- [garminconnect](https://github.com/cyberjunky/python-garminconnect) — Garmin Connect API
 - [google-api-python-client](https://github.com/googleapis/google-api-python-client) — Google Sheets API
 - [python-dotenv](https://github.com/theskumar/python-dotenv) — Environment config
+

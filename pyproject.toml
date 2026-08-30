@@ -11,4 +11,7 @@ dependencies = [
     "google-auth-httplib2>=0.1.1",
     "google-auth-oauthlib>=1.1.0",
     "garminconnect>=0.3.2",
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.52.4",
+    "google-genai>=2.20.0",
 ]

@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Endurance AI Dashboard — Strava & Garmin Coach</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="glass-panel">
+      <div class="brand-wrapper">
+        <div class="brand-icon">⚡</div>
+        <div>
+          <h1 class="brand-title">Endurance AI Dashboard</h1>
+          <p class="brand-subtitle">Strava Workouts & Garmin Biometrics Analytics</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <select id="weekSelector" class="week-selector" aria-label="Επιλογή Εβδομάδας">
+          <option value="current">Φόρτωση...</option>
+        </select>
+        <button id="syncSheetBtn" class="btn btn-primary">
+          <span>📊 Sync to Google Sheet</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Executive Metrics Grid -->
+    <div class="metrics-grid">
+      <!-- Total Hours Card -->
+      <div class="glass-panel metric-card">
+        <div class="metric-header">
+          <span class="metric-title">ΣΥΝΟΛΙΚΕΣ ΩΡΕΣ</span>
+          <span class="metric-icon">⏱️</span>
+        </div>
+        <div id="metricTotalHours" class="metric-value">0ω 0λ</div>
+        <div id="metricActivitiesCount" class="metric-subvalue">0 προπονήσεις αυτή την εβδομάδα</div>
+      </div>
+
+      <!-- Running Card -->
+      <div class="glass-panel metric-card card-run">
+        <div class="metric-header">
+          <span class="metric-title">ΤΡΕΞΙΜΟ</span>
+          <span class="metric-icon">🏃</span>
+        </div>
+        <div id="metricRunDist" class="metric-value">0.00 χλμ</div>
+        <div id="metricRunTime" class="metric-subvalue">0ω 0λ</div>
+      </div>
+
+      <!-- Cycling Card -->
+      <div class="glass-panel metric-card card-ride">
+        <div class="metric-header">
+          <span class="metric-title">ΠΟΔΗΛΑΣΙΑ</span>
+          <span class="metric-icon">🚴</span>
+        </div>
+        <div id="metricBikeDist" class="metric-value">0.00 χλμ</div>
+        <div id="metricBikeTime" class="metric-subvalue">0ω 0λ</div>
+      </div>
+
+      <!-- Swimming Card -->
+      <div class="glass-panel metric-card card-swim">
+        <div class="metric-header">
+          <span class="metric-title">ΚΟΛΥΜΒΗΣΗ</span>
+          <span class="metric-icon">🏊</span>
+        </div>
+        <div id="metricSwimDist" class="metric-value">0 μ</div>
+        <div id="metricSwimTime" class="metric-subvalue">0ω 0λ</div>
+      </div>
+
+      <!-- Garmin Health Card -->
+      <div class="glass-panel metric-card card-health">
+        <div class="metric-header">
+          <span class="metric-title">GARMIN ΥΓΕΙΑ & HRV</span>
+          <span class="metric-icon">😴</span>
+        </div>
+        <div id="metricSleep" class="metric-value">--h Ύπνος</div>
+        <div class="biometrics-row">
+          <div class="bio-badge">❤️ HRrest: <strong id="metricRhr">--</strong></div>
+          <div class="bio-badge">📈 HRV: <strong id="metricHrv">--</strong></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Content Layout -->
+    <div class="main-layout">
+      <!-- Left Column: Visual Charts & Calendar -->
+      <div class="content-left">
+        <!-- Interactive Charts Grid -->
+        <div class="charts-grid">
+          <div class="glass-panel chart-card">
+            <h3>Κατανομή Προπονητικού Όγκου (Ώρες)</h3>
+            <div class="chart-wrapper">
+              <canvas id="disciplineChart"></canvas>
+            </div>
+          </div>
+          <div class="glass-panel chart-card">
+            <h3>Συσχέτιση Αποκατάστασης (HRV & Ύπνος)</h3>
+            <div class="chart-wrapper">
+              <canvas id="recoveryChart"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- 7-Day Calendar Block -->
+        <div class="glass-panel calendar-section">
+          <div class="section-header">
+            <h2 class="section-title">Εβδομαδιαίο Ημερολόγιο Προπονήσεων</h2>
+            <span id="calendarDateRange" class="brand-subtitle">Δευτέρα – Κυριακή</span>
+          </div>
+          <div id="daysGrid" class="days-grid">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: AI Coach Assistant & Predictions -->
+      <div class="content-right ai-coach-panel">
+        <!-- AI Coach Card -->
+        <div class="glass-panel ai-card">
+          <div class="ai-header">
+            <h2 class="section-title">🤖 AI Endurance Coach</h2>
+            <span id="aiSourceBadge" class="ai-badge">Gemini Powered</span>
+          </div>
+
+          <!-- Readiness Meter -->
+          <div class="readiness-meter">
+            <div id="readinessCircle" class="readiness-score-circle" style="--score: 80">
+              <span id="readinessScore" class="readiness-number">80%</span>
+            </div>
+            <div class="readiness-info">
+              <h4 id="readinessTitle">Καλή Ετοιμότητα</h4>
+              <p id="readinessDesc">Το νευρικό σύστημα και η καρδιοαναπνευστική βάση βρίσκονται σε ισορροπία.</p>
+            </div>
+          </div>
+
+          <!-- AI Output & Advice -->
+          <div id="aiOutputBox" class="ai-output-box">
+Πατήστε «Ανάλυση Προπόνησης» για να δημιουργήσει το AI έξυπνη ανατροφοδότηση και συμβουλές για την εβδομάδα σας.
+          </div>
+
+          <div style="margin-top: 16px;">
+            <button id="generateAiBtn" class="btn btn-ai" style="width: 100%; justify-content: center;">
+              <span>✨ Δημιουργία AI Ανατροφοδότησης</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Athlete Feedback & Notes Editor -->
+        <div class="glass-panel feedback-editor">
+          <div class="section-header" style="margin-bottom: 12px;">
+            <h3 style="font-size: 16px;">Σημειώσεις Αθλητή & Αίσθηση</h3>
+          </div>
+
+          <textarea id="athleteNotesText" class="editor-textarea" placeholder="Γράψτε παρατηρήσεις, αίσθηση κόπωσης ή σχόλιο εβδομάδας..."></textarea>
+
+          <div class="sliders-row">
+            <div class="slider-group">
+              <span class="slider-label">Κόπωση: <strong id="fatigueVal">5/10</strong></span>
+              <input type="range" id="fatigueSlider" min="1" max="10" value="5">
+            </div>
+            <div class="slider-group">
+              <span class="slider-label">Μυϊκή ενόχλ.: <strong id="sorenessVal">3/10</strong></span>
+              <input type="range" id="sorenessSlider" min="1" max="10" value="3">
+            </div>
+            <div class="slider-group">
+              <span class="slider-label">Διάθεση: <strong id="moodVal">8/10</strong></span>
+              <input type="range" id="moodSlider" min="1" max="10" value="8">
+            </div>
+          </div>
+        </div>
+
+        <!-- Race Predictions Card -->
+        <div class="glass-panel ai-card">
+          <div class="ai-header">
+            <h3 style="font-size: 16px;">🏆 Πρόβλεψη Χρόνων Αγώνα</h3>
+            <span id="basePaceBadge" class="bio-badge">Βάση: 5:00 /χλμ</span>
+          </div>
+          <table class="predictions-table">
+            <thead>
+              <tr>
+                <th>Απόσταση</th>
+                <th>Εκτιμώμενος Χρόνος</th>
+                <th>Ρυθμός (/χλμ)</th>
+              </tr>
+            </thead>
+            <tbody id="predictionsBody">
+              <!-- Rendered dynamically -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast notification container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
