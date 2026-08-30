@@ -12,13 +12,14 @@ Includes a **FastAPI + Single Page Web App** featuring **Relative Effort (Suffer
 strava_to_google_sheet/
 ├── src/                          # Core backend package
 │   ├── config.py                 # Centralized configuration & environment variables
+│   ├── formatting.py             # Duration/pace formatting & sport data corrections
 │   ├── integrations/             # External service APIs
 │   │   ├── strava.py             # Strava OAuth2 & activity fetcher
 │   │   ├── garmin.py             # Garmin Connect authentication & biometrics
 │   │   └── sheets.py             # Google Sheets API & dual-layout sync engine
 │   ├── analytics/                # Data processing & AI
 │   │   ├── metrics.py            # Relative Effort (Suffer Score), ACWR, weekly/monthly volume
-│   │   └── ai_coach.py           # Gemini 2.5 Flash LLM coach & Peter Riegel race predictor
+│   │   └── ai_coach.py           # Gemini LLM coach & Peter Riegel race predictor
 │   └── api/                      # Web API Server
 │       └── server.py             # FastAPI REST endpoints & routes
 ├── web/                          # Frontend Single Page App
@@ -27,9 +28,11 @@ strava_to_google_sheet/
 │   └── app.js                    # Chart.js charts & dynamic interaction logic
 ├── main.py                       # Root CLI entry point
 ├── server.py                     # Root Web server entry point
+├── tests/                        # pytest suite (formatting, metrics, sheets, caching)
 ├── pyproject.toml                # Project dependencies and config
 ├── README.md                     # User documentation
 ├── AGENTS.md                     # AI Agent Technical Manual
+├── .env.example                  # Documented configuration template
 └── .env
 ```
 
@@ -43,15 +46,44 @@ strava_to_google_sheet/
 - ✅ **Appends Below Coach Notes**: Preserves coach training instructions and appends Strava data under `── Strava Data ──`.
 - ✅ **Weekly Totals**: Automatically sums and writes weekly totals for Running, Cycling, Swimming, Strength Training (Ενδυνάμωση), Total Training Hours, and Garmin Health Tracker (`Ύπνος __h • HRrest __ • HRV __`).
 - ✅ **Swimming Pace in /100m**: Formats swimming pace in time per 100 meters (e.g. `1:24 /100μ`).
-- ✅ **Swimming Distance Correction**: Halves all swimming distances and average speeds (divided by 2) to correct watch double-counting.
-- ✅ **Indoor Cycling Estimation**: Automatically estimates distance for indoor trainer rides based on moving time at a 21 km/h average speed.
+- ✅ **Swimming Distance Correction**: Halves all swimming distances and average speeds to correct watch double-counting (configurable via `SWIM_DISTANCE_DIVISOR`).
+- ✅ **Indoor Cycling Estimation**: Automatically estimates distance for indoor trainer rides that report zero, based on moving time at a nominal average speed (`INDOOR_BIKE_SPEED_KMH`, default 21 km/h).
 - ✅ **Interactive Web Dashboard**: Glassmorphic UI with 7-day calendar, Chart.js volume distributions, and Garmin biometrics.
 - ✅ **Multi-Week & Monthly Progression Analytics**:
   - *Weekly Relative Effort & Hours Progression*
   - *Stacked Discipline Volume (Run / Bike / Swim km)*
   - *Elevation Gain Tracker (⛰️ Vertical Ascent in meters)*
-  - *Acute:Chronic Workload Ratio (ACWR - Overtraining Index)*
-- ✅ **AI Coach & Race Predictor**: Qualitative coaching evaluation powered by **Gemini 2.5 Flash** and Peter Riegel race finish time predictions.
+  - *Acute:Chronic Workload Ratio (ACWR - Overtraining Index)* — chronic baseline is the mean of the **preceding** 4 weeks, and no ratio is reported until at least 2 weeks of history exist.
+- ✅ **AI Coach & Race Predictor**: Qualitative coaching evaluation powered by **Gemini** and Peter Riegel race finish time predictions.
+- ✅ **Rate-limit Aware**: Strava's 200 req / 15 min budget is respected with throttled detail fetches, `Retry-After` honouring retries, and a hard error instead of silently writing blank cells.
+
+---
+
+## ⚙️ Configuration
+
+All settings live in `.env`. Only the credentials are required; everything else has
+a sensible default. See [`.env.example`](.env.example) for the fully documented list.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `STRAVA_CLIENT_ID` / `STRAVA_CLIENT_SECRET` | — | Strava API app credentials |
+| `GOOGLE_SHEET_ID` | — | Target spreadsheet; required for `--sheet` |
+| `GARMIN_EMAIL` / `GARMIN_PASSWORD` | — | Garmin Connect login |
+| `GEMINI_API_KEY` | — | AI coach (falls back to heuristics if unset) |
+| `SERVER_HOST` | `127.0.0.1` | Dashboard bind address — loopback, as the API is unauthenticated |
+| `SERVER_PORT` | `8000` | Dashboard port |
+| `ALLOWED_ORIGINS` | localhost on `SERVER_PORT` | Comma-separated CORS origins |
+| `STRAVA_REDIRECT_PORT` | `8123` | Local OAuth callback listener; **must differ from `SERVER_PORT`** |
+| `STRAVA_DETAIL_DELAY_SEC` | `0.15` | Pause between per-activity detail requests |
+| `STRAVA_MAX_RETRIES` | `3` | Retries on HTTP 429 |
+| `ACTIVITIES_CACHE_TTL` | `600` | Strava activity cache lifetime (seconds) |
+| `GARMIN_CACHE_TTL` | `21600` | Garmin week cache lifetime; finished weeks are kept indefinitely |
+| `HR_MAX` / `HR_REST` | `185` / `50` | Athlete physiology for the TRIMP effort estimate |
+| `SWIM_DISTANCE_DIVISOR` | `2.0` | Swim distance/speed correction |
+| `INDOOR_BIKE_SPEED_KMH` | `21.0` | Nominal speed for estimating indoor ride distance |
+| `ACWR_CHRONIC_WEEKS` | `4` | Weeks in the chronic baseline window |
+| `ACWR_MIN_CHRONIC_WEEKS` | `2` | Minimum history before a ratio is reported |
+| `GEMINI_MODELS` | `gemini-2.5-flash,gemini-2.0-flash` | Models tried in order |
 
 ---
 
@@ -74,7 +106,10 @@ uv run python main.py --sheet      # Sync Strava + Garmin to Google Sheet
 uv run python main.py --sheet --count 50   # Fetch last 50 activities
 
 # 5. Launch Web Dashboard
-uv run python server.py            # Open http://localhost:8000
+uv run python server.py            # Open http://127.0.0.1:8000
+
+# 6. Run the test suite
+uv run pytest
 ```
 
 ---
@@ -83,7 +118,10 @@ uv run python server.py            # Open http://localhost:8000
 
 ### 1. Strava API
 1. Go to [strava.com/settings/api](https://www.strava.com/settings/api)
-2. Create an application with `localhost` callback domain.
+2. Set the **Authorized Callback Domain** to `localhost`. Strava validates the
+   domain only, so the callback listener's port (`STRAVA_REDIRECT_PORT`, default
+   `8123`) needs no separate registration — it just has to differ from
+   `SERVER_PORT` so the dashboard and the OAuth listener don't collide.
 3. Copy **Client ID** and **Client Secret** into `.env`.
 
 ### 2. Google Sheets API
