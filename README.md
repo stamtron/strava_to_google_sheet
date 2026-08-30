@@ -9,8 +9,10 @@ Automatically fetch your training logs from **Strava** and sync them to your **G
 - ✅ Google Sheets sync — writes to the correct cell by date
 - ✅ **Appends** below existing coach instructions (never overwrites)
 - ✅ Greek formatting matching the coaching sheet style
-- ✅ **Weekly Totals (Column A)**: Automatically sums and writes weekly totals for Running, Cycling, Swimming, Strength Training (Ενδυνάμωση), and overall Training Hours (Συνολικές ώρες προπόνησης) by replacing placeholders in Column A.
+- ✅ **Weekly Totals**: Automatically sums and writes weekly totals for Running, Cycling, Swimming, Strength Training (Ενδυνάμωση), and overall Training Hours (Συνολικές ώρες προπόνησης).
+- ✅ **Garmin 24/7 Health Metrics**: Automatically fetches total Sleep hours, weekly average Resting Heart Rate (HRrest), and overnight HRV from Garmin Connect.
 - ✅ **Swimming Distance Correction**: Halves all swimming distances and average speeds (divided by 2) to correct watch double-counting.
+- ✅ **Swimming Pace in /100m**: Formats swimming pace in time per 100 meters (e.g. `1:24 /100μ`).
 - ✅ **Indoor Cycling Estimation**: Automatically estimates distance for indoor trainer rides (marked as trainer and with `< 0.1 km` distance) based on moving time at a 21 km/h average speed.
 - ✅ Idempotent — re-running replaces only the Strava data section and updates the weekly totals correctly
 - ✅ Optional weekly automation via cron
@@ -71,7 +73,11 @@ uv run python main.py --sheet --count 50   # Fetch more activities
    - Click **Create** → **Download JSON**
    - Rename the file to `credentials.json` and place it in the project root
 
-### 3. Environment Variables
+### 3. Garmin Connect (Optional - for Sleep, HRrest & HRV)
+
+Add your Garmin Connect email and password to `.env`. Session tokens are cached in `.garmin_tokens/` so you don't have to re-enter your password on subsequent runs.
+
+### 4. Environment Variables
 
 Create a `.env` file in the project root:
 
@@ -79,6 +85,8 @@ Create a `.env` file in the project root:
 STRAVA_CLIENT_ID=your_strava_client_id
 STRAVA_CLIENT_SECRET=your_strava_client_secret
 GOOGLE_SHEET_ID=your_sheet_id
+GARMIN_EMAIL=your_garmin_email@example.com
+GARMIN_PASSWORD=your_garmin_password
 ```
 
 > **Tip**: Your Google Sheet ID is the long string in the URL:

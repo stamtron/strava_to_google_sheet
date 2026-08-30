@@ -17,6 +17,9 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
+from garmin_client import get_garmin_client, get_weekly_health_summary
+
+
 load_dotenv()
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -97,7 +100,7 @@ def _get_week_start(target_date: date) -> date:
 
 
 def parse_date_range(text: str) -> tuple[date, date] | None:
-    """Parse a date range string from the coaching sheet (e.g. '13-19/7/\'26')."""
+    """Parse a date range string from the coaching sheet (e.g. '13-19/7/\'26' or '24/8–30/8/2026')."""
     if not text:
         return None
     # Clean up text: take only the first line, strip whitespace
@@ -109,14 +112,15 @@ def parse_date_range(text: str) -> tuple[date, date] | None:
     # Normalize quotes
     first_line = first_line.replace('’', "'").replace('‘', "'").replace('`', "'")
     
-    # Try to match: Day-Day/Month/'Year
-    # e.g., 1-7/9/'25 or 10-16/3/'25
-    m1 = re.match(r"^(\d+)-(\d+)/(\d+)/'(\d+)$", first_line)
+    # Try to match: Day-Day/Month/'Year or Day-Day/Month/Year
+    # e.g., 1-7/9/'25 or 10-16/3/2025
+    m1 = re.match(r"^(\d+)-(\d+)/(\d+)/'?(\d{2}|\d{4})$", first_line)
     if m1:
         start_day = int(m1.group(1))
         end_day = int(m1.group(2))
         month = int(m1.group(3))
-        year = 2000 + int(m1.group(4))
+        yr_val = int(m1.group(4))
+        year = 2000 + yr_val if yr_val < 100 else yr_val
         if start_day > end_day:
             start_month = month - 1 if month > 1 else 12
             start_year = year if month > 1 else year - 1
@@ -128,31 +132,34 @@ def parse_date_range(text: str) -> tuple[date, date] | None:
         except ValueError:
             return None
         
-    # Try to match: Day/Month-Day/Month/'Year
-    # e.g., 29/9-5/10/'25 or 31/3-6/4/'25
-    m2 = re.match(r"^(\d+)/(\d+)-(\d+)/(\d+)/'(\d+)$", first_line)
+    # Try to match: Day/Month-Day/Month/'Year or Day/Month-Day/Month/Year
+    # e.g., 29/9-5/10/'25 or 24/8-30/8/2026
+    m2 = re.match(r"^(\d+)/(\d+)-(\d+)/(\d+)/'?(\d{2}|\d{4})$", first_line)
     if m2:
         start_day = int(m2.group(1))
         start_month = int(m2.group(2))
         end_day = int(m2.group(3))
         end_month = int(m2.group(4))
-        year = 2000 + int(m2.group(5))
+        yr_val = int(m2.group(5))
+        year = 2000 + yr_val if yr_val < 100 else yr_val
         start_year = year if start_month <= end_month else year - 1
         try:
             return date(start_year, start_month, start_day), date(year, end_month, end_day)
         except ValueError:
             return None
         
-    # Try to match: Day/Month/'Year-Day/Month/'Year
-    # e.g., 29/12/'25-4/1/'26
-    m3 = re.match(r"^(\d+)/(\d+)/'(\d+)-(\d+)/(\d+)/'(\d+)$", first_line)
+    # Try to match: Day/Month/'Year-Day/Month/'Year or Day/Month/Year-Day/Month/Year
+    # e.g., 29/12/'25-4/1/'26 or 29/12/2025-4/1/2026
+    m3 = re.match(r"^(\d+)/(\d+)/'?(\d{2}|\d{4})-(\d+)/(\d+)/'?(\d{2}|\d{4})$", first_line)
     if m3:
         start_day = int(m3.group(1))
         start_month = int(m3.group(2))
-        start_year = 2000 + int(m3.group(3))
+        start_yr_val = int(m3.group(3))
+        start_year = 2000 + start_yr_val if start_yr_val < 100 else start_yr_val
         end_day = int(m3.group(4))
         end_month = int(m3.group(5))
-        end_year = 2000 + int(m3.group(6))
+        end_yr_val = int(m3.group(6))
+        end_year = 2000 + end_yr_val if end_yr_val < 100 else end_yr_val
         try:
             return date(start_year, start_month, start_day), date(end_year, end_month, end_day)
         except ValueError:
@@ -211,10 +218,15 @@ def _day_to_column(target_date: date) -> str:
 
 
 def format_pace(speed_mps: float, sport_type: str) -> str:
-    """Convert m/s to min/km pace for running, km/h for cycling."""
+    """Convert m/s to min/km pace for running, min/100m for swimming, km/h for cycling."""
     if speed_mps <= 0:
         return ""
-    if "Run" in sport_type or "Walk" in sport_type or "Hike" in sport_type:
+    if sport_type == "Swim":
+        pace_sec_per_100m = 100 / speed_mps
+        mins = int(pace_sec_per_100m // 60)
+        secs = int(pace_sec_per_100m % 60)
+        return f"{mins}:{secs:02d} /100μ"
+    elif "Run" in sport_type or "Walk" in sport_type or "Hike" in sport_type:
         pace_sec_per_km = 1000 / speed_mps
         mins = int(pace_sec_per_km // 60)
         secs = int(pace_sec_per_km % 60)
@@ -367,7 +379,8 @@ def write_to_sheet(
 
     Reads existing cell content first and APPENDS the Strava data below it,
     preserving any coach instructions already in the cell. Also calculates
-    weekly totals and updates Column A.
+    weekly totals and updates the sheet based on the format (old single-row
+    or new 7-row block layout).
     """
     from collections import defaultdict
     service = get_sheets_service()
@@ -380,25 +393,88 @@ def write_to_sheet(
         print(f"  ⚠️  Could not load dynamic row mapping: {e}. Using mathematical mapping fallback.")
         mapping = None
 
+    # Step 1: Compute week start rows for all target dates
+    week_rows = set()
+    for target_date in activities_by_date:
+        row = _calculate_row_for_date(target_date, mapping)
+        week_rows.add(row)
+    unique_week_rows = sorted(list(week_rows))
+
+    if not unique_week_rows:
+        print("  ℹ️  No activities to write.")
+        return
+
+    # Step 2: Dynamically detect layout for each unique week row
+    layout_check_ranges = []
+    for r in unique_week_rows:
+        layout_check_ranges.append(f"'{SHEET_NAME}'!A{r}")
+        layout_check_ranges.append(f"'{SHEET_NAME}'!A{r+4}")
+
+    try:
+        layout_check_result = (
+            sheet.values()
+            .batchGet(spreadsheetId=SPREADSHEET_ID, ranges=layout_check_ranges)
+            .execute()
+        )
+    except Exception as e:
+        print(f"  ⚠️  Failed to fetch layout verification cells: {e}. Defaulting to old layout.")
+        layout_check_result = {}
+
+    layout_values = {}
+    for vr in layout_check_result.get("valueRanges", []):
+        range_key = vr.get("range", "")
+        values = vr.get("values", [[]])
+        layout_values[range_key] = values[0][0] if values and values[0] else ""
+
+    def get_layout_check_val(col_letter: str, row_num: int) -> str:
+        cell_coord = f"{col_letter}{row_num}"
+        for key, val in layout_values.items():
+            parts = key.split('!')
+            if len(parts) > 1:
+                coord_part = parts[1].replace('$', '')
+                if cell_coord in coord_part:
+                    return val
+        return ""
+
+    layout_by_row = {}
+    for r in unique_week_rows:
+        val_r_plus_4 = get_layout_check_val("A", r + 4).strip().upper()
+        if "ΑΝΑΤΡΟΦΟΔΟΤΗΣΗ" in val_r_plus_4 or "FEEDBACK" in val_r_plus_4:
+            layout_by_row[r] = "new"
+            print(f"  🔍 Row {r} detected as NEW block layout")
+        else:
+            layout_by_row[r] = "old"
+            print(f"  🔍 Row {r} detected as OLD single-row layout")
+
+    # Step 3: Build list of daily cell info and total activities per row
     cell_info = []
     activities_by_row = defaultdict(list)
 
     for target_date, day_activities in sorted(activities_by_date.items()):
-        row = _calculate_row_for_date(target_date, mapping)
+        week_start_row = _calculate_row_for_date(target_date, mapping)
+        layout = layout_by_row[week_start_row]
         col = _day_to_column(target_date)
-        cell_ref = f"'{SHEET_NAME}'!{col}{row}"
-        cell_info.append((target_date, day_activities, row, col, cell_ref))
-        activities_by_row[row].extend(day_activities)
 
-    if not cell_info:
-        print("  ℹ️  No activities to write.")
-        return
+        if layout == "new":
+            target_row = week_start_row + 4
+        else:
+            target_row = week_start_row
 
-    # Batch-read existing content from all target cells (daily columns B-H and weekly column A)
+        cell_ref = f"'{SHEET_NAME}'!{col}{target_row}"
+        cell_info.append((target_date, day_activities, target_row, col, cell_ref, week_start_row, layout))
+        activities_by_row[week_start_row].extend(day_activities)
+
+    # Step 4: Batch-read existing content from daily cells and weekly totals cells
     ranges = [info[4] for info in cell_info]
-    unique_rows = sorted(list(activities_by_row.keys()))
-    for r in unique_rows:
-        ranges.append(f"'{SHEET_NAME}'!A{r}")
+    for r in unique_week_rows:
+        layout = layout_by_row[r]
+        if layout == "new":
+            ranges.append(f"'{SHEET_NAME}'!B{r+5}")
+        else:
+            ranges.append(f"'{SHEET_NAME}'!A{r}")
+
+    # Deduplicate ranges
+    ranges = list(set(ranges))
 
     existing_result = (
         sheet.values()
@@ -418,18 +494,22 @@ def write_to_sheet(
             parts = key.split('!')
             if len(parts) > 1:
                 coord_part = parts[1].replace('$', '')
-                if cell_coord in coord_part:
+                if ':' in coord_part:
+                    coord_parts = coord_part.split(':')
+                    if cell_coord in coord_parts:
+                        return val
+                elif coord_part == cell_coord:
                     return val
         return ""
 
-    # Build updates: append Strava data below existing content
+    # Step 5: Build updates for daily cells and weekly totals
     SEPARATOR = "\n\n── Strava Data ──\n"
     updates = []
 
-    # Update daily cells (B-H)
-    for target_date, day_activities, row, col, cell_ref in cell_info:
+    # Update daily cells (B-H of either row R or row R+4)
+    for target_date, day_activities, target_row, col, cell_ref, week_start_row, layout in cell_info:
         formatted = format_activities_for_cell(day_activities, details)
-        existing = get_existing_value(col, row)
+        existing = get_existing_value(col, target_row)
 
         if existing and existing.strip():
             # Check if Strava data was already appended (avoid duplicates)
@@ -451,19 +531,41 @@ def write_to_sheet(
 
         status = "📝" if not existing else "📝+"
         print(
-            f"  {status} {target_date.strftime('%a %Y-%m-%d')} → cell {col}{row} "
-            f"({len(day_activities)} activities)"
+            f"  {status} {target_date.strftime('%a %Y-%m-%d')} → cell {col}{target_row} "
+            f"({len(day_activities)} activities, layout: {layout})"
         )
 
-    # Update Column A weekly totals
-    for row in unique_rows:
-        existing_a = get_existing_value("A", row)
-        if not existing_a or not existing_a.strip():
-            continue
+    # Initialize Garmin client if credentials are configured
+    garmin_client = get_garmin_client()
 
-        # Compute weekly totals from all activities on this row (week)
-        row_activities = activities_by_row[row]
+    # Update weekly totals
+    for r in unique_week_rows:
+        layout = layout_by_row[r]
+        row_activities = activities_by_row[r]
         run_dist, run_time, bike_dist, bike_time, bike_elev, swim_dist_m, swim_time, strength_time = calculate_weekly_totals(row_activities)
+
+        # Determine week Monday and Sunday for Garmin query
+        row_dates = [
+            datetime.fromisoformat(a["start_date_local"].replace("Z", "+00:00")).date()
+            for a in row_activities
+        ]
+        week_monday = _get_week_start(row_dates[0])
+        week_sunday = week_monday + timedelta(days=6)
+
+        # Query Garmin Health data if client is authenticated
+        health_summary = None
+        if garmin_client:
+            try:
+                health_summary = get_weekly_health_summary(week_monday, week_sunday, garmin_client)
+            except Exception as e:
+                print(f"  ⚠️  Failed to fetch Garmin data for week {week_monday}: {e}")
+
+        sleep_val = f"{health_summary['total_sleep_h']:.1f}h" if health_summary and health_summary.get("total_sleep_h") else None
+        rhr_val = f"{health_summary['avg_rhr']}" if health_summary and health_summary.get("avg_rhr") else None
+        hrv_val = f"{health_summary['avg_hrv']}" if health_summary and health_summary.get("avg_hrv") else None
+
+        if health_summary:
+            print(f"  😴 Garmin Health ({week_monday} → {week_sunday}): Sleep={sleep_val or 'N/A'}, HRrest={rhr_val or 'N/A'}, HRV={hrv_val or 'N/A'}")
 
         # Format strings
         running_str = f" {run_dist:.2f} χλμ / {format_duration_short(run_time)}" if run_time > 0 else " 0.00 χλμ / 0λ"
@@ -477,54 +579,139 @@ def write_to_sheet(
         total_time = sum(int(activity.get("moving_time", 0)) for activity in row_activities)
         total_str = f" {format_duration_short(total_time)}"
 
-        # Perform replacements for targets in Column A
-        new_a = existing_a
-        new_a = re.sub(r"^(\s*Τρέξιμο\s*:).*$", rf"\1{running_str}", new_a, flags=re.M)
-        new_a = re.sub(r"^(\s*Ποδηλασία\s*:).*$", rf"\1{cycling_str}", new_a, flags=re.M)
-        new_a = re.sub(r"^(\s*Κολύμβηση\s*:).*$", rf"\1{swimming_str}", new_a, flags=re.M)
-        new_a = re.sub(r"^(\s*Κολύμπι\s*:).*$", rf"\1{swimming_str}", new_a, flags=re.M)
+        if layout == "old":
+            existing_a = get_existing_value("A", r)
+            if not existing_a or not existing_a.strip():
+                continue
 
-        # Insert / Update Strength Training (Ενδυνάμωση)
-        if "Ενδυνάμωση" in new_a:
-            new_a = re.sub(r"^(\s*Ενδυνάμωση\s*:).*$", rf"\1{strength_str}", new_a, flags=re.M)
-        else:
-            if "Κολύμβηση" in new_a:
-                new_a = re.sub(r"^(\s*Κολύμβηση\s*:.*)$", rf"\1\nΕνδυνάμωση :{strength_str}", new_a, flags=re.M)
-            elif "Κολύμπι" in new_a:
-                new_a = re.sub(r"^(\s*Κολύμπι\s*:.*)$", rf"\1\nΕνδυνάμωση :{strength_str}", new_a, flags=re.M)
-            elif "Αίσθηση κούρασης" in new_a:
-                new_a = re.sub(r"^(\s*Αίσθηση κούρασης.*)$", rf"Ενδυνάμωση :{strength_str}\n\1", new_a, flags=re.M)
+            # Perform replacements for targets in Column A (Old Format)
+            new_a = existing_a
+            new_a = re.sub(r"^(\s*Τρέξιμο\s*:).*$", rf"\1{running_str}", new_a, flags=re.M)
+            new_a = re.sub(r"^(\s*Ποδηλασία\s*:).*$", rf"\1{cycling_str}", new_a, flags=re.M)
+            new_a = re.sub(r"^(\s*Κολύμβηση\s*:).*$", rf"\1{swimming_str}", new_a, flags=re.M)
+            new_a = re.sub(r"^(\s*Κολύμπι\s*:).*$", rf"\1{swimming_str}", new_a, flags=re.M)
 
-        # Insert / Update Total Training Hours (Συνολικές ώρες προπόνησης)
-        if "Συνολικές ώρες προπόνησης" in new_a:
-            new_a = re.sub(r"^(\s*Συνολικές ώρες προπόνησης\s*:).*$", rf"\1{total_str}", new_a, flags=re.M)
-        else:
+            # Insert / Update Strength Training (Ενδυνάμωση)
             if "Ενδυνάμωση" in new_a:
-                new_a = re.sub(r"^(\s*Ενδυνάμωση\s*:.*)$", rf"\1\nΣυνολικές ώρες προπόνησης :{total_str}", new_a, flags=re.M)
-            elif "Κολύμβηση" in new_a:
-                new_a = re.sub(r"^(\s*Κολύμβηση\s*:.*)$", rf"\1\nΣυνολικές ώρες προπόνησης :{total_str}", new_a, flags=re.M)
-            elif "Κολύμπι" in new_a:
-                new_a = re.sub(r"^(\s*Κολύμπι\s*:.*)$", rf"\1\nΣυνολικές ώρες προπόνησης :{total_str}", new_a, flags=re.M)
-            elif "Αίσθηση κούρασης" in new_a:
-                new_a = re.sub(r"^(\s*Αίσθηση κούρασης.*)$", rf"Συνολικές ώρες προπόνησης :{total_str}\n\1", new_a, flags=re.M)
+                new_a = re.sub(r"^(\s*Ενδυνάμωση\s*:).*$", rf"\1{strength_str}", new_a, flags=re.M)
+            else:
+                if "Κολύμβηση" in new_a:
+                    new_a = re.sub(r"^(\s*Κολύμβηση\s*:.*)$", rf"\1\nΕνδυνάμωση :{strength_str}", new_a, flags=re.M)
+                elif "Κολύμπι" in new_a:
+                    new_a = re.sub(r"^(\s*Κολύμπι\s*:.*)$", rf"\1\nΕνδυνάμωση :{strength_str}", new_a, flags=re.M)
+                elif "Αίσθηση κούρασης" in new_a:
+                    new_a = re.sub(r"^(\s*Αίσθηση κούρασης.*)$", rf"Ενδυνάμωση :{strength_str}\n\1", new_a, flags=re.M)
 
-        if new_a != existing_a:
-            updates.append(
-                {
-                    "range": f"'{SHEET_NAME}'!A{row}",
-                    "values": [[new_a]],
-                }
-            )
-            print(f"  📝 Column A (Row {row}) totals updated")
+            # Insert / Update Total Training Hours (Συνολικές ώρες προπόνησης)
+            if "Συνολικές ώρες προπόνησης" in new_a:
+                new_a = re.sub(r"^(\s*Συνολικές ώρες προπόνησης\s*:).*$", rf"\1{total_str}", new_a, flags=re.M)
+            else:
+                if "Ενδυνάμωση" in new_a:
+                    new_a = re.sub(r"^(\s*Ενδυνάμωση\s*:.*)$", rf"\1\nΣυνολικές ώρες προπόνησης :{total_str}", new_a, flags=re.M)
+                elif "Κολύμβηση" in new_a:
+                    new_a = re.sub(r"^(\s*Κολύμβηση\s*:.*)$", rf"\1\nΣυνολικές ώρες προπόνησης :{total_str}", new_a, flags=re.M)
+                elif "Κολύμπι" in new_a:
+                    new_a = re.sub(r"^(\s*Κολύμπι\s*:.*)$", rf"\1\nΣυνολικές ώρες προπόνησης :{total_str}", new_a, flags=re.M)
+                elif "Αίσθηση κούρασης" in new_a:
+                    new_a = re.sub(r"^(\s*Αίσθηση κούρασης.*)$", rf"Συνολικές ώρες προπόνησης :{total_str}\n\1", new_a, flags=re.M)
 
-    body = {"valueInputOption": "RAW", "data": updates}
-    result = (
-        sheet.values()
-        .batchUpdate(spreadsheetId=SPREADSHEET_ID, body=body)
-        .execute()
-    )
+            # Insert / Update Sleep / HRrest / HRV line
+            sleep_hrv_str = f"Ύπνος {sleep_val or '__h'} • HRrest {rhr_val or '__'} • HRV {hrv_val or '__'}"
+            if "Ύπνος" in new_a or "HRrest" in new_a:
+                new_a = re.sub(r"^(\s*Ύπνος\s*.*?•\s*HRrest\s*.*?•\s*HRV\s*.*?)$", sleep_hrv_str, new_a, flags=re.M)
+            else:
+                if "Συνολικές ώρες προπόνησης" in new_a:
+                    new_a = re.sub(r"^(\s*Συνολικές ώρες προπόνησης\s*:.*)$", rf"\1\n{sleep_hrv_str}", new_a, flags=re.M)
+                elif "Αίσθηση κούρασης" in new_a:
+                    new_a = re.sub(r"^(\s*Αίσθηση κούρασης.*)$", rf"{sleep_hrv_str}\n\1", new_a, flags=re.M)
+                elif "Γενικές παρατηρήσεις" in new_a:
+                    new_a = re.sub(r"^(\s*Γενικές παρατηρήσεις.*)$", rf"{sleep_hrv_str}\n\1", new_a, flags=re.M)
+                else:
+                    new_a = new_a.rstrip() + f"\n{sleep_hrv_str}\n"
 
-    print(f"\n✅ Updated {result.get('totalUpdatedCells', 0)} cells in Google Sheets!")
+            if new_a != existing_a:
+                updates.append(
+                    {
+                        "range": f"'{SHEET_NAME}'!A{r}",
+                        "values": [[new_a]],
+                    }
+                )
+                print(f"  📝 Column A (Row {r}) totals updated (OLD format)")
+
+        else:
+            # layout == "new"
+            target_row = r + 5
+            existing_b = get_existing_value("B", target_row)
+
+            running_time_val = format_duration_short(run_time)
+            cycling_time_val = format_duration_short(bike_time)
+            swimming_time_val = format_duration_short(swim_time)
+
+            has_template = existing_b and "Τρέξιμο" in existing_b and "Ποδηλασία" in existing_b and "Κολύμβηση" in existing_b
+
+            if not has_template:
+                # Fallback / create from default template
+                new_b = (
+                    f"Τρέξιμο {run_dist:.2f} χλμ / {running_time_val} • Ποδηλασία {bike_dist:.2f} χλμ / {cycling_time_val} • Κολύμβηση {swim_dist_m:.0f} μ / {swimming_time_val}\n"
+                    f"Κόπωση __/10 • Ύπνος {sleep_val or '__h'} • HRrest {rhr_val or '__'} • HRV {hrv_val or '__'} • Μυϊκή ενόχληση __/10 • Διάθεση __/10\n"
+                    f"Σχόλιο εβδομάδας:"
+                )
+            else:
+                # Update in-place using robust regex replacements
+                new_b = existing_b
+                new_b = re.sub(
+                    r"(Τρέξιμο\s+)([^/]+?)(\s*χλμ\s*/\s*)([^•\n]+?)(\s*)(?=•|\n|$)",
+                    rf"\g<1>{run_dist:.2f}\g<3>{running_time_val}\g<5>",
+                    new_b
+                )
+                new_b = re.sub(
+                    r"(Ποδηλασία\s+)([^/]+?)(\s*χλμ\s*/\s*)([^•\n]+?)(\s*)(?=•|\n|$)",
+                    rf"\g<1>{bike_dist:.2f}\g<3>{cycling_time_val}\g<5>",
+                    new_b
+                )
+                new_b = re.sub(
+                    r"(Κολύμβηση\s+)([^/]+?)(\s*μ\s*/\s*)([^•\n]+?)(\s*)(?=•|\n|$)",
+                    rf"\g<1>{swim_dist_m:.0f}\g<3>{swimming_time_val}\g<5>",
+                    new_b
+                )
+                if sleep_val:
+                    new_b = re.sub(
+                        r"(Ύπνος\s+)([^•\n]+?)(\s*)(?=•|\n|$)",
+                        rf"\g<1>{sleep_val}\g<3>",
+                        new_b
+                    )
+                if rhr_val:
+                    new_b = re.sub(
+                        r"(HRrest\s+)([^•\n]+?)(\s*)(?=•|\n|$)",
+                        rf"\g<1>{rhr_val}\g<3>",
+                        new_b
+                    )
+                if hrv_val:
+                    new_b = re.sub(
+                        r"(HRV\s+)([^•\n]+?)(\s*)(?=•|\n|$)",
+                        rf"\g<1>{hrv_val}\g<3>",
+                        new_b
+                    )
+
+            if new_b != existing_b:
+                updates.append(
+                    {
+                        "range": f"'{SHEET_NAME}'!B{target_row}",
+                        "values": [[new_b]],
+                    }
+                )
+                print(f"  📝 Column B (Row {target_row}) totals updated (NEW format)")
+
+    if updates:
+        body = {"valueInputOption": "RAW", "data": updates}
+        result = (
+            sheet.values()
+            .batchUpdate(spreadsheetId=SPREADSHEET_ID, body=body)
+            .execute()
+        )
+        print(f"\n✅ Updated {result.get('totalUpdatedCells', 0)} cells in Google Sheets!")
+    else:
+        print("\nℹ️ No updates needed.")
 
 
 def verify_cell_mapping(target_date: date) -> None:

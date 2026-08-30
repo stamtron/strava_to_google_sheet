@@ -4,9 +4,10 @@
 # Environment variables (contains secrets)
 .env
 
-# Cached OAuth tokens (contain secrets)
+# Cached OAuth / API tokens (contain secrets)
 token.json
 gsheets_token.json
+.garmin_tokens/
 
 # Google OAuth credentials (contains secrets)
 credentials.json
@@ -15,3 +16,4 @@ credentials.json
 __pycache__/
 *.pyc
 *.pyo
+

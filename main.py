@@ -50,10 +50,15 @@ def format_duration(seconds: int) -> str:
 
 
 def format_pace(speed_mps: float, sport_type: str) -> str:
-    """Convert m/s to min/km pace for running, km/h for cycling."""
+    """Convert m/s to min/km pace for running, min/100m for swimming, km/h for cycling."""
     if speed_mps <= 0:
         return "—"
-    if "Run" in sport_type or "Walk" in sport_type or "Hike" in sport_type:
+    if sport_type == "Swim":
+        pace_sec_per_100m = 100 / speed_mps
+        mins = int(pace_sec_per_100m // 60)
+        secs = int(pace_sec_per_100m % 60)
+        return f"{mins}:{secs:02d} /100m"
+    elif "Run" in sport_type or "Walk" in sport_type or "Hike" in sport_type:
         pace_sec_per_km = 1000 / speed_mps
         mins = int(pace_sec_per_km // 60)
         secs = int(pace_sec_per_km % 60)
