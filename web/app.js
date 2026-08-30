@@ -14,6 +14,16 @@ let acwrProgressionChart = null;
 const DAY_NAMES_EL = ["Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο", "Κυριακή"];
 const DAY_SHORT_EL = ["ΔΕΥ", "ΤΡΙ", "ΤΕΤ", "ΠΕΜ", "ΠΑΡ", "ΣΑΒ", "ΚΥΡ"];
 
+// Presentation for the ACWR zones emitted by the API (`acwr.zone`). Colours live
+// here, not in the analytics layer, which only reports the machine-readable zone.
+const ACWR_ZONE_STYLES = {
+  low: { color: "#38bdf8", border: "rgba(56, 189, 248, 0.3)" },
+  optimal: { color: "#10b981", border: "rgba(16, 185, 129, 0.3)" },
+  overreaching: { color: "#f59e0b", border: "rgba(245, 158, 11, 0.3)" },
+  spike: { color: "#ef4444", border: "rgba(239, 68, 68, 0.3)" },
+  unknown: { color: "#94a3b8", border: "rgba(148, 163, 184, 0.3)" },
+};
+
 // Document Ready
 document.addEventListener("DOMContentLoaded", () => {
   initApp();
@@ -145,10 +155,18 @@ function renderMetricCards(week, garmin) {
 
   const acwr = week.acwr || {};
   const acwrBadge = document.getElementById("metricAcwrBadge");
-  if (acwr && acwr.acwr_ratio) {
+  if (acwr.acwr_ratio) {
     acwrBadge.textContent = `ACWR: ${acwr.acwr_ratio} (${acwr.status ? acwr.status.split('(')[0].trim() : 'Active'})`;
-    acwrBadge.style.color = acwr.badge_color || "var(--accent-emerald)";
-    acwrBadge.style.borderColor = acwr.badge_color || "rgba(16, 185, 129, 0.3)";
+    const zoneStyle = ACWR_ZONE_STYLES[acwr.zone] || ACWR_ZONE_STYLES.unknown;
+    acwrBadge.style.color = zoneStyle.color;
+    acwrBadge.style.borderColor = zoneStyle.border;
+  } else {
+    // No ratio yet (not enough chronic history) — show why instead of a stale value.
+    acwrBadge.textContent = acwr.status
+      ? `ACWR: — (${acwr.status.split('(')[0].trim()})`
+      : "ACWR: —";
+    acwrBadge.style.color = ACWR_ZONE_STYLES.unknown.color;
+    acwrBadge.style.borderColor = ACWR_ZONE_STYLES.unknown.border;
   }
 
   document.getElementById("metricRunDist").textContent = `${week.run_dist_km.toFixed(2)} χλμ`;
@@ -510,7 +528,9 @@ function updateProgressionCharts(progression) {
   const bikes = progression.map(p => p.bike_km);
   const swims = progression.map(p => p.swim_km);
   const elevs = progression.map(p => p.elevation_m);
-  const acwrs = progression.map(p => (p.acwr ? p.acwr.acwr_ratio : 1.0));
+  // null (not 1.0) for weeks without enough chronic history: Chart.js renders a
+  // gap there instead of inventing a neutral ratio.
+  const acwrs = progression.map(p => (p.acwr && p.acwr.acwr_ratio) || null);
 
   if (effortProgressionChart) {
     effortProgressionChart.data.labels = labels;
@@ -627,7 +647,7 @@ function handleCopyReport() {
 `⚡ Εβδομαδιαία Αναφορά Προπόνησης (${mDate.toLocaleDateString("el-GR", { day: "numeric", month: "short" })} – ${sDate.toLocaleDateString("el-GR", { day: "numeric", month: "short", year: "numeric" })})
 ──────────────────────────────
 ⏱️ Συνολικός Χρόνος: ${formatDuration(week.total_time_sec)} (${week.activities.length} προπονήσεις)
-🔥 Σχετική Προσπάθεια: ${Math.round(week.total_relative_effort || 0)} (ACWR: ${acwr.acwr_ratio || "1.0"})
+🔥 Σχετική Προσπάθεια: ${Math.round(week.total_relative_effort || 0)} (ACWR: ${acwr.acwr_ratio || "—"})
 
 🏃 Τρέξιμο: ${week.run_dist_km.toFixed(2)} χλμ / ${formatDuration(week.run_time_sec)}
 🚴 Ποδηλασία: ${week.bike_dist_km.toFixed(2)} χλμ / ${formatDuration(week.bike_time_sec)}${week.total_elevation_m > 0 ? ` / +${Math.round(week.total_elevation_m)}μ` : ""}

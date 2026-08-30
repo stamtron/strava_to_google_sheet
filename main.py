@@ -5,41 +5,19 @@ Entry point for terminal-based activity logging and Google Sheets synchronizatio
 """
 
 import argparse
-import time
 from collections import defaultdict
-from datetime import datetime
 
-from src.integrations.strava import fetch_activities, fetch_activity_detail, get_access_token
+from src.config import STRAVA_DETAIL_DELAY_SEC
+from src.formatting import corrected_distance_and_speed, format_duration, format_pace
+from src.integrations.strava import (
+    StravaAuthRequired,
+    StravaNetworkError,
+    StravaRateLimitError,
+    fetch_activities,
+    fetch_details_for_activities,
+    get_access_token,
+)
 from src.integrations.sheets import write_to_sheet
-
-
-def format_duration(seconds: int) -> str:
-    """Convert seconds to a human-readable duration string."""
-    hours = seconds // 3600
-    minutes = (seconds % 3600) // 60
-    secs = seconds % 60
-    if hours > 0:
-        return f"{hours}h {minutes}m {secs}s"
-    return f"{minutes}m {secs}s"
-
-
-def format_pace(speed_mps: float, sport_type: str) -> str:
-    """Convert m/s to min/km pace for running, min/100m for swimming, km/h for cycling."""
-    if speed_mps <= 0:
-        return "—"
-    if sport_type == "Swim":
-        pace_sec_per_100m = 100 / (speed_mps / 2.0) if speed_mps > 0 else 0
-        mins = int(pace_sec_per_100m // 60)
-        secs = int(pace_sec_per_100m % 60)
-        return f"{mins}:{secs:02d} /100m"
-    elif "Run" in sport_type or "Walk" in sport_type or "Hike" in sport_type:
-        pace_sec_per_km = 1000 / speed_mps
-        mins = int(pace_sec_per_km // 60)
-        secs = int(pace_sec_per_km % 60)
-        return f"{mins}:{secs:02d} /km"
-    else:
-        kmh = speed_mps * 3.6
-        return f"{kmh:.1f} km/h"
 
 
 def group_activities_by_date(activities: list[dict]) -> dict[str, list[dict]]:
@@ -53,7 +31,7 @@ def group_activities_by_date(activities: list[dict]) -> dict[str, list[dict]]:
     return dict(grouped)
 
 
-def print_activities(activities: list[dict], details: dict[int, dict]) -> None:
+def print_activities(activities: list[dict], details: dict) -> None:
     """Pretty-print fetched activities in terminal."""
     print("=" * 100)
     print(f"{'STRAVA TRAINING LOG':^100}")
@@ -63,9 +41,10 @@ def print_activities(activities: list[dict], details: dict[int, dict]) -> None:
         act_id = act["id"]
         sport = act.get("sport_type") or act.get("type", "Unknown")
         name = act.get("name", "Untitled")
-        dist_km = (act.get("distance", 0) or 0) / 1000.0
+        # Applies the swim divisor and the indoor-trainer distance estimate.
+        dist_m, speed = corrected_distance_and_speed(act)
+        dist_km = dist_m / 1000.0
         moving_time = act.get("moving_time", 0)
-        speed = act.get("average_speed", 0)
         elev = act.get("total_elevation_gain", 0)
         raw_date = act.get("start_date_local", "")
         dt_str = raw_date.replace("T", " ")[:16] if raw_date else "Unknown date"
@@ -85,7 +64,7 @@ def print_activities(activities: list[dict], details: dict[int, dict]) -> None:
         if act.get("max_heartrate"):
             hr_stats.append(f"Max HR: {act['max_heartrate']:.0f} bpm")
 
-        detail = details.get(act_id, {})
+        detail = details.get(act_id) or details.get(str(act_id)) or {}
         if detail.get("suffer_score"):
             hr_stats.append(f"Suffer Score: {detail['suffer_score']}")
         if hr_stats:
@@ -104,27 +83,37 @@ def main():
 
     print("🏃 Strava Training Log Fetcher\n")
 
-    access_token = get_access_token()
-    print(f"\n📥 Fetching last {args.count} activities from Strava...")
-    activities = fetch_activities(access_token, per_page=args.count)
+    try:
+        access_token = get_access_token(interactive=True)
+        print(f"\n📥 Fetching last {args.count} activities from Strava...")
+        activities = fetch_activities(access_token, per_page=args.count)
 
-    print(f"📋 Fetching details for {len(activities)} activities", end="", flush=True)
-    details = {}
-    for activity in activities:
-        act_id = activity["id"]
-        try:
-            details[act_id] = fetch_activity_detail(access_token, act_id)
-            print(".", end="", flush=True)
-            time.sleep(0.05)
-        except Exception:
-            pass
-    print(" done!")
+        print(f"📋 Fetching details for {len(activities)} activities", end="", flush=True)
+        details = fetch_details_for_activities(
+            access_token,
+            activities,
+            delay_sec=STRAVA_DETAIL_DELAY_SEC,
+            progress=True,
+        )
+        print(" done!")
+    except StravaAuthRequired as e:
+        print(f"\n❌ Strava authorization failed: {e}")
+        return 1
+    except StravaRateLimitError as e:
+        print(f"\n❌ {e}")
+        return 1
+    except StravaNetworkError as e:
+        print(f"\n❌ {e}")
+        print("   Check your internet connection or proxy settings and try again.")
+        return 1
 
     print_activities(activities, details)
 
     if args.sheet:
         write_to_sheet(activities, details)
 
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -5,8 +5,11 @@ Generates automated workout feedback, readiness advice,
 and race predictions using LLMs (Gemini) with robust heuristic fallbacks.
 """
 
+import json
 import math
-from src.config import GEMINI_API_KEY
+
+from src.config import BIKE_SPORTS, GEMINI_API_KEY, GEMINI_MODELS, RUN_SPORTS, SWIM_SPORTS
+from src.formatting import corrected_distance_and_speed
 
 
 def _get_gemini_client():
@@ -41,12 +44,18 @@ def format_race_time(seconds: float) -> str:
 
 
 def format_pace_min_km(seconds_per_km: float) -> str:
-    """Format seconds/km to min:sec /km."""
+    """
+    Format seconds/km to min:sec /km.
+
+    Units in API metrics are English throughout (`/km`, `/100m`, `km/h`) so a
+    single payload doesn't mix languages; Greek units belong in the sheet output
+    and the UI labels, not here.
+    """
     if seconds_per_km <= 0 or math.isinf(seconds_per_km):
         return "-:--"
     mins = int(seconds_per_km // 60)
     secs = int(seconds_per_km % 60)
-    return f"{mins}:{secs:02d} /χλμ"
+    return f"{mins}:{secs:02d} /km"
 
 
 def predict_race_performances(activities: list[dict], custom_5k_pace_sec: float = None) -> dict:
@@ -62,7 +71,7 @@ def predict_race_performances(activities: list[dict], custom_5k_pace_sec: float 
             sport = a.get("sport_type") or a.get("type", "")
             dist_km = (a.get("distance", 0) or 0) / 1000.0
             moving_time = a.get("moving_time", 0) or 0
-            if sport in ["Run", "TrailRun"] and dist_km >= 3.0 and moving_time > 0:
+            if sport in RUN_SPORTS and dist_km >= 3.0 and moving_time > 0:
                 pace = moving_time / dist_km
                 candidates.append((dist_km, moving_time, pace))
 
@@ -112,8 +121,9 @@ def predict_triathlon_performances(activities: list[dict]) -> dict:
     # 1. Base Swim Pace (/100m) - filter realistic pace 65s - 220s /100m
     swim_paces = []
     for a in activities:
-        if (a.get("sport_type") or a.get("type")) == "Swim":
-            raw_dist = (a.get("distance", 0) or 0) / 2.0  # Halved
+        if (a.get("sport_type") or a.get("type")) in SWIM_SPORTS:
+            # Applies the configured swim distance divisor.
+            raw_dist, _ = corrected_distance_and_speed(a)
             moving_time = a.get("moving_time", 0) or 0
             if raw_dist >= 300 and moving_time > 180:
                 pace = moving_time / (raw_dist / 100.0)
@@ -125,11 +135,11 @@ def predict_triathlon_performances(activities: list[dict]) -> dict:
     bike_speeds = []
     for a in activities:
         sport = a.get("sport_type") or a.get("type", "")
-        if "Ride" in sport:
-            dist_km = (a.get("distance", 0) or 0) / 1000.0
+        if sport in BIKE_SPORTS:
+            # Applies the indoor-trainer distance estimate for ~0-distance rides.
+            dist_m, _ = corrected_distance_and_speed(a)
+            dist_km = dist_m / 1000.0
             moving_time = a.get("moving_time", 0) or 0
-            if a.get("trainer", False) and dist_km < 0.1 and moving_time > 0:
-                dist_km = (moving_time / 3600.0) * 21.0
             if dist_km >= 15.0 and moving_time > 1200:
                 speed = dist_km / (moving_time / 3600.0)
                 if 18.0 <= speed <= 48.0:
@@ -140,7 +150,7 @@ def predict_triathlon_performances(activities: list[dict]) -> dict:
     run_paces = []
     for a in activities:
         sport = a.get("sport_type") or a.get("type", "")
-        if sport in ["Run", "TrailRun"]:
+        if sport in RUN_SPORTS:
             dist_km = (a.get("distance", 0) or 0) / 1000.0
             moving_time = a.get("moving_time", 0) or 0
             if dist_km >= 3.0 and moving_time > 600:
@@ -326,15 +336,13 @@ def generate_weekly_coaching_insights(
 3. "recommendations": Λίστα με 3 συγκεκριμένες συμβουλές για την επόμενη εβδομάδα.
 4. "readiness_score": Αριθμός 1-100.
 """
-        models_to_try = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.0-flash"]
-        for model_name in models_to_try:
+        for model_name in GEMINI_MODELS:
             try:
                 response = client.models.generate_content(
                     model=model_name,
                     contents=prompt,
                     config={"response_mime_type": "application/json"}
                 )
-                import json
                 data = json.loads(response.text)
                 return {
                     "feedback": data.get("feedback", ""),
