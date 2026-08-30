@@ -22,6 +22,9 @@
         <select id="weekSelector" class="week-selector" aria-label="Επιλογή Εβδομάδας">
           <option value="current">Φόρτωση...</option>
         </select>
+        <button id="copyReportBtn" class="btn btn-share" title="Αντιγραφή εβδομαδιαίας αναφοράς για WhatsApp / Coach">
+          <span>📋 Αντιγραφή Αναφοράς</span>
+        </button>
         <button id="syncSheetBtn" class="btn btn-primary">
           <span>📊 Sync to Google Sheet</span>
         </button>
@@ -192,10 +195,21 @@
           </div>
         </div>
 
-        <!-- Race Predictions Card -->
+        <!-- Triathlon Finish Projections Card -->
         <div class="glass-panel ai-card">
           <div class="ai-header">
-            <h3 style="font-size: 15px;">🏆 Πρόβλεψη Χρόνων Αγώνα</h3>
+            <h3 style="font-size: 15px;">🏊🚴🏃 Προβλέψεις Τριάθλου</h3>
+            <span id="triBaselinesBadge" class="bio-badge">Βάση: Multi-sport</span>
+          </div>
+          <div id="triathlonContainer">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+
+        <!-- Running Race Predictions Card -->
+        <div class="glass-panel ai-card">
+          <div class="ai-header">
+            <h3 style="font-size: 15px;">🏆 Πρόβλεψη Αγώνων Δρόμου</h3>
             <span id="basePaceBadge" class="bio-badge">Βάση: 5:00 /χλμ</span>
           </div>
           <table class="predictions-table">

@@ -36,6 +36,7 @@ async function initApp() {
     }
 
     renderPredictions(dashboardData.predictions);
+    renderTriathlonPredictions(dashboardData.triathlon);
     updateProgressionCharts(dashboardData.progression);
   } catch (err) {
     console.error("Initialization error:", err);
@@ -50,6 +51,7 @@ function setupEventListeners() {
 
   document.getElementById("syncSheetBtn").addEventListener("click", handleSheetSync);
   document.getElementById("generateAiBtn").addEventListener("click", handleGenerateAiFeedback);
+  document.getElementById("copyReportBtn").addEventListener("click", handleCopyReport);
 
   // Tab Navigation
   const tabWeekly = document.getElementById("tabWeeklyBtn");
@@ -554,6 +556,92 @@ function renderPredictions(predData) {
       <td>${p.predicted_pace}</td>
     `;
     tbody.appendChild(tr);
+  });
+}
+
+function renderTriathlonPredictions(triData) {
+  if (!triData || !triData.predictions) return;
+
+  const container = document.getElementById("triathlonContainer");
+  container.innerHTML = "";
+
+  if (triData.baselines) {
+    document.getElementById("triBaselinesBadge").textContent = `🏊 ${triData.baselines.swim_100m} • 🚴 ${triData.baselines.bike_speed} • 🏃 ${triData.baselines.run_pace}`;
+  }
+
+  triData.predictions.forEach((p) => {
+    const card = document.createElement("div");
+    card.className = "triathlon-card";
+
+    const s = p.splits;
+    card.innerHTML = `
+      <div class="tri-header">
+        <div class="tri-title">🏁 ${p.name}</div>
+        <div class="tri-total-time">${p.total_time}</div>
+      </div>
+      <div class="tri-splits-grid">
+        <div class="tri-split-box">
+          <div class="tri-split-label">🏊 Swim (${s.swim.distance})</div>
+          <div class="tri-split-time">${s.swim.time}</div>
+          <div class="tri-split-pace">${s.swim.pace}</div>
+        </div>
+        <div class="tri-split-box">
+          <div class="tri-split-label">⚡ T1</div>
+          <div class="tri-split-time">${s.t1}</div>
+          <div class="tri-split-pace">Transition</div>
+        </div>
+        <div class="tri-split-box">
+          <div class="tri-split-label">🚴 Bike (${s.bike.distance})</div>
+          <div class="tri-split-time">${s.bike.time}</div>
+          <div class="tri-split-pace">${s.bike.speed}</div>
+        </div>
+        <div class="tri-split-box">
+          <div class="tri-split-label">⚡ T2</div>
+          <div class="tri-split-time">${s.t2}</div>
+          <div class="tri-split-pace">Transition</div>
+        </div>
+        <div class="tri-split-box">
+          <div class="tri-split-label">🏃 Run (${s.run.distance})</div>
+          <div class="tri-split-time">${s.run.time}</div>
+          <div class="tri-split-pace">${s.run.pace}</div>
+        </div>
+      </div>
+    `;
+    container.appendChild(card);
+  });
+}
+
+function handleCopyReport() {
+  if (!dashboardData || !currentWeekKey) return;
+  const week = dashboardData.weeks[currentWeekKey];
+  const garmin = (dashboardData.garmin || {})[currentWeekKey] || null;
+  const mDate = new Date(week.week_monday + "T00:00:00");
+  const sDate = new Date(week.week_sunday + "T00:00:00");
+
+  const sleepStr = garmin && garmin.total_sleep_h ? `${garmin.total_sleep_h.toFixed(1)}h` : "--";
+  const rhrStr = garmin && garmin.avg_rhr ? `${garmin.avg_rhr}` : "--";
+  const hrvStr = garmin && garmin.avg_hrv ? `${garmin.avg_hrv}` : "--";
+  const acwr = week.acwr || {};
+
+  const reportText = 
+`⚡ Εβδομαδιαία Αναφορά Προπόνησης (${mDate.toLocaleDateString("el-GR", { day: "numeric", month: "short" })} – ${sDate.toLocaleDateString("el-GR", { day: "numeric", month: "short", year: "numeric" })})
+──────────────────────────────
+⏱️ Συνολικός Χρόνος: ${formatDuration(week.total_time_sec)} (${week.activities.length} προπονήσεις)
+🔥 Σχετική Προσπάθεια: ${Math.round(week.total_relative_effort || 0)} (ACWR: ${acwr.acwr_ratio || "1.0"})
+
+🏃 Τρέξιμο: ${week.run_dist_km.toFixed(2)} χλμ / ${formatDuration(week.run_time_sec)}
+🚴 Ποδηλασία: ${week.bike_dist_km.toFixed(2)} χλμ / ${formatDuration(week.bike_time_sec)}${week.total_elevation_m > 0 ? ` / +${Math.round(week.total_elevation_m)}μ` : ""}
+🏊 Κολύμβηση: ${Math.round(week.swim_dist_m)} μ / ${formatDuration(week.swim_time_sec)}
+🏋️ Ενδυνάμωση: ${formatDuration(week.strength_time_sec)}
+
+😴 Garmin Health: Ύπνος ${sleepStr} • HRrest ${rhrStr} • HRV ${hrvStr}
+──────────────────────────────
+🤖 AI Coach Status: Ετοιμότητα ${document.getElementById("readinessScore").textContent}`;
+
+  navigator.clipboard.writeText(reportText).then(() => {
+    showToast("📋 Η αναφορά αντιγράφηκε στο πρόχειρο (έτοιμη για WhatsApp/Coach)!", "success");
+  }).catch(err => {
+    showToast("Σφάλμα αντιγραφής: " + err.message, "error");
   });
 }
 

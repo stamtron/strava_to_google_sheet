@@ -130,8 +130,9 @@ def get_dashboard_data(count: int = Query(50, ge=1, le=100)):
             except Exception:
                 pass
 
-    # Race predictions
+    # Race predictions (Running + Triathlon Multi-Sport)
     predictions = predict_race_performances(summaries)
+    triathlon = predict_triathlon_performances(summaries)
 
     # Multi-week progression history
     progression = build_progression_history(weeks)
@@ -140,6 +141,7 @@ def get_dashboard_data(count: int = Query(50, ge=1, le=100)):
         "weeks": weeks,
         "garmin": garmin_summaries,
         "predictions": predictions,
+        "triathlon": triathlon,
         "progression": progression,
         "activities_total": len(summaries),
     }

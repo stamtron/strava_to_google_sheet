@@ -101,6 +101,159 @@ def predict_race_performances(activities: list[dict], custom_5k_pace_sec: float 
     }
 
 
+def predict_triathlon_performances(activities: list[dict]) -> dict:
+    """
+    Calculate comprehensive multi-sport finish time projections for:
+    - Sprint (750m swim, 20k bike, 5k run)
+    - Olympic (1500m swim, 40k bike, 10k run)
+    - 70.3 Half Ironman (1900m swim, 90k bike, 21.1k run)
+    - 140.6 Full Ironman (3800m swim, 180k bike, 42.2k run)
+    """
+    # 1. Base Swim Pace (/100m) - filter realistic pace 65s - 220s /100m
+    swim_paces = []
+    for a in activities:
+        if (a.get("sport_type") or a.get("type")) == "Swim":
+            raw_dist = (a.get("distance", 0) or 0) / 2.0  # Halved
+            moving_time = a.get("moving_time", 0) or 0
+            if raw_dist >= 300 and moving_time > 180:
+                pace = moving_time / (raw_dist / 100.0)
+                if 65.0 <= pace <= 220.0:
+                    swim_paces.append(pace)
+    base_swim_100m_sec = min(swim_paces) if swim_paces else 105.0  # Default 1:45/100m
+
+    # 2. Base Bike Speed (km/h) - filter realistic sustained speed 18 - 48 km/h
+    bike_speeds = []
+    for a in activities:
+        sport = a.get("sport_type") or a.get("type", "")
+        if "Ride" in sport:
+            dist_km = (a.get("distance", 0) or 0) / 1000.0
+            moving_time = a.get("moving_time", 0) or 0
+            if a.get("trainer", False) and dist_km < 0.1 and moving_time > 0:
+                dist_km = (moving_time / 3600.0) * 21.0
+            if dist_km >= 15.0 and moving_time > 1200:
+                speed = dist_km / (moving_time / 3600.0)
+                if 18.0 <= speed <= 48.0:
+                    bike_speeds.append(speed)
+    base_bike_speed_kmh = max(bike_speeds) if bike_speeds else 28.0  # Default 28 km/h
+
+    # 3. Base Run Pace (sec/km) - filter realistic running pace 180s - 420s /km
+    run_paces = []
+    for a in activities:
+        sport = a.get("sport_type") or a.get("type", "")
+        if sport in ["Run", "TrailRun"]:
+            dist_km = (a.get("distance", 0) or 0) / 1000.0
+            moving_time = a.get("moving_time", 0) or 0
+            if dist_km >= 3.0 and moving_time > 600:
+                pace = moving_time / dist_km
+                if 180.0 <= pace <= 420.0:
+                    run_paces.append(pace)
+    base_run_km_sec = min(run_paces) if run_paces else 315.0  # Default 5:15/km
+
+    # Calculations for 4 standard triathlon distances
+    distances = [
+        {
+            "category": "Sprint Triathlon",
+            "name": "Sprint (750m / 20k / 5k)",
+            "swim_m": 750,
+            "swim_factor": 1.00,
+            "t1_sec": 105,
+            "bike_km": 20.0,
+            "bike_factor": 1.02,
+            "t2_sec": 75,
+            "run_km": 5.0,
+            "run_factor": 1.03,
+        },
+        {
+            "category": "Olympic Triathlon",
+            "name": "Olympic (1.5k / 40k / 10k)",
+            "swim_m": 1500,
+            "swim_factor": 1.03,
+            "t1_sec": 135,
+            "bike_km": 40.0,
+            "bike_factor": 0.98,
+            "t2_sec": 90,
+            "run_km": 10.0,
+            "run_factor": 1.05,
+        },
+        {
+            "category": "Half Ironman (70.3)",
+            "name": "Ironman 70.3 (1.9k / 90k / 21.1k)",
+            "swim_m": 1900,
+            "swim_factor": 1.06,
+            "t1_sec": 180,
+            "bike_km": 90.0,
+            "bike_factor": 0.94,
+            "t2_sec": 120,
+            "run_km": 21.0975,
+            "run_factor": 1.08,
+        },
+        {
+            "category": "Full Ironman (140.6)",
+            "name": "Ironman 140.6 (3.8k / 180k / 42.2k)",
+            "swim_m": 3800,
+            "swim_factor": 1.10,
+            "t1_sec": 270,
+            "bike_km": 180.0,
+            "bike_factor": 0.88,
+            "t2_sec": 180,
+            "run_km": 42.195,
+            "run_factor": 1.14,
+        },
+    ]
+
+    triathlon_predictions = []
+    for d in distances:
+        # Swim split
+        swim_pace = base_swim_100m_sec * d["swim_factor"]
+        swim_time = (d["swim_m"] / 100.0) * swim_pace
+
+        # Bike split
+        bike_speed = base_bike_speed_kmh * d["bike_factor"]
+        bike_time = (d["bike_km"] / bike_speed) * 3600.0
+
+        # Run split
+        run_pace = base_run_km_sec * d["run_factor"]
+        run_time = d["run_km"] * run_pace
+
+        total_time = swim_time + d["t1_sec"] + bike_time + d["t2_sec"] + run_time
+
+        triathlon_predictions.append({
+            "name": d["name"],
+            "category": d["category"],
+            "total_time": format_race_time(total_time),
+            "total_time_seconds": round(total_time),
+            "splits": {
+                "swim": {
+                    "distance": f"{d['swim_m']}m",
+                    "time": format_race_time(swim_time),
+                    "pace": f"{int(swim_pace // 60)}:{int(swim_pace % 60):02d} /100m",
+                },
+                "t1": format_race_time(d["t1_sec"]),
+                "bike": {
+                    "distance": f"{d['bike_km']:.0f}km",
+                    "time": format_race_time(bike_time),
+                    "speed": f"{bike_speed:.1f} km/h",
+                },
+                "t2": format_race_time(d["t2_sec"]),
+                "run": {
+                    "distance": f"{d['run_km']:.1f}km",
+                    "time": format_race_time(run_time),
+                    "pace": format_pace_min_km(run_pace),
+                },
+            },
+        })
+
+    return {
+        "baselines": {
+            "swim_100m": f"{int(base_swim_100m_sec // 60)}:{int(base_swim_100m_sec % 60):02d} /100m",
+            "bike_speed": f"{base_bike_speed_kmh:.1f} km/h",
+            "run_pace": format_pace_min_km(base_run_km_sec),
+        },
+        "predictions": triathlon_predictions,
+    }
+
+
+
 def generate_weekly_coaching_insights(
     week_summary: dict,
     garmin_health: dict | None = None,

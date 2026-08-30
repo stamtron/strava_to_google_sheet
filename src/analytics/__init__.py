@@ -11,6 +11,7 @@ from .metrics import (
 from .ai_coach import (
     generate_weekly_coaching_insights,
     predict_race_performances,
+    predict_triathlon_performances,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "build_progression_history",
     "generate_weekly_coaching_insights",
     "predict_race_performances",
+    "predict_triathlon_performances",
 ]
