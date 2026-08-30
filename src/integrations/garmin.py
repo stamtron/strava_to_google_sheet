@@ -2,26 +2,46 @@
 Garmin Connect API Client and Health Biometrics.
 """
 
+import json
 import os
+import time
 from datetime import date, timedelta
-from garminconnect import (
-    Garmin,
-    GarminConnectAuthenticationError,
-    GarminConnectConnectionError,
-    GarminConnectTooManyRequestsError,
+from garminconnect import Garmin
+from src.config import (
+    GARMIN_CACHE_FILE,
+    GARMIN_CACHE_TTL,
+    GARMIN_EMAIL,
+    GARMIN_PASSWORD,
+    GARMIN_TOKEN_DIR,
 )
-from src.config import GARMIN_EMAIL, GARMIN_PASSWORD, GARMIN_TOKEN_DIR
+
+# Reused across calls: each login is a full auth round-trip, and the web server
+# would otherwise re-authenticate on every dashboard request.
+_client: Garmin | None = None
+_client_attempted = False
 
 
-def get_garmin_client() -> Garmin | None:
-    """Authenticate and return an active Garmin client instance."""
+def get_garmin_client(force_new: bool = False) -> Garmin | None:
+    """Authenticate and return an active Garmin client instance (memoized)."""
+    global _client, _client_attempted
+
     if not GARMIN_EMAIL or not GARMIN_PASSWORD:
         return None
 
+    if not force_new:
+        if _client is not None:
+            return _client
+        # Don't retry a failed login on every request; a bad password would
+        # otherwise cost a network round-trip per dashboard load.
+        if _client_attempted:
+            return None
+
+    _client_attempted = True
     try:
         client = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
         os.makedirs(GARMIN_TOKEN_DIR, exist_ok=True)
         client.login(tokenstore=GARMIN_TOKEN_DIR)
+        _client = client
         return client
     except Exception as e:
         print(f"  ⚠️  Garmin Connect login failed: {e}")
@@ -111,3 +131,84 @@ def get_weekly_health_summary(start_date: date, end_date: date, client: Garmin =
         "avg_rhr": avg_rhr,
         "avg_hrv": avg_hrv,
     }
+
+
+def _load_garmin_cache() -> dict:
+    if os.path.exists(GARMIN_CACHE_FILE):
+        try:
+            with open(GARMIN_CACHE_FILE, "r") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def _save_garmin_cache(cache: dict) -> None:
+    try:
+        with open(GARMIN_CACHE_FILE, "w") as f:
+            json.dump(cache, f)
+    except OSError as e:
+        print(f"  ⚠️  Failed to write Garmin cache: {e}")
+
+
+def _cache_entry_is_fresh(entry: dict, week_sunday: date, today: date) -> bool:
+    """
+    A finished week's biometrics never change, so it stays cached forever.
+    Only a week that is still in progress is re-fetched after GARMIN_CACHE_TTL.
+    """
+    if not isinstance(entry, dict) or "summary" not in entry:
+        return False
+    if week_sunday < today:
+        return True
+    return (time.time() - entry.get("fetched_at", 0)) < GARMIN_CACHE_TTL
+
+
+def get_weekly_health_summaries(week_ranges: dict[str, tuple[date, date]]) -> dict[str, dict]:
+    """
+    Return {week_key: health_summary} for many weeks, backed by a disk cache.
+
+    Each week costs ~21 Garmin API calls, so an uncached multi-week dashboard is
+    hundreds of sequential requests. Cached weeks cost nothing, and the client
+    is only created if at least one week actually needs fetching.
+
+    Weeks with no data are cached as an explicit null so they aren't retried on
+    every request.
+    """
+    cache = _load_garmin_cache()
+    today = date.today()
+    results: dict[str, dict] = {}
+    pending: dict[str, tuple[date, date]] = {}
+
+    for week_key, (start, end) in week_ranges.items():
+        entry = cache.get(week_key)
+        if entry is not None and _cache_entry_is_fresh(entry, end, today):
+            if entry["summary"]:
+                results[week_key] = entry["summary"]
+        else:
+            pending[week_key] = (start, end)
+
+    if not pending:
+        return results
+
+    client = get_garmin_client()
+    if client is None:
+        return results
+
+    dirty = False
+    for week_key, (start, end) in sorted(pending.items()):
+        try:
+            summary = get_weekly_health_summary(start, end, client)
+        except Exception as e:
+            print(f"  ⚠️  Garmin fetch failed for week {week_key}: {e}")
+            continue
+        cache[week_key] = {"summary": summary, "fetched_at": time.time()}
+        dirty = True
+        if summary:
+            results[week_key] = summary
+
+    if dirty:
+        _save_garmin_cache(cache)
+
+    return results
