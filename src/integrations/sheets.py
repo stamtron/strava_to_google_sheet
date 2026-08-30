@@ -17,13 +17,23 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 from src.config import (
+    BIKE_SPORTS,
     CREDENTIALS_FILE,
     GSHEETS_SCOPES,
     GSHEETS_TOKEN_FILE,
     GOOGLE_SHEET_ID,
+    RUN_SPORTS,
     SHEET_NAME,
+    STRENGTH_SPORTS,
+    SWIM_SPORTS,
 )
-from src.integrations.garmin import get_garmin_client, get_weekly_health_summary
+from src.formatting import (
+    corrected_distance_and_speed,
+    format_duration_el,
+    format_duration_short_el,
+    format_pace,
+)
+from src.integrations.garmin import get_weekly_health_summaries
 
 
 def _get_week_start(d: date) -> date:
@@ -103,63 +113,11 @@ def get_sheets_service():
     return build("sheets", "v4", credentials=creds)
 
 
-def format_duration_short(seconds: int) -> str:
-    """Format seconds into Greek duration e.g. 1ω 24λ."""
-    if seconds <= 0:
-        return "0λ"
-    hrs = seconds // 3600
-    mins = (seconds % 3600) // 60
-    if hrs > 0:
-        return f"{hrs}ω {mins}λ"
-    return f"{mins}λ"
-
-
-def format_duration(seconds: int) -> str:
-    """Format seconds into Greek duration with seconds e.g. 1ω 24λ 30δ."""
-    if seconds <= 0:
-        return "0δ"
-    hrs = seconds // 3600
-    mins = (seconds % 3600) // 60
-    secs = seconds % 60
-    parts = []
-    if hrs > 0:
-        parts.append(f"{hrs}ω")
-    if mins > 0:
-        parts.append(f"{mins}λ")
-    if secs > 0 or not parts:
-        parts.append(f"{secs}δ")
-    return " ".join(parts)
-
-
-def format_pace(avg_speed: float, sport_type: str = "") -> str:
-    """Format speed into pace e.g. 5:27 /χλμ or 1:24 /100μ for swim."""
-    if avg_speed <= 0:
-        return "N/A"
-    if sport_type == "Swim":
-        # avg_speed is in m/s (halved). Pace per 100m = 100 / avg_speed
-        pace_seconds = 100.0 / avg_speed
-        mins = int(pace_seconds // 60)
-        secs = int(pace_seconds % 60)
-        return f"{mins}:{secs:02d} /100μ"
-    elif sport_type in ["Ride", "VirtualRide", "GravelRide", "MountainBikeRide"]:
-        speed_kmh = avg_speed * 3.6
-        return f"{speed_kmh:.1f} χλμ/ω"
-    else:
-        # Running / walking: min/km
-        pace_seconds = 1000.0 / avg_speed
-        mins = int(pace_seconds // 60)
-        secs = int(pace_seconds % 60)
-        return f"{mins}:{secs:02d} /χλμ"
-
-
 def format_activity_for_cell(act: dict, detail: dict | None = None) -> str:
     """Format a single activity for the cell (Greek)."""
     sport = act.get("sport_type") or act.get("type", "Unknown")
     name = act.get("name", "")
     moving_time = act.get("moving_time", 0)
-    raw_distance = act.get("distance", 0)
-    avg_speed = act.get("average_speed", 0)
-    is_trainer = act.get("trainer", False)
 
     # Sport name translation
     sport_names = {
@@ -177,31 +135,19 @@ def format_activity_for_cell(act: dict, detail: dict | None = None) -> str:
     }
     sport_el = sport_names.get(sport, sport)
 
-    # Swimming correction (halve distance and speed)
-    if sport == "Swim":
-        raw_distance = raw_distance / 2.0
-        avg_speed = avg_speed / 2.0
-
-    # Indoor cycling estimation
-    if is_trainer and raw_distance < 100 and moving_time > 0:
-        raw_distance = (moving_time / 3600.0) * 21000.0
-        avg_speed = 21.0 / 3.6
-
+    # Applies the swim divisor and the indoor-trainer distance estimate.
+    raw_distance, avg_speed = corrected_distance_and_speed(act)
     distance_km = raw_distance / 1000.0
 
     lines = [f"{sport_el}: {name}"]
     if distance_km > 0:
         lines.append(f"Απόσταση: {distance_km:.2f} χλμ")
-    lines.append(f"Συνολικός χρόνος: {format_duration(moving_time)}")
+    lines.append(f"Συνολικός χρόνος: {format_duration_el(moving_time)}")
 
     if avg_speed > 0:
-        pace_str = format_pace(avg_speed, sport)
-        if sport == "Swim":
-            lines.append(f"Μέσος ρυθμός: {pace_str}")
-        elif sport in ["Ride", "VirtualRide", "GravelRide", "MountainBikeRide"]:
-            lines.append(f"Μέση ταχύτητα: {pace_str}")
-        else:
-            lines.append(f"Μέσος ρυθμός: {pace_str}")
+        pace_str = format_pace(avg_speed, sport, greek=True)
+        label = "Μέση ταχύτητα" if sport in BIKE_SPORTS else "Μέσος ρυθμός"
+        lines.append(f"{label}: {pace_str}")
 
     elev = act.get("total_elevation_gain", 0)
     if elev > 0:
@@ -232,7 +178,9 @@ def format_activities_for_cell(day_activities: list[dict], details: dict) -> str
     """Format all activities on a single day."""
     blocks = []
     for act in day_activities:
-        detail = details.get(act.get("id"))
+        # Detail keys may be ints (fresh from the API) or strings (JSON cache).
+        act_id = act.get("id")
+        detail = details.get(act_id) or details.get(str(act_id))
         blocks.append(format_activity_for_cell(act, detail))
     return "\n\n---\n\n".join(blocks)
 
@@ -251,24 +199,21 @@ def calculate_weekly_totals(row_activities: list[dict]) -> tuple[float, int, flo
     for act in row_activities:
         sport = act.get("sport_type") or act.get("type", "")
         moving_time = int(act.get("moving_time", 0))
-        dist_m = float(act.get("distance", 0))
         elev = float(act.get("total_elevation_gain", 0))
-        is_trainer = act.get("trainer", False)
+        # Applies the swim divisor and the indoor-trainer distance estimate.
+        dist_m, _ = corrected_distance_and_speed(act)
 
-        if sport in ["Run", "TrailRun"]:
+        if sport in RUN_SPORTS:
             run_dist += dist_m / 1000.0
             run_time += moving_time
-        elif sport in ["Ride", "VirtualRide", "GravelRide", "MountainBikeRide"]:
-            if is_trainer and dist_m < 100 and moving_time > 0:
-                dist_m = (moving_time / 3600.0) * 21000.0
+        elif sport in BIKE_SPORTS:
             bike_dist += dist_m / 1000.0
             bike_time += moving_time
             bike_elev += elev
-        elif sport == "Swim":
-            dist_m = dist_m / 2.0
+        elif sport in SWIM_SPORTS:
             swim_dist_m += dist_m
             swim_time += moving_time
-        elif sport in ["WeightTraining", "Workout"]:
+        elif sport in STRENGTH_SPORTS:
             strength_time += moving_time
 
     return run_dist, run_time, bike_dist, bike_time, bike_elev, swim_dist_m, swim_time, strength_time
@@ -279,6 +224,9 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
     if not activities:
         print("No activities to write.")
         return
+
+    if not GOOGLE_SHEET_ID:
+        raise ValueError("GOOGLE_SHEET_ID must be set in .env to sync to Google Sheets.")
 
     if details is None:
         details = {}
@@ -422,8 +370,20 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
             f"({len(day_activities)} activities, layout: {layout})"
         )
 
-    # Initialize Garmin client if credentials are configured
-    garmin_client = get_garmin_client()
+    # Resolve each row's week span, then fetch all Garmin weeks in one pass so
+    # already-cached weeks cost no API calls.
+    week_span_by_row = {}
+    for r in unique_week_rows:
+        row_dates = [
+            datetime.fromisoformat(a["start_date_local"].replace("Z", "+00:00")).date()
+            for a in activities_by_row[r]
+        ]
+        week_monday = _get_week_start(min(row_dates))
+        week_span_by_row[r] = (week_monday, week_monday + timedelta(days=6))
+
+    garmin_by_week = get_weekly_health_summaries(
+        {monday.isoformat(): (monday, sunday) for monday, sunday in week_span_by_row.values()}
+    )
 
     # Update weekly totals
     for r in unique_week_rows:
@@ -431,21 +391,8 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
         row_activities = activities_by_row[r]
         run_dist, run_time, bike_dist, bike_time, bike_elev, swim_dist_m, swim_time, strength_time = calculate_weekly_totals(row_activities)
 
-        # Determine week Monday and Sunday for Garmin query
-        row_dates = [
-            datetime.fromisoformat(a["start_date_local"].replace("Z", "+00:00")).date()
-            for a in row_activities
-        ]
-        week_monday = _get_week_start(row_dates[0])
-        week_sunday = week_monday + timedelta(days=6)
-
-        # Query Garmin Health data if client is authenticated
-        health_summary = None
-        if garmin_client:
-            try:
-                health_summary = get_weekly_health_summary(week_monday, week_sunday, garmin_client)
-            except Exception as e:
-                print(f"  ⚠️  Failed to fetch Garmin data for week {week_monday}: {e}")
+        week_monday, week_sunday = week_span_by_row[r]
+        health_summary = garmin_by_week.get(week_monday.isoformat())
 
         sleep_val = f"{health_summary['total_sleep_h']:.1f}h" if health_summary and health_summary.get("total_sleep_h") else None
         rhr_val = f"{health_summary['avg_rhr']}" if health_summary and health_summary.get("avg_rhr") else None
@@ -455,15 +402,15 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
             print(f"  😴 Garmin Health ({week_monday} → {week_sunday}): Sleep={sleep_val or 'N/A'}, HRrest={rhr_val or 'N/A'}, HRV={hrv_val or 'N/A'}")
 
         # Format strings
-        running_str = f" {run_dist:.2f} χλμ / {format_duration_short(run_time)}" if run_time > 0 else " 0.00 χλμ / 0λ"
-        cycling_str = f" {bike_dist:.2f} χλμ / {format_duration_short(bike_time)}" if bike_time > 0 else " 0.00 χλμ / 0λ"
+        running_str = f" {run_dist:.2f} χλμ / {format_duration_short_el(run_time)}" if run_time > 0 else " 0.00 χλμ / 0λ"
+        cycling_str = f" {bike_dist:.2f} χλμ / {format_duration_short_el(bike_time)}" if bike_time > 0 else " 0.00 χλμ / 0λ"
         if bike_time > 0 and bike_elev > 0:
             cycling_str += f" / {bike_elev:.0f}μ"
-        swimming_str = f" {swim_dist_m:.0f}μ / {format_duration_short(swim_time)}" if swim_time > 0 else " 0μ / 0λ"
-        strength_str = f" {format_duration_short(strength_time)}" if strength_time > 0 else " 0λ"
+        swimming_str = f" {swim_dist_m:.0f}μ / {format_duration_short_el(swim_time)}" if swim_time > 0 else " 0μ / 0λ"
+        strength_str = f" {format_duration_short_el(strength_time)}" if strength_time > 0 else " 0λ"
 
         total_time = sum(int(activity.get("moving_time", 0)) for activity in row_activities)
-        total_str = f" {format_duration_short(total_time)}"
+        total_str = f" {format_duration_short_el(total_time)}"
 
         if layout == "old":
             existing_a = get_existing_value("A", r)
@@ -528,9 +475,9 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
             target_row = r + 5
             existing_b = get_existing_value("B", target_row)
 
-            running_time_val = format_duration_short(run_time)
-            cycling_time_val = format_duration_short(bike_time)
-            swimming_time_val = format_duration_short(swim_time)
+            running_time_val = format_duration_short_el(run_time)
+            cycling_time_val = format_duration_short_el(bike_time)
+            swimming_time_val = format_duration_short_el(swim_time)
 
             has_template = existing_b and "Τρέξιμο" in existing_b and "Ποδηλασία" in existing_b and "Κολύμβηση" in existing_b
 
