@@ -60,36 +60,43 @@ def format_pace_min_km(seconds_per_km: float) -> str:
 
 def predict_race_performances(activities: list[dict], custom_5k_pace_sec: float = None) -> dict:
     """
-    Calculate race predictions for 5K, 10K, Half Marathon, and Marathon.
-    Extracts fastest sustained runs from recent activities or uses provided baseline.
+    Calculate scientifically grounded race predictions for 5K, 10K, Half Marathon, and Marathon.
+    Normalizes sustained runs to 5K-equivalent threshold efforts using progressive fatigue curves.
     """
     best_5k_pace = custom_5k_pace_sec
+    longest_run_km = 0.0
 
     if not best_5k_pace:
-        candidates = []
+        equiv_5k_paces = []
         for a in activities:
             sport = a.get("sport_type") or a.get("type", "")
-            dist_km = (a.get("distance", 0) or 0) / 1000.0
-            moving_time = a.get("moving_time", 0) or 0
-            if sport in RUN_SPORTS and dist_km >= 3.0 and moving_time > 0:
-                pace = moving_time / dist_km
-                candidates.append((dist_km, moving_time, pace))
+            if sport in RUN_SPORTS:
+                dist_m, _ = corrected_distance_and_speed(a)
+                dist_km = dist_m / 1000.0
+                time_s = a.get("moving_time", 0) or 0
+                if dist_km > longest_run_km:
+                    longest_run_km = dist_km
+                if dist_km >= 3.0 and time_s > 600:
+                    # Normalize workout to 5K equivalent effort
+                    equiv_5k_time = time_s * ((5.0 / dist_km) ** 1.07)
+                    equiv_5k_paces.append(equiv_5k_time / 5.0)
 
-        if candidates:
-            candidates.sort(key=lambda x: x[2])
-            best_run = candidates[0]
-            best_dist, best_time, best_pace = best_run
-            best_5k_pace = best_pace
+        if equiv_5k_paces:
+            best_5k_pace = min(equiv_5k_paces)
         else:
             best_5k_pace = 300.0  # Default 5:00/km
 
     base_5k_time = best_5k_pace * 5.0
 
+    # Progressive endurance exponents for recreational/competitive amateur athletes
+    # (1.07 for 10K, 1.10 for Half Marathon, 1.13-1.15 for Marathon depending on long-run base)
+    marathon_exp = 1.13 if longest_run_km >= 30.0 else 1.145
+
     races = [
         {"name": "5K", "dist_km": 5.0, "time_sec": base_5k_time},
-        {"name": "10K", "dist_km": 10.0, "time_sec": calculate_riegel_prediction(5.0, base_5k_time, 10.0, 1.06)},
-        {"name": "Ημιμαραθώνιος (21.1K)", "dist_km": 21.0975, "time_sec": calculate_riegel_prediction(5.0, base_5k_time, 21.0975, 1.07)},
-        {"name": "Μαραθώνιος (42.2K)", "dist_km": 42.195, "time_sec": calculate_riegel_prediction(5.0, base_5k_time, 42.195, 1.08)},
+        {"name": "10K", "dist_km": 10.0, "time_sec": base_5k_time * ((10.0 / 5.0) ** 1.07)},
+        {"name": "Ημιμαραθώνιος (21.1K)", "dist_km": 21.0975, "time_sec": base_5k_time * ((21.0975 / 5.0) ** 1.10)},
+        {"name": "Μαραθώνιος (42.2K)", "dist_km": 42.195, "time_sec": base_5k_time * ((42.195 / 5.0) ** marathon_exp)},
     ]
 
     results = []
@@ -113,16 +120,18 @@ def predict_race_performances(activities: list[dict], custom_5k_pace_sec: float 
 def predict_triathlon_performances(activities: list[dict]) -> dict:
     """
     Calculate comprehensive multi-sport finish time projections for:
+    - Super Sprint (400m swim, 10k bike, 2.5k run)
     - Sprint (750m swim, 20k bike, 5k run)
     - Olympic (1500m swim, 40k bike, 10k run)
     - 70.3 Half Ironman (1900m swim, 90k bike, 21.1k run)
     - 140.6 Full Ironman (3800m swim, 180k bike, 42.2k run)
+
+    Incorporates empirical brick fatigue, aerodynamic conservation, and transition overhead.
     """
-    # 1. Base Swim Pace (/100m) - filter realistic pace 65s - 220s /100m
+    # 1. Base Swim Pace (/100m) - CSS from sustained swims
     swim_paces = []
     for a in activities:
         if (a.get("sport_type") or a.get("type")) in SWIM_SPORTS:
-            # Applies the configured swim distance divisor.
             raw_dist, _ = corrected_distance_and_speed(a)
             moving_time = a.get("moving_time", 0) or 0
             if raw_dist >= 300 and moving_time > 180:
@@ -131,12 +140,11 @@ def predict_triathlon_performances(activities: list[dict]) -> dict:
                     swim_paces.append(pace)
     base_swim_100m_sec = min(swim_paces) if swim_paces else 105.0  # Default 1:45/100m
 
-    # 2. Base Bike Speed (km/h) - filter realistic sustained speed 18 - 48 km/h
+    # 2. Base Bike Speed (km/h) - aerobic cruising speed from rides >= 15km
     bike_speeds = []
     for a in activities:
         sport = a.get("sport_type") or a.get("type", "")
         if sport in BIKE_SPORTS:
-            # Applies the indoor-trainer distance estimate for ~0-distance rides.
             dist_m, _ = corrected_distance_and_speed(a)
             dist_km = dist_m / 1000.0
             moving_time = a.get("moving_time", 0) or 0
@@ -146,80 +154,80 @@ def predict_triathlon_performances(activities: list[dict]) -> dict:
                     bike_speeds.append(speed)
     base_bike_speed_kmh = max(bike_speeds) if bike_speeds else 28.0  # Default 28 km/h
 
-    # 3. Base Run Pace (sec/km) - filter realistic running pace 180s - 420s /km
-    run_paces = []
+    # 3. Base Run Pace (sec/km) - 5K threshold equivalent
+    equiv_5k_paces = []
     for a in activities:
         sport = a.get("sport_type") or a.get("type", "")
         if sport in RUN_SPORTS:
-            dist_km = (a.get("distance", 0) or 0) / 1000.0
-            moving_time = a.get("moving_time", 0) or 0
-            if dist_km >= 3.0 and moving_time > 600:
-                pace = moving_time / dist_km
-                if 180.0 <= pace <= 420.0:
-                    run_paces.append(pace)
-    base_run_km_sec = min(run_paces) if run_paces else 315.0  # Default 5:15/km
+            dist_m, _ = corrected_distance_and_speed(a)
+            dist_km = dist_m / 1000.0
+            time_s = a.get("moving_time", 0) or 0
+            if dist_km >= 3.0 and time_s > 600:
+                equiv_5k_time = time_s * ((5.0 / dist_km) ** 1.07)
+                equiv_5k_paces.append(equiv_5k_time / 5.0)
+    base_run_km_sec = min(equiv_5k_paces) if equiv_5k_paces else 315.0  # Default 5:15/km
 
-    # Calculations for 5 standard triathlon distances (Super Sprint to Full Ironman)
+    # Calculations for 5 standard triathlon distances with realistic multi-sport fatigue degradation
     distances = [
         {
             "category": "Super Sprint",
             "name": "Super Sprint (400m / 10k / 2.5k)",
             "swim_m": 400,
-            "swim_factor": 0.98,
+            "swim_factor": 1.00,
             "t1_sec": 75,
             "bike_km": 10.0,
-            "bike_factor": 1.05,
-            "t2_sec": 60,
+            "bike_factor": 1.03,
+            "t2_sec": 45,
             "run_km": 2.5,
-            "run_factor": 1.00,
+            "run_factor": 1.02,
         },
         {
             "category": "Sprint Triathlon",
             "name": "Sprint (750m / 20k / 5k)",
             "swim_m": 750,
-            "swim_factor": 1.00,
+            "swim_factor": 1.02,
             "t1_sec": 105,
             "bike_km": 20.0,
-            "bike_factor": 1.02,
+            "bike_factor": 1.00,
             "t2_sec": 75,
             "run_km": 5.0,
-            "run_factor": 1.03,
+            "run_factor": 1.05,
         },
         {
             "category": "Olympic Triathlon",
             "name": "Olympic (1.5k / 40k / 10k)",
             "swim_m": 1500,
-            "swim_factor": 1.03,
+            "swim_factor": 1.05,
             "t1_sec": 135,
             "bike_km": 40.0,
-            "bike_factor": 0.98,
+            "bike_factor": 0.96,
             "t2_sec": 90,
             "run_km": 10.0,
-            "run_factor": 1.05,
+            "run_factor": 1.12,
         },
         {
             "category": "Half Ironman (70.3)",
             "name": "Ironman 70.3 (1.9k / 90k / 21.1k)",
             "swim_m": 1900,
-            "swim_factor": 1.06,
+            "swim_factor": 1.08,
             "t1_sec": 180,
             "bike_km": 90.0,
-            "bike_factor": 0.94,
+            "bike_factor": 0.91,
             "t2_sec": 120,
             "run_km": 21.0975,
-            "run_factor": 1.08,
+            "run_factor": 1.22,
         },
         {
             "category": "Full Ironman (140.6)",
             "name": "Ironman 140.6 (3.8k / 180k / 42.2k)",
             "swim_m": 3800,
-            "swim_factor": 1.10,
+            "swim_factor": 1.12,
             "t1_sec": 270,
             "bike_km": 180.0,
-            "bike_factor": 0.88,
+            "bike_factor": 0.84,
             "t2_sec": 180,
             "run_km": 42.195,
-            "run_factor": 1.14,
+            "run_factor": 1.38,
         },
     ]
 
