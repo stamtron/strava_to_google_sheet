@@ -290,10 +290,11 @@ def predict_triathlon_performances(activities: list[dict], use_race_pb: bool = F
             "run_pace": format_pace_min_km(base_run_km_sec),
         },
         "verified_pbs": {
-            "sprint_triathlon": "1h 15m 32s (Lake Doxa)",
-            "standard_triathlon": "2h 24m 07s (Messolonghi)",
-            "run_10k": "50m 15s (Ioannis Kapodistrias)",
-            "aquathlon": "37m 14s (Full Moon)",
+            "half_marathon": "1h 46m 55s (Athens Half Marathon 2026)",
+            "run_10k": "50m 15s (Ioannis Kapodistrias 2026)",
+            "sprint_triathlon": "1h 15m 32s (Lake Doxa 2026)",
+            "standard_triathlon": "2h 24m 07s (Messolonghi 2026)",
+            "aquathlon": "37m 14s (Full Moon 2026)",
         },
         "predictions": triathlon_predictions,
     }
