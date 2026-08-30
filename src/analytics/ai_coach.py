@@ -117,7 +117,7 @@ def predict_race_performances(activities: list[dict], custom_5k_pace_sec: float 
     }
 
 
-def predict_triathlon_performances(activities: list[dict]) -> dict:
+def predict_triathlon_performances(activities: list[dict], use_race_pb: bool = False) -> dict:
     """
     Calculate comprehensive multi-sport finish time projections for:
     - Super Sprint (400m swim, 10k bike, 2.5k run)
@@ -126,46 +126,55 @@ def predict_triathlon_performances(activities: list[dict]) -> dict:
     - 70.3 Half Ironman (1900m swim, 90k bike, 21.1k run)
     - 140.6 Full Ironman (3800m swim, 180k bike, 42.2k run)
 
-    Incorporates empirical brick fatigue, aerodynamic conservation, and transition overhead.
+    Supports dual-mode:
+    1. Training-based (conservative pace derived from everyday Strava workouts)
+    2. Race-PB calibrated (peak race performance derived from official verified PBs)
     """
-    # 1. Base Swim Pace (/100m) - CSS from sustained swims
-    swim_paces = []
-    for a in activities:
-        if (a.get("sport_type") or a.get("type")) in SWIM_SPORTS:
-            raw_dist, _ = corrected_distance_and_speed(a)
-            moving_time = a.get("moving_time", 0) or 0
-            if raw_dist >= 300 and moving_time > 180:
-                pace = moving_time / (raw_dist / 100.0)
-                if 65.0 <= pace <= 220.0:
-                    swim_paces.append(pace)
-    base_swim_100m_sec = min(swim_paces) if swim_paces else 105.0  # Default 1:45/100m
+    if use_race_pb:
+        # Calibrated on verified race personal bests:
+        # Sprint 1:15:32 (Lake Doxa), Olympic 2:24:07 (Messolonghi), 10K 50:15 (Kapodistrias)
+        base_swim_100m_sec = 100.0  # 1:40/100m race pace
+        base_bike_speed_kmh = 32.5  # 32.5 km/h race aero speed
+        base_run_km_sec = 282.0     # 4:42 /km race pace
+    else:
+        # 1. Base Swim Pace (/100m) - CSS from sustained swims
+        swim_paces = []
+        for a in activities:
+            if (a.get("sport_type") or a.get("type")) in SWIM_SPORTS:
+                raw_dist, _ = corrected_distance_and_speed(a)
+                moving_time = a.get("moving_time", 0) or 0
+                if raw_dist >= 300 and moving_time > 180:
+                    pace = moving_time / (raw_dist / 100.0)
+                    if 65.0 <= pace <= 220.0:
+                        swim_paces.append(pace)
+        base_swim_100m_sec = min(swim_paces) if swim_paces else 105.0  # Default 1:45/100m
 
-    # 2. Base Bike Speed (km/h) - aerobic cruising speed from rides >= 15km
-    bike_speeds = []
-    for a in activities:
-        sport = a.get("sport_type") or a.get("type", "")
-        if sport in BIKE_SPORTS:
-            dist_m, _ = corrected_distance_and_speed(a)
-            dist_km = dist_m / 1000.0
-            moving_time = a.get("moving_time", 0) or 0
-            if dist_km >= 15.0 and moving_time > 1200:
-                speed = dist_km / (moving_time / 3600.0)
-                if 18.0 <= speed <= 48.0:
-                    bike_speeds.append(speed)
-    base_bike_speed_kmh = max(bike_speeds) if bike_speeds else 28.0  # Default 28 km/h
+        # 2. Base Bike Speed (km/h) - aerobic cruising speed from rides >= 15km
+        bike_speeds = []
+        for a in activities:
+            sport = a.get("sport_type") or a.get("type", "")
+            if sport in BIKE_SPORTS:
+                dist_m, _ = corrected_distance_and_speed(a)
+                dist_km = dist_m / 1000.0
+                moving_time = a.get("moving_time", 0) or 0
+                if dist_km >= 15.0 and moving_time > 1200:
+                    speed = dist_km / (moving_time / 3600.0)
+                    if 18.0 <= speed <= 48.0:
+                        bike_speeds.append(speed)
+        base_bike_speed_kmh = max(bike_speeds) if bike_speeds else 28.0  # Default 28 km/h
 
-    # 3. Base Run Pace (sec/km) - 5K threshold equivalent
-    equiv_5k_paces = []
-    for a in activities:
-        sport = a.get("sport_type") or a.get("type", "")
-        if sport in RUN_SPORTS:
-            dist_m, _ = corrected_distance_and_speed(a)
-            dist_km = dist_m / 1000.0
-            time_s = a.get("moving_time", 0) or 0
-            if dist_km >= 3.0 and time_s > 600:
-                equiv_5k_time = time_s * ((5.0 / dist_km) ** 1.07)
-                equiv_5k_paces.append(equiv_5k_time / 5.0)
-    base_run_km_sec = min(equiv_5k_paces) if equiv_5k_paces else 315.0  # Default 5:15/km
+        # 3. Base Run Pace (sec/km) - 5K threshold equivalent
+        equiv_5k_paces = []
+        for a in activities:
+            sport = a.get("sport_type") or a.get("type", "")
+            if sport in RUN_SPORTS:
+                dist_m, _ = corrected_distance_and_speed(a)
+                dist_km = dist_m / 1000.0
+                time_s = a.get("moving_time", 0) or 0
+                if dist_km >= 3.0 and time_s > 600:
+                    equiv_5k_time = time_s * ((5.0 / dist_km) ** 1.07)
+                    equiv_5k_paces.append(equiv_5k_time / 5.0)
+        base_run_km_sec = min(equiv_5k_paces) if equiv_5k_paces else 315.0  # Default 5:15/km
 
     # Calculations for 5 standard triathlon distances with realistic multi-sport fatigue degradation
     distances = [
@@ -174,10 +183,10 @@ def predict_triathlon_performances(activities: list[dict]) -> dict:
             "name": "Super Sprint (400m / 10k / 2.5k)",
             "swim_m": 400,
             "swim_factor": 1.00,
-            "t1_sec": 75,
+            "t1_sec": 60 if use_race_pb else 75,
             "bike_km": 10.0,
             "bike_factor": 1.03,
-            "t2_sec": 45,
+            "t2_sec": 40 if use_race_pb else 45,
             "run_km": 2.5,
             "run_factor": 1.02,
         },
@@ -186,10 +195,10 @@ def predict_triathlon_performances(activities: list[dict]) -> dict:
             "name": "Sprint (750m / 20k / 5k)",
             "swim_m": 750,
             "swim_factor": 1.02,
-            "t1_sec": 105,
+            "t1_sec": 75 if use_race_pb else 105,
             "bike_km": 20.0,
             "bike_factor": 1.00,
-            "t2_sec": 75,
+            "t2_sec": 50 if use_race_pb else 75,
             "run_km": 5.0,
             "run_factor": 1.05,
         },
@@ -198,10 +207,10 @@ def predict_triathlon_performances(activities: list[dict]) -> dict:
             "name": "Olympic (1.5k / 40k / 10k)",
             "swim_m": 1500,
             "swim_factor": 1.05,
-            "t1_sec": 135,
+            "t1_sec": 90 if use_race_pb else 135,
             "bike_km": 40.0,
             "bike_factor": 0.96,
-            "t2_sec": 90,
+            "t2_sec": 60 if use_race_pb else 90,
             "run_km": 10.0,
             "run_factor": 1.12,
         },
@@ -210,10 +219,10 @@ def predict_triathlon_performances(activities: list[dict]) -> dict:
             "name": "Ironman 70.3 (1.9k / 90k / 21.1k)",
             "swim_m": 1900,
             "swim_factor": 1.08,
-            "t1_sec": 180,
+            "t1_sec": 135 if use_race_pb else 180,
             "bike_km": 90.0,
             "bike_factor": 0.91,
-            "t2_sec": 120,
+            "t2_sec": 90 if use_race_pb else 120,
             "run_km": 21.0975,
             "run_factor": 1.22,
         },
@@ -222,10 +231,10 @@ def predict_triathlon_performances(activities: list[dict]) -> dict:
             "name": "Ironman 140.6 (3.8k / 180k / 42.2k)",
             "swim_m": 3800,
             "swim_factor": 1.12,
-            "t1_sec": 270,
+            "t1_sec": 210 if use_race_pb else 270,
             "bike_km": 180.0,
             "bike_factor": 0.84,
-            "t2_sec": 180,
+            "t2_sec": 150 if use_race_pb else 180,
             "run_km": 42.195,
             "run_factor": 1.38,
         },
@@ -274,10 +283,17 @@ def predict_triathlon_performances(activities: list[dict]) -> dict:
         })
 
     return {
+        "mode": "race_pb" if use_race_pb else "training",
         "baselines": {
             "swim_100m": f"{int(base_swim_100m_sec // 60)}:{int(base_swim_100m_sec % 60):02d} /100m",
             "bike_speed": f"{base_bike_speed_kmh:.1f} km/h",
             "run_pace": format_pace_min_km(base_run_km_sec),
+        },
+        "verified_pbs": {
+            "sprint_triathlon": "1h 15m 32s (Lake Doxa)",
+            "standard_triathlon": "2h 24m 07s (Messolonghi)",
+            "run_10k": "50m 15s (Ioannis Kapodistrias)",
+            "aquathlon": "37m 14s (Full Moon)",
         },
         "predictions": triathlon_predictions,
     }

@@ -24,7 +24,7 @@ const ACWR_ZONE_STYLES = {
   unknown: { color: "#94a3b8", border: "rgba(148, 163, 184, 0.3)" },
 };
 
-// Document Ready
+let currentTriMode = "pb"; // "pb" or "train"
 document.addEventListener("DOMContentLoaded", () => {
   initApp();
   setupEventListeners();
@@ -62,6 +62,29 @@ function setupEventListeners() {
   document.getElementById("syncSheetBtn").addEventListener("click", handleSheetSync);
   document.getElementById("generateAiBtn").addEventListener("click", handleGenerateAiFeedback);
   document.getElementById("copyReportBtn").addEventListener("click", handleCopyReport);
+
+  // Triathlon Mode Toggles
+  const pbBtn = document.getElementById("triModePbBtn");
+  const trainBtn = document.getElementById("triModeTrainBtn");
+  if (pbBtn && trainBtn) {
+    pbBtn.addEventListener("click", () => {
+      currentTriMode = "pb";
+      pbBtn.classList.add("active");
+      trainBtn.classList.remove("active");
+      if (dashboardData) {
+        renderTriathlonPredictions(dashboardData.triathlon_pb || dashboardData.triathlon);
+      }
+    });
+
+    trainBtn.addEventListener("click", () => {
+      currentTriMode = "train";
+      trainBtn.classList.add("active");
+      pbBtn.classList.remove("active");
+      if (dashboardData) {
+        renderTriathlonPredictions(dashboardData.triathlon);
+      }
+    });
+  }
 
   // Tab Navigation
   const tabWeekly = document.getElementById("tabWeeklyBtn");
@@ -580,16 +603,19 @@ function renderPredictions(predData) {
 }
 
 function renderTriathlonPredictions(triData) {
-  if (!triData || !triData.predictions) return;
+  const data = triData || (currentTriMode === "pb" ? (dashboardData.triathlon_pb || dashboardData.triathlon) : dashboardData.triathlon);
+  if (!data || !data.predictions) return;
 
   const container = document.getElementById("triathlonContainer");
   container.innerHTML = "";
 
-  if (triData.baselines) {
-    document.getElementById("triBaselinesBadge").textContent = `🏊 ${triData.baselines.swim_100m} • 🚴 ${triData.baselines.bike_speed} • 🏃 ${triData.baselines.run_pace}`;
+  const isPb = data.mode === "race_pb" || currentTriMode === "pb";
+  if (data.baselines) {
+    const prefix = isPb ? "🏆 PB Ρυθμός Αγώνα:" : "📈 Προπονητική Βάση:";
+    document.getElementById("triBaselinesBadge").textContent = `${prefix} 🏊 ${data.baselines.swim_100m} • 🚴 ${data.baselines.bike_speed} • 🏃 ${data.baselines.run_pace}`;
   }
 
-  triData.predictions.forEach((p) => {
+  data.predictions.forEach((p) => {
     const card = document.createElement("div");
     card.className = "triathlon-card";
 

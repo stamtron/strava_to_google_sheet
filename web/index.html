@@ -197,8 +197,14 @@
 
         <!-- Triathlon Finish Projections Card -->
         <div class="glass-panel ai-card">
-          <div class="ai-header">
+          <div class="ai-header" style="flex-wrap: wrap; gap: 8px;">
             <h3 style="font-size: 15px;">🏊🚴🏃 Προβλέψεις Τριάθλου</h3>
+            <div style="display: flex; gap: 6px;">
+              <button id="triModePbBtn" class="filter-btn active" style="padding: 3px 8px; font-size: 11px;">🏆 Βάσει PB Αγώνων</button>
+              <button id="triModeTrainBtn" class="filter-btn" style="padding: 3px 8px; font-size: 11px;">📈 Βάσει Προπόνησης</button>
+            </div>
+          </div>
+          <div style="margin-bottom: 10px;">
             <span id="triBaselinesBadge" class="bio-badge">Βάση: Multi-sport</span>
           </div>
           <div id="triathlonContainer">

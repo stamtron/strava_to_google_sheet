@@ -196,7 +196,8 @@ def get_dashboard_data(count: int = Query(50, ge=1, le=100)):
         "weeks": weeks,
         "garmin": garmin_summaries,
         "predictions": predict_race_performances(summaries),
-        "triathlon": predict_triathlon_performances(summaries),
+        "triathlon": predict_triathlon_performances(activities=summaries, use_race_pb=False),
+        "triathlon_pb": predict_triathlon_performances(activities=summaries, use_race_pb=True),
         "progression": build_progression_history(weeks, acwr_map=acwr_map),
         "activities_total": len(summaries),
     }
