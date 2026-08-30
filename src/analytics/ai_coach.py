@@ -149,8 +149,20 @@ def predict_triathlon_performances(activities: list[dict]) -> dict:
                     run_paces.append(pace)
     base_run_km_sec = min(run_paces) if run_paces else 315.0  # Default 5:15/km
 
-    # Calculations for 4 standard triathlon distances
+    # Calculations for 5 standard triathlon distances (Super Sprint to Full Ironman)
     distances = [
+        {
+            "category": "Super Sprint",
+            "name": "Super Sprint (400m / 10k / 2.5k)",
+            "swim_m": 400,
+            "swim_factor": 0.98,
+            "t1_sec": 75,
+            "bike_km": 10.0,
+            "bike_factor": 1.05,
+            "t2_sec": 60,
+            "run_km": 2.5,
+            "run_factor": 1.00,
+        },
         {
             "category": "Sprint Triathlon",
             "name": "Sprint (750m / 20k / 5k)",
