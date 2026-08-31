@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="el">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -19,11 +19,11 @@
         </div>
       </div>
       <div class="header-actions">
-        <select id="weekSelector" class="week-selector" aria-label="Επιλογή Εβδομάδας">
-          <option value="current">Φόρτωση...</option>
+        <select id="weekSelector" class="week-selector" aria-label="Select Week">
+          <option value="current">Loading...</option>
         </select>
-        <button id="copyReportBtn" class="btn btn-share" title="Αντιγραφή εβδομαδιαίας αναφοράς για WhatsApp / Coach">
-          <span>📋 Αντιγραφή Αναφοράς</span>
+        <button id="copyReportBtn" class="btn btn-share" title="Copy weekly report for WhatsApp / Coach">
+          <span>📋 Copy Report</span>
         </button>
         <button id="syncSheetBtn" class="btn btn-primary">
           <span>📊 Sync to Google Sheet</span>
@@ -34,10 +34,10 @@
     <!-- Navigation Tabs -->
     <div class="nav-tabs">
       <button id="tabWeeklyBtn" class="tab-btn active">
-        <span>⚡ Εβδομαδιαία Ανάλυση</span>
+        <span>⚡ Weekly Analysis</span>
       </button>
       <button id="tabProgressionBtn" class="tab-btn">
-        <span>📈 Μακροπρόθεσμη Πρόοδος & Φορτίο (Multi-Week)</span>
+        <span>📈 Long-Term Progression & Load (Multi-Week)</span>
       </button>
     </div>
 
@@ -46,17 +46,17 @@
       <!-- Total Hours Card -->
       <div class="glass-panel metric-card">
         <div class="metric-header">
-          <span class="metric-title">ΣΥΝΟΛΙΚΕΣ ΩΡΕΣ</span>
+          <span class="metric-title">TOTAL HOURS</span>
           <span class="metric-icon">⏱️</span>
         </div>
-        <div id="metricTotalHours" class="metric-value">0ω 0λ</div>
-        <div id="metricActivitiesCount" class="metric-subvalue">0 προπονήσεις αυτή την εβδομάδα</div>
+        <div id="metricTotalHours" class="metric-value">0h 0m</div>
+        <div id="metricActivitiesCount" class="metric-subvalue">0 workouts this week</div>
       </div>
 
       <!-- Relative Effort / Suffer Score Card -->
       <div class="glass-panel metric-card card-effort">
         <div class="metric-header">
-          <span class="metric-title">ΣΧΕΤΙΚΗ ΠΡΟΣΠΑΘΕΙΑ (STRAVA)</span>
+          <span class="metric-title">RELATIVE EFFORT (STRAVA)</span>
           <span class="metric-icon">🔥</span>
         </div>
         <div id="metricRelativeEffort" class="metric-value">0</div>
@@ -66,40 +66,40 @@
       <!-- Running Card -->
       <div class="glass-panel metric-card card-run">
         <div class="metric-header">
-          <span class="metric-title">ΤΡΕΞΙΜΟ</span>
+          <span class="metric-title">RUNNING</span>
           <span class="metric-icon">🏃</span>
         </div>
-        <div id="metricRunDist" class="metric-value">0.00 χλμ</div>
-        <div id="metricRunTime" class="metric-subvalue">0ω 0λ</div>
+        <div id="metricRunDist" class="metric-value">0.00 km</div>
+        <div id="metricRunTime" class="metric-subvalue">0h 0m</div>
       </div>
 
       <!-- Cycling Card -->
       <div class="glass-panel metric-card card-ride">
         <div class="metric-header">
-          <span class="metric-title">ΠΟΔΗΛΑΣΙΑ</span>
+          <span class="metric-title">CYCLING</span>
           <span class="metric-icon">🚴</span>
         </div>
-        <div id="metricBikeDist" class="metric-value">0.00 χλμ</div>
-        <div id="metricBikeTime" class="metric-subvalue">0ω 0λ</div>
+        <div id="metricBikeDist" class="metric-value">0.00 km</div>
+        <div id="metricBikeTime" class="metric-subvalue">0h 0m</div>
       </div>
 
       <!-- Swimming Card -->
       <div class="glass-panel metric-card card-swim">
         <div class="metric-header">
-          <span class="metric-title">ΚΟΛΥΜΒΗΣΗ</span>
+          <span class="metric-title">SWIMMING</span>
           <span class="metric-icon">🏊</span>
         </div>
-        <div id="metricSwimDist" class="metric-value">0 μ</div>
-        <div id="metricSwimTime" class="metric-subvalue">0ω 0λ</div>
+        <div id="metricSwimDist" class="metric-value">0 m</div>
+        <div id="metricSwimTime" class="metric-subvalue">0h 0m</div>
       </div>
 
       <!-- Garmin Health Card -->
       <div class="glass-panel metric-card card-health">
         <div class="metric-header">
-          <span class="metric-title">GARMIN ΥΓΕΙΑ & HRV</span>
+          <span class="metric-title">GARMIN HEALTH & HRV</span>
           <span class="metric-icon">😴</span>
         </div>
-        <div id="metricSleep" class="metric-value">--h Ύπνος</div>
+        <div id="metricSleep" class="metric-value">--h Sleep</div>
         <div class="biometrics-row">
           <div class="bio-badge">❤️ HRrest: <strong id="metricRhr">--</strong></div>
           <div class="bio-badge">📈 HRV: <strong id="metricHrv">--</strong></div>
@@ -114,13 +114,13 @@
         <!-- Interactive Charts Grid -->
         <div class="charts-grid">
           <div class="glass-panel chart-card">
-            <h3>Κατανομή Προπονητικού Όγκου (Ώρες)</h3>
+            <h3>Training Volume Distribution (Hours)</h3>
             <div class="chart-wrapper">
               <canvas id="disciplineChart"></canvas>
             </div>
           </div>
           <div class="glass-panel chart-card">
-            <h3>Συσχέτιση Αποκατάστασης (HRV & Ύπνος)</h3>
+            <h3>Recovery Correlation (HRV & Sleep)</h3>
             <div class="chart-wrapper">
               <canvas id="recoveryChart"></canvas>
             </div>
@@ -130,8 +130,8 @@
         <!-- 7-Day Calendar Block -->
         <div class="glass-panel calendar-section">
           <div class="section-header">
-            <h2 class="section-title">Εβδομαδιαίο Ημερολόγιο Προπονήσεων</h2>
-            <span id="calendarDateRange" class="brand-subtitle">Δευτέρα – Κυριακή</span>
+            <h2 class="section-title">Weekly Workout Calendar</h2>
+            <span id="calendarDateRange" class="brand-subtitle">Monday – Sunday</span>
           </div>
           <div id="daysGrid" class="days-grid">
             <!-- Rendered dynamically -->
@@ -154,19 +154,19 @@
               <span id="readinessScore" class="readiness-number">80%</span>
             </div>
             <div class="readiness-info">
-              <h4 id="readinessTitle">Καλή Ετοιμότητα</h4>
-              <p id="readinessDesc">Το νευρικό σύστημα και η καρδιοαναπνευστική βάση βρίσκονται σε ισορροπία.</p>
+              <h4 id="readinessTitle">Good Readiness</h4>
+              <p id="readinessDesc">Nervous system and cardiorespiratory baseline are in balance.</p>
             </div>
           </div>
 
           <!-- AI Output & Advice -->
           <div id="aiOutputBox" class="ai-output-box">
-Πατήστε «Ανάλυση Προπόνησης» για να δημιουργήσει το AI έξυπνη ανατροφοδότηση και συμβουλές για την εβδομάδα σας.
+Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
           </div>
 
           <div style="margin-top: 16px;">
             <button id="generateAiBtn" class="btn btn-ai" style="width: 100%; justify-content: center;">
-              <span>✨ Δημιουργία AI Ανατροφοδότησης</span>
+              <span>✨ Generate AI Feedback</span>
             </button>
           </div>
         </div>
@@ -174,22 +174,22 @@
         <!-- Athlete Feedback & Notes Editor -->
         <div class="glass-panel feedback-editor">
           <div class="section-header" style="margin-bottom: 12px;">
-            <h3 style="font-size: 15px;">Σημειώσεις Αθλητή & Αίσθηση</h3>
+            <h3 style="font-size: 15px;">Athlete Notes & Feeling</h3>
           </div>
 
-          <textarea id="athleteNotesText" class="editor-textarea" placeholder="Γράψτε παρατηρήσεις, αίσθηση κόπωσης ή σχόλιο εβδομάδας..."></textarea>
+          <textarea id="athleteNotesText" class="editor-textarea" placeholder="Write notes, fatigue level, or weekly comments..."></textarea>
 
           <div class="sliders-row">
             <div class="slider-group">
-              <span class="slider-label">Κόπωση: <strong id="fatigueVal">5/10</strong></span>
+              <span class="slider-label">Fatigue: <strong id="fatigueVal">5/10</strong></span>
               <input type="range" id="fatigueSlider" min="1" max="10" value="5">
             </div>
             <div class="slider-group">
-              <span class="slider-label">Μυϊκή ενόχλ.: <strong id="sorenessVal">3/10</strong></span>
+              <span class="slider-label">Soreness: <strong id="sorenessVal">3/10</strong></span>
               <input type="range" id="sorenessSlider" min="1" max="10" value="3">
             </div>
             <div class="slider-group">
-              <span class="slider-label">Διάθεση: <strong id="moodVal">8/10</strong></span>
+              <span class="slider-label">Mood: <strong id="moodVal">8/10</strong></span>
               <input type="range" id="moodSlider" min="1" max="10" value="8">
             </div>
           </div>
@@ -198,14 +198,14 @@
         <!-- Triathlon Finish Projections Card -->
         <div class="glass-panel ai-card">
           <div class="ai-header" style="flex-wrap: wrap; gap: 8px;">
-            <h3 style="font-size: 15px;">🏊🚴🏃 Προβλέψεις Τριάθλου</h3>
+            <h3 style="font-size: 15px;">🏊🚴🏃 Triathlon Predictions</h3>
             <div style="display: flex; gap: 6px;">
-              <button id="triModePbBtn" class="filter-btn active" style="padding: 3px 8px; font-size: 11px;">🏆 Βάσει PB Αγώνων</button>
-              <button id="triModeTrainBtn" class="filter-btn" style="padding: 3px 8px; font-size: 11px;">📈 Βάσει Προπόνησης</button>
+              <button id="triModePbBtn" class="filter-btn active" style="padding: 3px 8px; font-size: 11px;">🏆 Based on Race PB</button>
+              <button id="triModeTrainBtn" class="filter-btn" style="padding: 3px 8px; font-size: 11px;">📈 Based on Training</button>
             </div>
           </div>
           <div style="margin-bottom: 10px;">
-            <span id="triBaselinesBadge" class="bio-badge">Βάση: Multi-sport</span>
+            <span id="triBaselinesBadge" class="bio-badge">Base: Multi-sport</span>
           </div>
           <div id="triathlonContainer">
             <!-- Rendered dynamically -->
@@ -215,15 +215,15 @@
         <!-- Running Race Predictions Card -->
         <div class="glass-panel ai-card">
           <div class="ai-header">
-            <h3 style="font-size: 15px;">🏆 Πρόβλεψη Αγώνων Δρόμου</h3>
-            <span id="basePaceBadge" class="bio-badge">Βάση: 5:00 /χλμ</span>
+            <h3 style="font-size: 15px;">🏆 Race Time Predictions</h3>
+            <span id="basePaceBadge" class="bio-badge">Base: 5:00 /km</span>
           </div>
           <table class="predictions-table">
             <thead>
               <tr>
-                <th>Απόσταση</th>
-                <th>Εκτιμώμενος Χρόνος</th>
-                <th>Ρυθμός (/χλμ)</th>
+                <th>Distance</th>
+                <th>Estimated Time</th>
+                <th>Pace (/km)</th>
               </tr>
             </thead>
             <tbody id="predictionsBody">
@@ -239,7 +239,7 @@
       <div class="progression-grid">
         <!-- Relative Effort & Hours Trend -->
         <div class="glass-panel progression-chart-card">
-          <h3>Εξέλιξη Σχετικής Προσπάθειας (Relative Effort) & Ώρες ανά Εβδομάδα</h3>
+          <h3>Relative Effort & Training Hours Trend</h3>
           <div class="chart-wrapper">
             <canvas id="effortProgressionChart"></canvas>
           </div>
@@ -247,7 +247,7 @@
 
         <!-- Discipline Mileage Stacked Trend -->
         <div class="glass-panel progression-chart-card">
-          <h3>Εξέλιξη Χιλιομέτρων ανά Άθλημα (Τρέξιμο / Ποδήλατο / Κολύμπι)</h3>
+          <h3>Distance by Sport Trend (Run / Bike / Swim)</h3>
           <div class="chart-wrapper">
             <canvas id="volumeProgressionChart"></canvas>
           </div>
@@ -257,7 +257,7 @@
       <div class="progression-grid">
         <!-- Elevation Climbed Progression -->
         <div class="glass-panel progression-chart-card">
-          <h3>Εξέλιξη Συνολικών Υψομετρικών (⛰️ Elevation Gain σε μέτρα)</h3>
+          <h3>Total Elevation Gain (⛰️ in meters)</h3>
           <div class="chart-wrapper">
             <canvas id="elevationProgressionChart"></canvas>
           </div>
@@ -265,7 +265,7 @@
 
         <!-- ACWR / Workload Balance -->
         <div class="glass-panel progression-chart-card">
-          <h3>Αναλογία Οξέος/Χρόνιου Φορτίου (ACWR - Overtraining Index)</h3>
+          <h3>Acute:Chronic Workload Ratio (ACWR - Overtraining Index)</h3>
           <div class="chart-wrapper">
             <canvas id="acwrProgressionChart"></canvas>
           </div>

@@ -20,10 +20,10 @@ from src.formatting import corrected_distance_and_speed
 # ACWR interpretation bands. `zone` is a stable machine-readable key; the
 # frontend maps it to a colour so presentation stays out of the analytics layer.
 ACWR_ZONES = (
-    (0.8, "low", "Χαμηλό Φορτίο (Recovery / Undertraining)"),
-    (1.3, "optimal", "Βέλτιστη Προσαρμογή (Optimal Zone)"),
-    (1.5, "overreaching", "Υπερφόρτωση (Overreaching)"),
-    (float("inf"), "spike", "Υψηλός Κίνδυνος Κόπωσης (Overtraining Spike)"),
+    (0.8, "low", "Low Load (Recovery / Undertraining)"),
+    (1.3, "optimal", "Optimal Zone"),
+    (1.5, "overreaching", "Overreaching"),
+    (float("inf"), "spike", "Overtraining Spike Risk"),
 )
 
 
@@ -156,7 +156,7 @@ def calculate_acwr(sorted_week_keys: list[str], weeks_dict: dict) -> dict[str, d
                 "chronic_effort": round(sum(prior_efforts) / len(prior_efforts), 1) if prior_efforts else None,
                 "acwr_ratio": None,
                 "chronic_weeks": len(prior_efforts),
-                "status": "Ανεπαρκές ιστορικό (Insufficient history)",
+                "status": "Insufficient history",
                 "zone": "unknown",
             }
             continue
@@ -168,7 +168,7 @@ def calculate_acwr(sorted_week_keys: list[str], weeks_dict: dict) -> dict[str, d
                 "chronic_effort": 0.0,
                 "acwr_ratio": None,
                 "chronic_weeks": len(prior_efforts),
-                "status": "Χωρίς χρόνιο φορτίο (No chronic baseline)",
+                "status": "No chronic baseline",
                 "zone": "unknown",
             }
             continue

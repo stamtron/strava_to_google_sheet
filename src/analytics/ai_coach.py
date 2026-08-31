@@ -95,8 +95,8 @@ def predict_race_performances(activities: list[dict], custom_5k_pace_sec: float 
     races = [
         {"name": "5K", "dist_km": 5.0, "time_sec": base_5k_time},
         {"name": "10K", "dist_km": 10.0, "time_sec": base_5k_time * ((10.0 / 5.0) ** 1.07)},
-        {"name": "Ημιμαραθώνιος (21.1K)", "dist_km": 21.0975, "time_sec": base_5k_time * ((21.0975 / 5.0) ** 1.10)},
-        {"name": "Μαραθώνιος (42.2K)", "dist_km": 42.195, "time_sec": base_5k_time * ((42.195 / 5.0) ** marathon_exp)},
+        {"name": "Half Marathon (21.1K)", "dist_km": 21.0975, "time_sec": base_5k_time * ((21.0975 / 5.0) ** 1.10)},
+        {"name": "Marathon (42.2K)", "dist_km": 42.195, "time_sec": base_5k_time * ((42.195 / 5.0) ** marathon_exp)},
     ]
 
     results = []
@@ -341,25 +341,25 @@ def generate_weekly_coaching_insights(
 
     if client:
         prompt = f"""
-Είσαι ένας κορυφαίος προπονητής τριάθλου και αντοχής (Triathlon / Endurance Coach).
-Ανάλυσε τα παρακάτω εβδομαδιαία δεδομένα του αθλητή:
+You are an elite triathlon and endurance coach.
+Analyze the following weekly athlete training and biometrics data:
 
-- Τρέξιμο: {run_dist:.1f} km
-- Ποδηλασία: {bike_dist:.1f} km
-- Κολύμβηση: {swim_dist:.0f} m
-- Συνολικές Ώρες Προπόνησης: {total_time_h:.1f} ώρες ({activities_count} προπονήσεις)
-- Σχετική Προσπάθεια Strava (Relative Effort / Suffer Score): {relative_effort:.0f}
-- Συνολικά Υψομετρικά: {elevation_m:.0f} m
-- Ύπνος (Garmin Connect): {sleep_h or 'N/A'} ώρες
+- Running: {run_dist:.1f} km
+- Cycling: {bike_dist:.1f} km
+- Swimming: {swim_dist:.0f} m
+- Total Training Duration: {total_time_h:.1f} hours ({activities_count} sessions)
+- Strava Relative Effort (Suffer Score): {relative_effort:.0f}
+- Total Elevation Gain: {elevation_m:.0f} m
+- Sleep (Garmin Connect): {sleep_h or 'N/A'} hours
 - Resting HR (HRrest): {rhr or 'N/A'} bpm
 - Overnight HRV: {hrv or 'N/A'} ms
-- Σημειώσεις Αθλητή: {athlete_notes or 'Καμία επιπλέον σημείωση'}
+- Athlete Notes: {athlete_notes or 'No additional notes'}
 
-Παρακαλώ δώσε σε μορφή JSON:
-1. "feedback": Ένα εμπεριστατωμένο προπονητικό σχόλιο/ανατροφοδότηση 2-3 παραγράφων στα Ελληνικά για τον προπονητή και τον αθλητή.
-2. "readiness_evaluation": Εκτίμηση κόπωσης, σχετικής προσπάθειας και αποκατάστασης (Recovery & Relative Effort load).
-3. "recommendations": Λίστα με 3 συγκεκριμένες συμβουλές για την επόμενη εβδομάδα.
-4. "readiness_score": Αριθμός 1-100.
+Please return a JSON response with:
+1. "feedback": A comprehensive 2-3 paragraph coaching evaluation and feedback in English.
+2. "readiness_evaluation": Assessment of fatigue, relative effort load, and recovery.
+3. "recommendations": A list of 3 specific actionable tips for the upcoming week.
+4. "readiness_score": Integer from 1-100.
 """
         for model_name in GEMINI_MODELS:
             try:
@@ -381,24 +381,24 @@ def generate_weekly_coaching_insights(
 
     # Heuristic Coach Fallback
     feedback_text = (
-        f"Εξαιρετική εβδομάδα με συνολικό όγκο {total_time_h:.1f} ωρών σε {activities_count} συνεδρίες και Σχετική Προσπάθεια {relative_effort:.0f}. "
-        f"Η κατανομή σε τρέξιμο ({run_dist:.1f} χλμ), ποδηλασία ({bike_dist:.1f} χλμ) και κολύμπι ({swim_dist:.0f} μ) "
-        f"έδειξε σταθερή προπονητική συνέπεια."
+        f"Solid training week with a total volume of {total_time_h:.1f} hours across {activities_count} sessions and a Relative Effort of {relative_effort:.0f}. "
+        f"The balance across running ({run_dist:.1f} km), cycling ({bike_dist:.1f} km), and swimming ({swim_dist:.0f} m) "
+        f"demonstrated strong training consistency."
     )
     if elevation_m > 0:
-        feedback_text += f" Καταγράφηκαν {elevation_m:.0f}μ συνολικών υψομετρικών."
+        feedback_text += f" Logged {elevation_m:.0f}m of total elevation gain."
     if sleep_h:
-        feedback_text += f" Ο συνολικός ύπνος ({sleep_h:.1f}h) και το HRV ({hrv or 'N/A'}) δείχνουν " + (
-            "πολύ καλή αποκατάσταση του νευρικού συστήματος." if (hrv or 60) >= 60 else "αυξημένη κόπωση που απαιτεί έμφαση στην αποκατάσταση."
+        feedback_text += f" Total sleep ({sleep_h:.1f}h) and HRV ({hrv or 'N/A'}) indicate " + (
+            "excellent autonomic nervous system recovery." if (hrv or 60) >= 60 else "elevated fatigue requiring focused recovery."
         )
 
     return {
         "feedback": feedback_text,
-        "readiness_evaluation": f"Δείκτης ετοιμότητας στο {readiness_score}%. Το σώμα ανταποκρίνεται καλά στον τρέχοντα προπονητικό όγκο και το φορτίο σχετικής προσπάθειας ({relative_effort:.0f}).",
+        "readiness_evaluation": f"Readiness score at {readiness_score}%. The body is adapting well to the current training volume and relative effort load ({relative_effort:.0f}).",
         "recommendations": [
-            "Διατήρησε την ένταση στις ζώνες Z1-Z2 στις ενδιάμεσες προπονήσεις για βέλτιστη αποκατάσταση.",
-            "Εστίασε στη σταθερή ενυδάτωση και πρόσληψη ηλεκτρολυτών στα μεγάλα ποδηλατικά sessions.",
-            "Συνέχισε τη στοχευμένη ενδυνάμωση για σταθεροποίηση κορμού και αποφυγή τραυματισμών.",
+            "Keep easy and recovery sessions strictly in Z1-Z2 heart rate zones for optimal aerobic adaptation.",
+            "Prioritize hydration and electrolyte replenishment during longer cycling and running sessions.",
+            "Maintain targeted strength and mobility work to support core stability and injury prevention.",
         ],
         "readiness_score": readiness_score,
         "source": "smart-heuristics",

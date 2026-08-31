@@ -22,7 +22,7 @@
 
   --gradient-run: linear-gradient(135deg, #f97316 0%, #ff0844 100%);
   --gradient-ride: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
-  --gradient-swim: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+  --gradient-swim: linear-gradient(135deg, #059669 0%, #10b981 100%);
   --gradient-strength: linear-gradient(135deg, #b224ef 0%, #7579ff 100%);
   --gradient-effort: linear-gradient(135deg, #ff0080 0%, #f97316 100%);
   --gradient-health: linear-gradient(135deg, #7928ca 0%, #ff0080 100%);
@@ -434,7 +434,7 @@ header {
 
 .act-run { color: #f97316; }
 .act-ride { color: #00f2fe; }
-.act-swim { color: #38f9d7; }
+.act-swim { color: #10b981; }
 .act-strength { color: #b224ef; }
 
 .act-stat {
