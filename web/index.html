@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Endurance AI Dashboard — Strava & Garmin Coach</title>
-  <link rel="stylesheet" href="/static/styles.css?v=2.1">
+  <link rel="stylesheet" href="/static/styles.css?v=2.7">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
@@ -108,7 +108,8 @@
     </div>
 
     <!-- VIEW 1: Weekly Dashboard & Calendar -->
-    <div id="weeklyView" class="main-layout">
+    <div id="weeklyView" class="weekly-view">
+     <div class="main-layout">
       <!-- Left Column: Visual Charts & Calendar -->
       <div class="content-left">
         <!-- Interactive Charts Grid -->
@@ -134,6 +135,20 @@
             <span id="calendarDateRange" class="brand-subtitle">Monday – Sunday</span>
           </div>
           <div id="daysGrid" class="days-grid">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+
+        <!-- Daily Weather Outlook (Athens, Greece) -->
+        <div class="glass-panel weather-section">
+          <div class="section-header">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <h2 class="section-title">🌤️ Athens Daily Weather</h2>
+              <span id="weatherLocationBadge" class="bio-badge">Athens, GR</span>
+            </div>
+            <span id="weatherRangeSubtitle" class="brand-subtitle">Recent & 7-Day Forecast</span>
+          </div>
+          <div id="weatherGrid" class="weather-grid">
             <!-- Rendered dynamically -->
           </div>
         </div>
@@ -194,9 +209,17 @@ Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
             </div>
           </div>
         </div>
+      </div>
+     </div>
 
+     <!--
+       Insights row: full-width beneath the two-column layout. These three cards
+       were starving in the narrow right rail while the left column ran out of
+       content, so they get the whole width to themselves.
+     -->
+     <div class="insights-grid">
         <!-- Triathlon Finish Projections Card -->
-        <div class="glass-panel ai-card">
+        <div class="glass-panel ai-card insight-tri">
           <div class="ai-header" style="flex-wrap: wrap; gap: 8px;">
             <h3 style="font-size: 15px;">🏊🚴🏃 Triathlon Predictions</h3>
             <div style="display: flex; gap: 6px;">
@@ -212,8 +235,26 @@ Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
           </div>
         </div>
 
+        <!-- Run Durability & Cross-Training Card -->
+        <div class="glass-panel ai-card insight-durability">
+          <div class="ai-header">
+            <h3 style="font-size: 15px;">🦵 Run Durability</h3>
+            <span id="durabilityRiskBadge" class="acwr-badge">Loading…</span>
+          </div>
+          <div id="durabilitySignals" class="durability-signals">
+            <!-- Rendered dynamically -->
+          </div>
+          <div class="durability-ramp-title">Weekly run-volume ramp</div>
+          <div id="durabilityRamp" class="durability-ramp">
+            <!-- Rendered dynamically -->
+          </div>
+          <div id="durabilityPlan" class="durability-plan">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+
         <!-- Running Race Predictions Card -->
-        <div class="glass-panel ai-card">
+        <div class="glass-panel ai-card insight-race">
           <div class="ai-header">
             <h3 style="font-size: 15px;">🏆 Race Time Predictions</h3>
             <span id="basePaceBadge" class="bio-badge">Base: 5:00 /km</span>
@@ -277,6 +318,44 @@ Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
   <!-- Toast notification container -->
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="/static/app.js?v=2.1"></script>
+  <!--
+    AI Coach chat. Outside .container on purpose: it overlays the page rather
+    than participating in the dashboard grid.
+  -->
+  <button id="chatLauncher" class="chat-launcher" title="Ask the AI Coach" aria-label="Open AI Coach chat">
+    <span>💬</span>
+  </button>
+
+  <div id="chatDrawer" class="chat-drawer glass-panel" aria-hidden="true">
+    <div class="chat-drawer-header">
+      <div>
+        <h3>🤖 AI Coach</h3>
+        <span id="chatModelBadge" class="chat-badge">ready</span>
+      </div>
+      <div class="chat-header-actions">
+        <button id="chatMemoryBtn" class="chat-icon-btn" title="What the coach remembers">🧠</button>
+        <button id="chatResetBtn" class="chat-icon-btn" title="Start a new conversation">✨</button>
+        <button id="chatCloseBtn" class="chat-icon-btn" title="Close">✕</button>
+      </div>
+    </div>
+
+    <!-- Stored facts, hidden until asked for: this is a rarely used inspector,
+         not part of the conversation. -->
+    <div id="chatMemoryPanel" class="chat-memory-panel" hidden>
+      <div class="chat-memory-title">What I remember about you</div>
+      <div id="chatMemoryList" class="chat-memory-list"></div>
+    </div>
+
+    <div id="chatMessages" class="chat-messages"></div>
+    <div id="chatToolActivity" class="chat-tool-activity" hidden></div>
+
+    <div class="chat-input-row">
+      <textarea id="chatInput" class="chat-input" rows="1"
+                placeholder="Ask about your load, a race, gear, or an injury…"></textarea>
+      <button id="chatSendBtn" class="chat-send-btn" title="Send">➤</button>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=2.7"></script>
 </body>
 </html>

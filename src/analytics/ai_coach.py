@@ -8,8 +8,33 @@ and race predictions using LLMs (Gemini) with robust heuristic fallbacks.
 import json
 import math
 
-from src.config import BIKE_SPORTS, GEMINI_API_KEY, GEMINI_MODELS, RUN_SPORTS, SWIM_SPORTS
+from src.config import (
+    ATHLETE_PB_10K_SEC,
+    ATHLETE_PB_5K_SEC,
+    ATHLETE_PB_AQUATHLON_SEC,
+    ATHLETE_PB_HALF_MARATHON_SEC,
+    ATHLETE_PB_OLYMPIC_TRI_SEC,
+    ATHLETE_PB_SPRINT_TRI_SEC,
+    ATHLETE_RACE_BIKE_SPEED_KMH,
+    ATHLETE_RACE_SWIM_100M_SEC,
+    BIKE_SPORTS,
+    GEMINI_API_KEY,
+    GEMINI_MODELS,
+    RUN_SPORTS,
+    SWIM_SPORTS,
+)
 from src.formatting import corrected_distance_and_speed
+
+# Where each verified PB was set. The times live in config.py as tunables; only
+# the race names are here, because a race name is a label, not a setting.
+PB_RACE_NAMES = {
+    "half_marathon": "Athens Half Marathon 2026",
+    "run_10k": "Ioannis Kapodistrias 2026",
+    "run_5k": "5K equivalent",
+    "sprint_triathlon": "Lake Doxa 2026",
+    "standard_triathlon": "Messolonghi 2026",
+    "aquathlon": "Full Moon 2026",
+}
 
 
 def _get_gemini_client():
@@ -22,6 +47,14 @@ def _get_gemini_client():
     except Exception as e:
         print(f"⚠️  Gemini client initialization failed: {e}")
         return None
+
+
+# Riegel fatigue exponents, progressive for recreational/competitive amateurs.
+# Riegel's own 1.06 holds for elites; amateurs fade faster the further they go.
+RIEGEL_EXP_10K = 1.07
+RIEGEL_EXP_HALF = 1.10
+RIEGEL_EXP_MARATHON_TRAINED = 1.13   # with a 30 km+ long run in the legs
+RIEGEL_EXP_MARATHON = 1.145          # without
 
 
 def calculate_riegel_prediction(dist_km: float, time_sec: float, target_dist_km: float, fatigue_factor: float = 1.06) -> float:
@@ -41,6 +74,13 @@ def format_race_time(seconds: float) -> str:
     if hrs > 0:
         return f"{hrs}h {mins:02d}m {secs:02d}s"
     return f"{mins}m {secs:02d}s"
+
+
+def _pb_label(seconds: float, key: str) -> str:
+    """One verified PB rendered for display: "50m 15s (Kapodistrias 2026)"."""
+    race = PB_RACE_NAMES.get(key)
+    time_str = format_race_time(seconds)
+    return f"{time_str} ({race})" if race else time_str
 
 
 def format_pace_min_km(seconds_per_km: float) -> str:
@@ -78,7 +118,7 @@ def predict_race_performances(activities: list[dict], custom_5k_pace_sec: float 
                     longest_run_km = dist_km
                 if dist_km >= 3.0 and time_s > 600:
                     # Normalize workout to 5K equivalent effort
-                    equiv_5k_time = time_s * ((5.0 / dist_km) ** 1.07)
+                    equiv_5k_time = calculate_riegel_prediction(dist_km, time_s, 5.0, RIEGEL_EXP_10K)
                     equiv_5k_paces.append(equiv_5k_time / 5.0)
 
         if equiv_5k_paces:
@@ -88,15 +128,18 @@ def predict_race_performances(activities: list[dict], custom_5k_pace_sec: float 
 
     base_5k_time = best_5k_pace * 5.0
 
-    # Progressive endurance exponents for recreational/competitive amateur athletes
-    # (1.07 for 10K, 1.10 for Half Marathon, 1.13-1.15 for Marathon depending on long-run base)
-    marathon_exp = 1.13 if longest_run_km >= 30.0 else 1.145
+    # A marathon off a small long-run base fades harder, so the exponent is the
+    # one prediction input that depends on training rather than speed.
+    marathon_exp = RIEGEL_EXP_MARATHON_TRAINED if longest_run_km >= 30.0 else RIEGEL_EXP_MARATHON
+
+    def _from_5k(target_km: float, exponent: float) -> float:
+        return calculate_riegel_prediction(5.0, base_5k_time, target_km, exponent)
 
     races = [
         {"name": "5K", "dist_km": 5.0, "time_sec": base_5k_time},
-        {"name": "10K", "dist_km": 10.0, "time_sec": base_5k_time * ((10.0 / 5.0) ** 1.07)},
-        {"name": "Half Marathon (21.1K)", "dist_km": 21.0975, "time_sec": base_5k_time * ((21.0975 / 5.0) ** 1.10)},
-        {"name": "Marathon (42.2K)", "dist_km": 42.195, "time_sec": base_5k_time * ((42.195 / 5.0) ** marathon_exp)},
+        {"name": "10K", "dist_km": 10.0, "time_sec": _from_5k(10.0, RIEGEL_EXP_10K)},
+        {"name": "Half Marathon (21.1K)", "dist_km": 21.0975, "time_sec": _from_5k(21.0975, RIEGEL_EXP_HALF)},
+        {"name": "Marathon (42.2K)", "dist_km": 42.195, "time_sec": _from_5k(42.195, marathon_exp)},
     ]
 
     results = []
@@ -131,11 +174,13 @@ def predict_triathlon_performances(activities: list[dict], use_race_pb: bool = F
     2. Race-PB calibrated (peak race performance derived from official verified PBs)
     """
     if use_race_pb:
-        # Calibrated on verified race personal bests:
-        # Sprint 1:15:32 (Lake Doxa), Olympic 2:24:07 (Messolonghi), 10K 50:15 (Kapodistrias)
-        base_swim_100m_sec = 100.0  # 1:40/100m race pace
-        base_bike_speed_kmh = 32.5  # 32.5 km/h race aero speed
-        base_run_km_sec = 282.0     # 4:42 /km race pace
+        # Calibrated on verified race results, read from config so the projection
+        # and the athlete profile the coach sees can never drift apart.
+        base_swim_100m_sec = ATHLETE_RACE_SWIM_100M_SEC
+        base_bike_speed_kmh = ATHLETE_RACE_BIKE_SPEED_KMH
+        # The 5K PB, not the 10K: it is the closest verified run to the flat-out
+        # pace the leg models then apply their own fatigue factors to.
+        base_run_km_sec = ATHLETE_PB_5K_SEC / 5.0
     else:
         # 1. Base Swim Pace (/100m) - CSS from sustained swims
         swim_paces = []
@@ -290,11 +335,11 @@ def predict_triathlon_performances(activities: list[dict], use_race_pb: bool = F
             "run_pace": format_pace_min_km(base_run_km_sec),
         },
         "verified_pbs": {
-            "half_marathon": "1h 46m 55s (Athens Half Marathon 2026)",
-            "run_10k": "50m 15s (Ioannis Kapodistrias 2026)",
-            "sprint_triathlon": "1h 15m 32s (Lake Doxa 2026)",
-            "standard_triathlon": "2h 24m 07s (Messolonghi 2026)",
-            "aquathlon": "37m 14s (Full Moon 2026)",
+            "half_marathon": _pb_label(ATHLETE_PB_HALF_MARATHON_SEC, "half_marathon"),
+            "run_10k": _pb_label(ATHLETE_PB_10K_SEC, "run_10k"),
+            "sprint_triathlon": _pb_label(ATHLETE_PB_SPRINT_TRI_SEC, "sprint_triathlon"),
+            "standard_triathlon": _pb_label(ATHLETE_PB_OLYMPIC_TRI_SEC, "standard_triathlon"),
+            "aquathlon": _pb_label(ATHLETE_PB_AQUATHLON_SEC, "aquathlon"),
         },
         "predictions": triathlon_predictions,
     }

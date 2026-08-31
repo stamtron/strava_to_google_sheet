@@ -18,6 +18,8 @@ from src.integrations.strava import (
     get_access_token,
 )
 from src.integrations.sheets import write_to_sheet
+from src.integrations.strava_backfill import backfill_all
+from src.storage.activity_store import init_db
 
 
 def group_activities_by_date(activities: list[dict]) -> dict[str, list[dict]]:
@@ -75,16 +77,59 @@ def print_activities(activities: list[dict], details: dict) -> None:
     print("=" * 100 + "\n")
 
 
+def run_backfill(access_token: str, resume: bool = True) -> int:
+    """
+    Import the full Strava activity history into the local store.
+
+    First run walks every page of the athlete's history, so it takes a while and
+    may hit the rate limit; the cursor is persisted, so simply re-running picks
+    up where it stopped.
+    """
+    conn = init_db()
+    try:
+        print("📚 Backfilling full Strava history into the local store...")
+        result = backfill_all(access_token, conn, resume=resume, progress=True)
+    finally:
+        conn.close()
+
+    print(
+        f"\n  status:     {result['status']}"
+        f"\n  pages:      {result['pages_fetched']}"
+        f"\n  stored:     {result['activities_stored']}"
+        f"\n  total:      {result['total_activities']}"
+        f"\n  date range: {result['oldest']} → {result['newest']}"
+    )
+    if result.get("error"):
+        print(f"  error:      {result['error']}")
+        print(f"  Re-run --backfill to resume from page {result['next_page']}.")
+        return 1
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="Strava Training Log Fetcher & Google Sheets Sync")
     parser.add_argument("--count", type=int, default=30, help="Number of activities to fetch")
     parser.add_argument("--sheet", action="store_true", help="Sync activities to Google Sheets")
+    parser.add_argument(
+        "--backfill",
+        action="store_true",
+        help="Import the full Strava history into the local store, then exit",
+    )
+    parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="With --backfill, restart the import from page 1 instead of the saved cursor",
+    )
     args = parser.parse_args()
 
     print("🏃 Strava Training Log Fetcher\n")
 
     try:
         access_token = get_access_token(interactive=True)
+
+        if args.backfill:
+            return run_backfill(access_token, resume=not args.no_resume)
+
         print(f"\n📥 Fetching last {args.count} activities from Strava...")
         activities = fetch_activities(access_token, per_page=args.count)
 

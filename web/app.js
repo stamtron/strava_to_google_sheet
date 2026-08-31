@@ -24,10 +24,47 @@ const ACWR_ZONE_STYLES = {
   unknown: { color: "#94a3b8", border: "rgba(148, 163, 184, 0.3)" },
 };
 
+// Presentation for the severities and risk levels emitted by /api/durability.
+// Same split as above: the analytics layer names the state, this file colours it.
+const SEVERITY_STYLES = {
+  none: { color: "#10b981", border: "rgba(16, 185, 129, 0.5)" },
+  caution: { color: "#f59e0b", border: "rgba(245, 158, 11, 0.5)" },
+  high: { color: "#ef4444", border: "rgba(239, 68, 68, 0.5)" },
+  unknown: { color: "#94a3b8", border: "rgba(148, 163, 184, 0.4)" },
+};
+
+const RISK_STYLES = {
+  low: { label: "Low risk", ...SEVERITY_STYLES.none },
+  moderate: { label: "Moderate risk", ...SEVERITY_STYLES.caution },
+  high: { label: "High risk", ...SEVERITY_STYLES.high },
+  unknown: { label: "Not enough data", ...SEVERITY_STYLES.unknown },
+};
+
+const SIGNAL_LABELS = {
+  run_ramp_rate: "Weekly ramp",
+  run_rest_days: "Rest days",
+  long_run_share: "Long-run share",
+  training_monotony: "Monotony",
+  training_strain: "Strain",
+  run_acwr: "Run ACWR",
+};
+
+const MODALITY_LABELS = { aqua_jog: "🌊 Aqua jog", bike: "🚴 Bike" };
+
+const EXERCISE_LABELS = {
+  single_leg_calf_raise: "Single-leg calf raise",
+  split_squat: "Split squat",
+  step_down: "Step-down",
+  single_leg_bridge: "Single-leg bridge",
+  hip_abduction_side_lying: "Side-lying hip abduction",
+  single_leg_balance_reach: "Single-leg balance reach",
+};
+
 let currentTriMode = "pb"; // "pb" or "train"
 document.addEventListener("DOMContentLoaded", () => {
   initApp();
   setupEventListeners();
+  initChatDrawer();
 });
 
 async function initApp() {
@@ -47,11 +84,16 @@ async function initApp() {
 
     renderPredictions(dashboardData.predictions);
     renderTriathlonPredictions(dashboardData.triathlon);
+    renderWeatherOutlook(dashboardData.weather);
     updateProgressionCharts(dashboardData.progression);
   } catch (err) {
     console.error("Initialization error:", err);
     showToast("Failed to load dashboard data: " + err.message, "error");
   }
+
+  // Outside the try: a separate endpoint on its own error path, so a durability
+  // failure neither blanks the dashboard nor is masked by a dashboard failure.
+  fetchDurability();
 }
 
 function setupEventListeners() {
@@ -62,6 +104,27 @@ function setupEventListeners() {
   document.getElementById("syncSheetBtn").addEventListener("click", handleSheetSync);
   document.getElementById("generateAiBtn").addEventListener("click", handleGenerateAiFeedback);
   document.getElementById("copyReportBtn").addEventListener("click", handleCopyReport);
+
+  // AI Coach chat drawer
+  document.getElementById("chatLauncher").addEventListener("click", () => toggleChatDrawer(true));
+  document.getElementById("chatCloseBtn").addEventListener("click", () => toggleChatDrawer(false));
+  document.getElementById("chatSendBtn").addEventListener("click", sendChatMessage);
+  document.getElementById("chatResetBtn").addEventListener("click", resetChatSession);
+  document.getElementById("chatMemoryBtn").addEventListener("click", toggleChatMemoryPanel);
+
+  const chatInput = document.getElementById("chatInput");
+  chatInput.addEventListener("keydown", (e) => {
+    // Enter sends, Shift+Enter breaks the line: this is a chat box, not a form.
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendChatMessage();
+    }
+  });
+  chatInput.addEventListener("input", () => {
+    // Grow with the message up to the CSS max-height, then scroll internally.
+    chatInput.style.height = "auto";
+    chatInput.style.height = `${chatInput.scrollHeight}px`;
+  });
 
   // Triathlon Mode Toggles
   const pbBtn = document.getElementById("triModePbBtn");
@@ -657,6 +720,53 @@ function renderTriathlonPredictions(triData) {
   });
 }
 
+function renderWeatherOutlook(weatherList) {
+  const container = document.getElementById("weatherGrid");
+  if (!container) return;
+
+  if (!weatherList || weatherList.length === 0) {
+    container.innerHTML = `<div style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 12px; font-size: 0.82rem;">Athens weather forecast currently unavailable.</div>`;
+    return;
+  }
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  const html = weatherList.map((day) => {
+    const isToday = day.date === todayStr;
+    const d = new Date(day.date + "T00:00:00");
+    const dayName = isToday ? "Today" : d.toLocaleDateString("en-US", { weekday: "short" });
+    const dateFormatted = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+    const maxTemp = day.temp_max_c !== null ? `${Math.round(day.temp_max_c)}°` : "--";
+    const minTemp = day.temp_min_c !== null ? `${Math.round(day.temp_min_c)}°` : "--";
+    const rain = day.precipitation_mm > 0
+      ? `💧 ${day.precipitation_mm.toFixed(1)}mm`
+      : (day.precip_probability_pct > 0 ? `💧 ${day.precip_probability_pct}%` : `💧 0mm`);
+    const wind = day.wind_speed_max_kmh !== null
+      ? `💨 ${Math.round(day.wind_speed_max_kmh)} km/h`
+      : "";
+
+    return `
+      <div class="weather-day-card ${isToday ? 'today' : ''}">
+        <div class="weather-day-name">${escapeHtml(dayName)}</div>
+        <div class="weather-day-date">${escapeHtml(dateFormatted)}</div>
+        <div class="weather-day-icon">${escapeHtml(day.icon || "🌡️")}</div>
+        <div class="weather-day-condition" title="${escapeHtml(day.condition || '')}">${escapeHtml(day.condition || "Fair")}</div>
+        <div class="weather-day-temps">
+          <span class="weather-temp-max">${escapeHtml(maxTemp)}</span>
+          <span class="weather-temp-min">${escapeHtml(minTemp)}</span>
+        </div>
+        <div class="weather-day-meta">
+          <div class="weather-meta-row weather-meta-rain">${escapeHtml(rain)}</div>
+          ${wind ? `<div class="weather-meta-row weather-meta-wind">${escapeHtml(wind)}</div>` : ''}
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  container.innerHTML = html;
+}
+
 function handleCopyReport() {
   if (!dashboardData || !currentWeekKey) return;
   const week = dashboardData.weeks[currentWeekKey];
@@ -795,4 +905,378 @@ function showToast(message, type = "success") {
     toast.style.transform = "translateX(100%)";
     setTimeout(() => toast.remove(), 300);
   }, 4000);
+}
+
+// ── Run Durability Panel ─────────────────────────────────────────────────────
+
+async function fetchDurability() {
+  // Loaded separately from the dashboard: it is a different endpoint answering a
+  // different question, and a failure here must not blank the rest of the page.
+  try {
+    const res = await fetch("/api/durability");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    renderDurability(await res.json());
+  } catch (err) {
+    console.error("Durability load failed:", err);
+    const badge = document.getElementById("durabilityRiskBadge");
+    if (badge) {
+      badge.textContent = "Unavailable";
+      applyBadgeStyle(badge, RISK_STYLES.unknown);
+    }
+  }
+}
+
+function applyBadgeStyle(el, style) {
+  el.style.color = style.color;
+  el.style.borderColor = style.border;
+  // Same hue at low alpha for the fill, so one colour definition drives both.
+  el.style.background = style.border.replace(/[\d.]+\)$/, "0.12)");
+}
+
+function formatSignal(signal) {
+  const v = signal.value;
+  if (v === null || v === undefined) return { value: "—", threshold: "" };
+
+  switch (signal.key) {
+    case "run_ramp_rate":
+      return { value: `${v > 0 ? "+" : ""}${v.toFixed(1)}%`, threshold: `safe ≤ +${signal.threshold}%` };
+    case "run_rest_days":
+      return { value: `${v} ${v === 1 ? "day" : "days"}`, threshold: `need ≥ ${signal.threshold}` };
+    case "long_run_share":
+      return { value: `${Math.round(v * 100)}%`, threshold: `max ${Math.round(signal.threshold * 100)}%` };
+    case "run_acwr":
+      return { value: v.toFixed(2), threshold: signal.zone || `max ${signal.threshold}` };
+    default:
+      return { value: `${v}`, threshold: `max ${signal.threshold}` };
+  }
+}
+
+function renderDurability(data) {
+  const durability = data.durability || {};
+  const badge = document.getElementById("durabilityRiskBadge");
+  const risk = RISK_STYLES[durability.risk_level] || RISK_STYLES.unknown;
+  badge.textContent = risk.label;
+  applyBadgeStyle(badge, risk);
+
+  const list = document.getElementById("durabilitySignals");
+  list.innerHTML = "";
+  (durability.signals || []).forEach((signal) => {
+    const { value, threshold } = formatSignal(signal);
+    const style = SEVERITY_STYLES[signal.severity] || SEVERITY_STYLES.unknown;
+    const row = document.createElement("div");
+    row.className = "durability-signal";
+    row.style.borderLeftColor = style.color;
+    row.innerHTML = `
+      <span class="durability-signal-label">${SIGNAL_LABELS[signal.key] || signal.key}</span>
+      <span>
+        <span class="durability-signal-value" style="color: ${style.color}">${value}</span>
+        <span class="durability-signal-threshold">${threshold}</span>
+      </span>
+    `;
+    list.appendChild(row);
+  });
+
+  renderRampHistory(durability.ramp_history);
+  renderCrossTraining(data.cross_training);
+}
+
+// The signals above score only the latest week, which early in a week is mostly
+// empty and reads as safe. The ramp strip keeps the recent swings on screen.
+function renderRampHistory(history) {
+  const host = document.getElementById("durabilityRamp");
+  host.innerHTML = "";
+  if (!history || history.length < 2) return;
+
+  history.slice(-8).forEach((week) => {
+    const style = SEVERITY_STYLES[week.severity] || SEVERITY_STYLES.unknown;
+    const pct = week.change_pct === null ? "—" : `${week.change_pct > 0 ? "+" : ""}${Math.round(week.change_pct)}%`;
+    const date = new Date(week.week_key + "T00:00:00");
+    const cell = document.createElement("div");
+    cell.className = "durability-ramp-week";
+    cell.style.borderBottomColor = style.color;
+    cell.title = `${week.run_km} km (was ${week.prev_run_km === null ? "n/a" : week.prev_run_km + " km"})`;
+    cell.innerHTML = `
+      <div class="durability-ramp-week-date">${date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
+      <div class="durability-ramp-week-pct" style="color: ${style.color}">${pct}</div>
+    `;
+    host.appendChild(cell);
+  });
+}
+
+function renderCrossTraining(plan) {
+  const box = document.getElementById("durabilityPlan");
+  box.innerHTML = "";
+  if (!plan) return;
+
+  const swaps = (plan.substitutions || [])
+    .map((sub) => {
+      const minutes = sub.equivalent_minutes ? `≈ ${sub.equivalent_minutes} min` : "no history yet";
+      return `
+        <div class="durability-swap-box">
+          <div class="durability-swap-label">${MODALITY_LABELS[sub.modality] || sub.modality}</div>
+          <div class="durability-swap-value">${sub.replacement_load}</div>
+          <div class="durability-swap-sub">${minutes}</div>
+        </div>`;
+    })
+    .join("");
+
+  const strength = plan.strength || {};
+  const chips = (strength.exercises || [])
+    .map((ex) => `<span class="durability-exercise-chip">${EXERCISE_LABELS[ex] || ex}</span>`)
+    .join("");
+
+  box.innerHTML = `
+    <div class="durability-plan-title">This week's load split</div>
+    <div class="durability-swap-grid">
+      <div class="durability-swap-box">
+        <div class="durability-swap-label">🏃 Run</div>
+        <div class="durability-swap-value">${plan.safe_run_load}</div>
+        <div class="durability-swap-sub">of ${plan.target_run_load} effort</div>
+      </div>
+      ${swaps}
+    </div>
+    <div class="durability-plan-note">
+      ${plan.shortfall_load > 0
+        ? `${plan.shortfall_load} effort moved off the pavement to keep the aerobic dose without the impact.`
+        : "Running is holding up — the full target can stay on the pavement."}
+    </div>
+    <div class="durability-plan-title" style="margin-top: 12px;">
+      Single-leg strength · ${strength.sessions_per_week || 0}× / week
+    </div>
+    <div class="durability-exercises">${chips}</div>
+  `;
+}
+
+// ── AI Coach Chat ────────────────────────────────────────────────────────────
+
+// Mirrored to localStorage so a page refresh resumes the same conversation
+// instead of silently starting a new one the server will never link up.
+let chatSessionId = localStorage.getItem("coachSessionId") || null;
+let chatBusy = false;
+
+const CHAT_TOOL_LABELS = {
+  get_week_summary: "reading your week",
+  get_activities: "pulling your activities",
+  get_training_load: "checking your load",
+  get_run_durability: "assessing run durability",
+  get_race_projections: "running projections",
+  get_health_metrics: "checking recovery data",
+  search_web: "searching the web",
+  find_exercise_videos: "finding videos",
+  remember_fact: "noting that down",
+};
+
+const CHAT_GREETING =
+  "Ask me about your training load, a race you're eyeing, gear, or a niggle. " +
+  "I can see your activities, your recovery data and your projections — and I'll " +
+  "remember what you tell me about yourself.";
+
+function escapeHtml(text) {
+  const div = document.createElement("div");
+  div.textContent = text === null || text === undefined ? "" : String(text);
+  return div.innerHTML;
+}
+
+function initChatDrawer() {
+  const messages = document.getElementById("chatMessages");
+  if (messages && !messages.children.length) {
+    messages.innerHTML = `<div class="chat-empty">${CHAT_GREETING}</div>`;
+  }
+}
+
+function toggleChatDrawer(open) {
+  const drawer = document.getElementById("chatDrawer");
+  const launcher = document.getElementById("chatLauncher");
+  const shouldOpen = open === undefined ? !drawer.classList.contains("open") : open;
+
+  drawer.classList.toggle("open", shouldOpen);
+  drawer.setAttribute("aria-hidden", shouldOpen ? "false" : "true");
+  launcher.classList.toggle("hidden", shouldOpen);
+
+  if (shouldOpen) document.getElementById("chatInput").focus();
+}
+
+function appendChatMessage(role, text, extras = {}) {
+  const messages = document.getElementById("chatMessages");
+  const empty = messages.querySelector(".chat-empty");
+  if (empty) empty.remove();
+
+  const bubble = document.createElement("div");
+  bubble.className = `chat-msg ${role}`;
+  bubble.innerHTML = escapeHtml(text);
+
+  // Citations are rendered as real links: a grounded answer the athlete cannot
+  // follow up on is barely better than an ungrounded one.
+  const sources = (extras.sources || []).slice(0, 4);
+  if (sources.length) {
+    const block = document.createElement("div");
+    block.className = "chat-msg-sources";
+    block.innerHTML = sources
+      .map(
+        (s) =>
+          `<a href="${escapeHtml(s.uri)}" target="_blank" rel="noopener noreferrer">🔗 ${escapeHtml(
+            s.title || s.uri,
+          )}</a>`,
+      )
+      .join("");
+    bubble.appendChild(block);
+  }
+
+  messages.appendChild(bubble);
+  messages.scrollTop = messages.scrollHeight;
+  return bubble;
+}
+
+function renderToolActivity(tools) {
+  const box = document.getElementById("chatToolActivity");
+  if (!tools || !tools.length) {
+    box.hidden = true;
+    box.textContent = "";
+    return;
+  }
+  const labels = tools.map((t) => CHAT_TOOL_LABELS[t] || t.replace(/_/g, " "));
+  box.hidden = false;
+  box.textContent = `⚙️ ${labels.join(" · ")}`;
+}
+
+async function sendChatMessage() {
+  const input = document.getElementById("chatInput");
+  const sendBtn = document.getElementById("chatSendBtn");
+  const badge = document.getElementById("chatModelBadge");
+  const message = input.value.trim();
+  if (!message || chatBusy) return;
+
+  chatBusy = true;
+  input.value = "";
+  input.style.height = "auto";
+  sendBtn.disabled = true;
+  appendChatMessage("user", message);
+
+  const thinking = appendChatMessage("coach", "…");
+  renderToolActivity(null);
+  badge.textContent = "thinking…";
+
+  try {
+    const res = await fetch("/api/ai/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message,
+        session_id: chatSessionId,
+        // The week the athlete has open, so "how was this week?" resolves
+        // without them naming a date.
+        week_context: currentWeekKey && dashboardData ? dashboardData.weeks[currentWeekKey] : null,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+
+    if (data.session_id && data.session_id !== chatSessionId) {
+      chatSessionId = data.session_id;
+      localStorage.setItem("coachSessionId", chatSessionId);
+    }
+
+    thinking.remove();
+    appendChatMessage("coach", data.reply || "(no reply)", { sources: data.sources });
+    renderToolActivity(data.tools_used);
+    badge.textContent = data.source_model || "ready";
+  } catch (err) {
+    console.error("Chat error:", err);
+    thinking.remove();
+    appendChatMessage("error", `Couldn't reach the coach: ${err.message}`);
+    badge.textContent = "unavailable";
+  } finally {
+    chatBusy = false;
+    sendBtn.disabled = false;
+    input.focus();
+  }
+}
+
+async function resetChatSession() {
+  const closing = chatSessionId;
+  chatSessionId = null;
+  localStorage.removeItem("coachSessionId");
+
+  document.getElementById("chatMessages").innerHTML = `<div class="chat-empty">${CHAT_GREETING}</div>`;
+  renderToolActivity(null);
+  document.getElementById("chatModelBadge").textContent = "ready";
+
+  // The closing conversation is the last chance to keep what was mentioned in
+  // passing. Fire-and-forget: the new chat must not wait on an extraction pass,
+  // and a failed one costs a fact, not the athlete's next question.
+  if (!closing) return;
+  try {
+    const res = await fetch("/api/coach/memory/extract", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: closing }),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const kept = (data.stored || []).length;
+    if (kept) showToast(`Filed ${kept} thing${kept === 1 ? "" : "s"} to remember about you`);
+  } catch (err) {
+    console.error("Fact extraction failed:", err);
+  }
+}
+
+async function toggleChatMemoryPanel() {
+  const panel = document.getElementById("chatMemoryPanel");
+  if (!panel.hidden) {
+    panel.hidden = true;
+    return;
+  }
+  panel.hidden = false;
+  await loadChatMemory();
+}
+
+async function loadChatMemory() {
+  const list = document.getElementById("chatMemoryList");
+  list.innerHTML = `<div class="chat-memory-item">Loading…</div>`;
+  try {
+    const res = await fetch("/api/coach/memory");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    renderChatMemory(data.facts || []);
+  } catch (err) {
+    console.error("Memory load failed:", err);
+    list.innerHTML = `<div class="chat-memory-item">Couldn't load memory.</div>`;
+  }
+}
+
+function renderChatMemory(facts) {
+  const list = document.getElementById("chatMemoryList");
+  if (!facts.length) {
+    list.innerHTML = `<div class="chat-memory-item">Nothing stored yet. Tell me something about yourself.</div>`;
+    return;
+  }
+
+  list.innerHTML = facts
+    .map(
+      (f) => `
+    <div class="chat-memory-item">
+      <span>${escapeHtml(f.fact)}
+        <span class="chat-memory-category">${escapeHtml(f.category || "other")}</span>
+      </span>
+      <button class="chat-memory-forget" data-fact-id="${escapeHtml(f.id)}" title="Forget this">✕</button>
+    </div>`,
+    )
+    .join("");
+
+  list.querySelectorAll(".chat-memory-forget").forEach((btn) => {
+    btn.addEventListener("click", () => forgetChatFact(btn.dataset.factId));
+  });
+}
+
+async function forgetChatFact(factId) {
+  try {
+    const res = await fetch(`/api/coach/memory/${encodeURIComponent(factId)}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    showToast("Forgotten");
+    await loadChatMemory();
+  } catch (err) {
+    console.error("Forget failed:", err);
+    showToast("Couldn't forget that: " + err.message, "error");
+  }
 }

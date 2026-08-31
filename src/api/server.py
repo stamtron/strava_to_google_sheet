@@ -34,6 +34,16 @@ from src.integrations.strava import (
 )
 from src.integrations.garmin import get_weekly_health_summaries
 from src.integrations.sheets import write_to_sheet
+from src.integrations.strava_backfill import backfill_all
+from src.storage.activity_store import (
+    count_activities,
+    date_range,
+    get_activities as store_get_activities,
+    get_details,
+    init_db,
+    upsert_activities,
+    upsert_details,
+)
 from src.analytics.metrics import (
     build_progression_history,
     calculate_acwr,
@@ -44,6 +54,19 @@ from src.analytics.ai_coach import (
     predict_race_performances,
     predict_triathlon_performances,
 )
+from src.analytics.durability import (
+    assess_run_durability,
+    sport_strength_profile,
+    suggest_cross_training,
+)
+from src.integrations.weather import get_weather_outlook
+from src.analytics.coach_agent import (
+    CoachUnavailable,
+    chat as coach_chat,
+    extract_session_facts,
+    forget_remembered_fact,
+    list_remembered_facts,
+)
 
 app = FastAPI(title="Endurance AI Training API", version="2.0.0")
 
@@ -53,7 +76,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -66,6 +89,27 @@ class FeedbackRequest(BaseModel):
 
 class SyncRequest(BaseModel):
     count: int = 35
+
+
+class BackfillRequest(BaseModel):
+    resume: bool = True
+
+
+class ChatRequest(BaseModel):
+    """One conversational turn. `session_id` is minted server-side on the first."""
+
+    message: str
+    session_id: str | None = None
+    # The week the athlete has open on the dashboard, so "how was this week?"
+    # resolves without them naming a date. Context only — the agent still calls
+    # a tool for authoritative numbers.
+    week_context: dict | None = None
+
+
+class MemoryExtractRequest(BaseModel):
+    """Which conversation to mine for durable facts."""
+
+    session_id: str
 
 
 def _load_cache() -> dict:
@@ -117,37 +161,96 @@ def _cache_satisfies(cache: dict, count: int) -> bool:
     return len(cache["activities"]) >= count or cache["count"] >= count
 
 
+def _read_history(count: int) -> tuple[list[dict], dict]:
+    """
+    Return (activities, details) from the persistent store, newest first.
+
+    Never raises: the store is a fallback path, so a corrupt or missing DB must
+    degrade to "no history" rather than take down an endpoint that could still
+    have answered from Strava or the JSON cache.
+    """
+    try:
+        conn = init_db()
+    except Exception as e:
+        print(f"⚠️  History store unavailable: {e}")
+        return [], {}
+    try:
+        acts = store_get_activities(conn, limit=count)
+        return acts, get_details(conn, [a.get("id") for a in acts])
+    except Exception as e:
+        print(f"⚠️  History store read failed: {e}")
+        return [], {}
+    finally:
+        conn.close()
+
+
+def _write_history(activities: list[dict], details: dict | None = None) -> None:
+    """Persist freshly fetched activities. Failures here must not fail a request."""
+    try:
+        conn = init_db()
+    except Exception as e:
+        print(f"⚠️  History store unavailable: {e}")
+        return
+    try:
+        upsert_activities(conn, activities)
+        if details:
+            upsert_details(conn, details)
+    except Exception as e:
+        print(f"⚠️  History store write failed: {e}")
+    finally:
+        conn.close()
+
+
 def _get_summaries(count: int) -> tuple[list[dict], dict]:
     """
     Return (activities, cached_details), fetching from Strava when the cache
-    can't answer the request. Falls back to stale cache on API failure.
+    can't answer the request.
+
+    Three tiers, cheapest first: the short-TTL JSON cache, then Strava, then the
+    persistent history store. The JSON cache stays in front of the store on
+    purpose — it absorbs the dashboard's repeat polling so neither Strava nor
+    SQLite is touched on every load.
     """
     cache = _load_cache()
     if _cache_satisfies(cache, count):
         return cache["activities"][:count], cache["details"]
 
+    def _fallback(reason: str, status: int, exc: Exception):
+        if cache["activities"]:
+            print(f"⚠️  {reason}, serving from cache...")
+            return cache["activities"][:count], cache["details"]
+        stored, stored_details = _read_history(count)
+        if stored:
+            print(f"⚠️  {reason}, serving from local history...")
+            return stored, stored_details
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+
     try:
         token = get_access_token(interactive=False)
         summaries = fetch_activities(token, per_page=count)
     except StravaAuthRequired as e:
-        if cache["activities"]:
-            print(f"⚠️  Strava auth required ({e}), serving from cache...")
-            return cache["activities"][:count], cache["details"]
-        raise HTTPException(status_code=401, detail=str(e)) from e
+        return _fallback(f"Strava auth required ({e})", 401, e)
     except StravaRateLimitError as e:
-        if cache["activities"]:
-            print(f"⚠️  Strava rate limited ({e}), serving from cache...")
-            return cache["activities"][:count], cache["details"]
-        raise HTTPException(status_code=429, detail=str(e)) from e
+        return _fallback(f"Strava rate limited ({e})", 429, e)
     except Exception as e:
-        if cache["activities"]:
-            print(f"⚠️  Strava API error ({e}), serving from cache...")
-            return cache["activities"][:count], cache["details"]
-        raise HTTPException(status_code=502, detail=f"Strava error: {e}") from e
+        return _fallback(f"Strava API error ({e})", 502, e)
 
     # Keep previously fetched details: they're immutable per activity and each
     # one costs a rate-limited API call to re-fetch.
     _save_cache(summaries, cache["details"], count)
+    _write_history(summaries)
+
+    # Strava returns at most `count`; anything short means the athlete has no
+    # more recent activities, so older stored rows can fill the remainder
+    # instead of the window silently shrinking to whatever the last fetch held.
+    if len(summaries) < count:
+        stored, stored_details = _read_history(count)
+        if len(stored) > len(summaries):
+            seen = {a.get("id") for a in summaries}
+            summaries = summaries + [a for a in stored if a.get("id") not in seen]
+            summaries = summaries[:count]
+            return summaries, {**stored_details, **cache["details"]}
+
     return summaries, cache["details"]
 
 
@@ -192,14 +295,71 @@ def get_dashboard_data(count: int = Query(50, ge=1, le=100)):
         print(f"⚠️  Garmin unavailable: {e}")
         garmin_summaries = {}
 
+    try:
+        weather_outlook = get_weather_outlook(past_days=2, forecast_days=7)
+    except Exception as e:
+        print(f"⚠️  Weather fetch failed: {e}")
+        weather_outlook = []
+
     return {
         "weeks": weeks,
         "garmin": garmin_summaries,
+        "weather": weather_outlook,
         "predictions": predict_race_performances(summaries),
         "triathlon": predict_triathlon_performances(activities=summaries, use_race_pb=False),
         "triathlon_pb": predict_triathlon_performances(activities=summaries, use_race_pb=True),
         "progression": build_progression_history(weeks, acwr_map=acwr_map),
         "activities_total": len(summaries),
+    }
+
+
+@app.get("/api/weather")
+def get_weather(
+    past_days: int = Query(3, ge=0, le=14),
+    forecast_days: int = Query(7, ge=1, le=14),
+    refresh: bool = Query(False),
+):
+    """Daily historical and forecast weather for the athlete's home city (Athens, Greece)."""
+    try:
+        outlook = get_weather_outlook(
+            past_days=past_days,
+            forecast_days=forecast_days,
+            force_refresh=refresh,
+        )
+        return {"city": "Athens, Greece", "days": outlook}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/api/durability")
+def get_run_durability(count: int = Query(50, ge=1, le=100)):
+    """
+    Run-specific load management: ramp rate, spacing, long-run share, monotony,
+    and the cross-training plan that keeps the aerobic dose while lowering impact.
+
+    Separate from `/api/dashboard` because it answers a different question. The
+    dashboard reports what was done; this reports whether the legs can take more.
+    """
+    summaries, _ = _get_summaries(count)
+
+    weeks = process_activities_into_weeks(summaries)
+    sorted_week_keys = sorted(weeks.keys())
+    acwr_run = calculate_acwr(sorted_week_keys, weeks, effort_key="run_relative_effort")
+
+    durability = assess_run_durability(weeks, acwr_run)
+    profile = sport_strength_profile(summaries)
+
+    # The target is the athlete's own recent run load, not an arbitrary goal:
+    # the question being answered is "can I keep doing what I'm doing?"
+    recent = [weeks[k].get("run_relative_effort", 0.0) for k in sorted_week_keys[-4:]]
+    target_run_load = round(max(recent), 1) if recent else 0.0
+
+    return {
+        "durability": durability,
+        "profile": profile,
+        "acwr_run": acwr_run,
+        "cross_training": suggest_cross_training(target_run_load, durability, profile),
+        "weeks_analyzed": len(sorted_week_keys),
     }
 
 
@@ -214,6 +374,113 @@ def get_ai_coaching_feedback(req: FeedbackRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/api/ai/chat")
+def post_ai_chat(req: ChatRequest):
+    """
+    Answer one turn of conversation with the tool-using coach.
+
+    Separate from `/api/ai/coach`, which stays a stateless one-shot generator for
+    the weekly panel and keeps its heuristic fallback. This endpoint has no
+    fallback on purpose: a conversational answer assembled from heuristics would
+    be worse than an honest 503.
+    """
+    try:
+        return coach_chat(
+            message=req.message,
+            session_id=req.session_id,
+            week_context=req.week_context,
+        )
+    except CoachUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/api/coach/memory")
+def get_coach_memory():
+    """
+    List every durable fact the coach has stored about the athlete.
+
+    The memory outlives any conversation, so it has to be inspectable: this is
+    how you find out that the coach is still working around an injury you
+    recovered from months ago.
+    """
+    try:
+        facts = list_remembered_facts()
+        return {"facts": facts, "count": len(facts)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.delete("/api/coach/memory/{fact_id}")
+def delete_coach_memory(fact_id: str):
+    """Prune one stored fact. 404 if that id was never stored."""
+    try:
+        removed = forget_remembered_fact(fact_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"No stored fact with id {fact_id}")
+    return {"deleted": fact_id}
+
+
+@app.post("/api/coach/memory/extract")
+def post_coach_memory_extract(req: MemoryExtractRequest):
+    """
+    Mine a finished conversation for durable facts and file them.
+
+    Called when the athlete starts a new chat: the closing conversation is the
+    last chance to keep what they mentioned in passing before the transcript
+    ages out. Facts land with `source="auto"` so they can be told apart from the
+    ones they asked the coach to remember.
+    """
+    try:
+        return extract_session_facts(req.session_id)
+    except CoachUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/api/history/status")
+def history_status():
+    """Report what the local history store currently holds."""
+    conn = init_db()
+    try:
+        span = date_range(conn)
+        return {
+            "total_activities": count_activities(conn),
+            "oldest": span[0].isoformat() if span else None,
+            "newest": span[1].isoformat() if span else None,
+        }
+    finally:
+        conn.close()
+
+
+@app.post("/api/history/backfill")
+def history_backfill(req: BackfillRequest):
+    """
+    Import the full Strava activity history into the local store.
+
+    Long-running on a first run — one request per page of 200 activities — but
+    idempotent, and resumable if Strava rate-limits partway through.
+    """
+    try:
+        token = get_access_token(interactive=False)
+    except StravaAuthRequired as e:
+        raise HTTPException(status_code=401, detail=str(e)) from e
+
+    conn = init_db()
+    try:
+        return backfill_all(token, conn, resume=req.resume)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        conn.close()
 
 
 @app.post("/api/sheet/sync")

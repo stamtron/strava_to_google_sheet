@@ -48,6 +48,45 @@ def calculate_relative_effort(act: dict) -> float:
     return round(moving_time_min * 0.5, 1) if moving_time_min > 0 else 0.0
 
 
+def sport_group(sport: str) -> str:
+    """
+    Map a Strava sport type to its analytics group.
+
+    Returns a stable key — "run", "bike", "swim", "strength" or "other" — that is
+    also the prefix of the corresponding per-sport week fields.
+    """
+    if sport in RUN_SPORTS:
+        return "run"
+    if sport in BIKE_SPORTS:
+        return "bike"
+    if sport in SWIM_SPORTS:
+        return "swim"
+    if sport in STRENGTH_SPORTS:
+        return "strength"
+    return "other"
+
+
+# Per-sport effort field names, in the order they are reported.
+SPORT_GROUPS = ("run", "bike", "swim", "strength", "other")
+EFFORT_KEYS = {g: f"{g}_relative_effort" for g in SPORT_GROUPS}
+
+
+def calculate_relative_effort_by_sport(activities: list[dict]) -> dict[str, float]:
+    """
+    Split relative effort across sport groups.
+
+    Weekly effort has only ever been reported as a single total, even though
+    volume is already split per sport. An athlete who halves their running while
+    doubling their cycling shows a flat total, which is precisely the shift a
+    load-management view needs to surface.
+    """
+    totals = {g: 0.0 for g in SPORT_GROUPS}
+    for act in activities:
+        group = sport_group(act.get("sport_type") or act.get("type", ""))
+        totals[group] += calculate_relative_effort(act)
+    return {g: round(v, 1) for g, v in totals.items()}
+
+
 def process_activities_into_weeks(activities: list[dict]) -> dict:
     """
     Group activities by week (Monday to Sunday) and calculate all sport volumes,
@@ -84,6 +123,7 @@ def process_activities_into_weeks(activities: list[dict]) -> dict:
                 "total_elevation_m": 0.0,
                 "total_calories": 0.0,
                 "total_relative_effort": 0.0,
+                **{key: 0.0 for key in EFFORT_KEYS.values()},
             }
 
         week = weeks[week_key]
@@ -96,23 +136,27 @@ def process_activities_into_weeks(activities: list[dict]) -> dict:
         sport = act.get("sport_type") or act.get("type", "")
         calories = float(act.get("calories", 0) or (act.get("kilojoules", 0) * 0.239) or 0)
 
+        effort = calculate_relative_effort(act)
+        group = sport_group(sport)
+
         week["total_time_sec"] += moving_time
         week["total_elevation_m"] += elev
         week["total_calories"] += calories
-        week["total_relative_effort"] += calculate_relative_effort(act)
+        week["total_relative_effort"] += effort
+        week[EFFORT_KEYS[group]] += effort
 
-        if sport in RUN_SPORTS:
+        if group == "run":
             week["run_dist_km"] += dist_km
             week["run_time_sec"] += moving_time
             week["run_elev_m"] += elev
-        elif sport in BIKE_SPORTS:
+        elif group == "bike":
             week["bike_dist_km"] += dist_km
             week["bike_time_sec"] += moving_time
             week["bike_elev_m"] += elev
-        elif sport in SWIM_SPORTS:
+        elif group == "swim":
             week["swim_dist_m"] += dist_m
             week["swim_time_sec"] += moving_time
-        elif sport in STRENGTH_SPORTS:
+        elif group == "strength":
             week["strength_time_sec"] += moving_time
 
     # Sort activities inside each week chronologically
@@ -130,7 +174,11 @@ def _acwr_zone(ratio: float) -> tuple[str, str]:
     return ACWR_ZONES[-1][1], ACWR_ZONES[-1][2]
 
 
-def calculate_acwr(sorted_week_keys: list[str], weeks_dict: dict) -> dict[str, dict]:
+def calculate_acwr(
+    sorted_week_keys: list[str],
+    weeks_dict: dict,
+    effort_key: str = "total_relative_effort",
+) -> dict[str, dict]:
     """
     Calculate the Acute:Chronic Workload Ratio (ACWR) for each week.
 
@@ -142,13 +190,17 @@ def calculate_acwr(sorted_week_keys: list[str], weeks_dict: dict) -> dict[str, d
 
     Weeks with fewer than ACWR_MIN_CHRONIC_WEEKS of prior history get
     acwr_ratio=None rather than a ratio computed from too little data.
+
+    `effort_key` selects which week field to score. It defaults to the aggregate,
+    but passing e.g. "run_relative_effort" yields per-sport ACWR — the aggregate
+    can sit in the optimal zone while one discipline spikes underneath it.
     """
     acwr_by_week = {}
 
     for i, w_key in enumerate(sorted_week_keys):
-        current_effort = weeks_dict[w_key]["total_relative_effort"]
+        current_effort = weeks_dict[w_key].get(effort_key, 0.0)
         prior_keys = sorted_week_keys[max(0, i - ACWR_CHRONIC_WEEKS) : i]
-        prior_efforts = [weeks_dict[k]["total_relative_effort"] for k in prior_keys]
+        prior_efforts = [weeks_dict[k].get(effort_key, 0.0) for k in prior_keys]
 
         if len(prior_efforts) < ACWR_MIN_CHRONIC_WEEKS:
             acwr_by_week[w_key] = {

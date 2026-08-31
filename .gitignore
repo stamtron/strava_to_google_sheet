@@ -15,6 +15,11 @@ credentials.json
 # Cache files
 .activities_cache.json
 .garmin_cache.json
+.weather_cache.json
+.training_history.db
+.training_history.db-journal
+.training_history.db-wal
+.coach_memory/
 
 # Python
 __pycache__/
