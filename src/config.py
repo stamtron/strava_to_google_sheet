@@ -37,6 +37,14 @@ def _env_list(name: str, default: list[str]) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    """Read a boolean from the environment."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "y", "on")
+
+
 # API Keys & Credentials
 STRAVA_CLIENT_ID = os.getenv("STRAVA_CLIENT_ID")
 STRAVA_CLIENT_SECRET = os.getenv("STRAVA_CLIENT_SECRET")
@@ -197,3 +205,17 @@ ATHLETE_PB_AQUATHLON_SEC = _env_int("ATHLETE_PB_AQUATHLON_SEC", 2234)          #
 # been recorded. The run baseline is derived from ATHLETE_PB_5K_SEC instead.
 ATHLETE_RACE_SWIM_100M_SEC = _env_float("ATHLETE_RACE_SWIM_100M_SEC", 100.0)   # 1:40 /100m
 ATHLETE_RACE_BIKE_SPEED_KMH = _env_float("ATHLETE_RACE_BIKE_SPEED_KMH", 32.5)
+
+# Strava Webhook Real-Time Sync
+STRAVA_WEBHOOK_VERIFY_TOKEN = os.getenv("STRAVA_WEBHOOK_VERIFY_TOKEN", "STRAVA_WEBHOOK_SECRET").strip()
+AUTO_SYNC_SHEET_ON_WEBHOOK = _env_bool("AUTO_SYNC_SHEET_ON_WEBHOOK", False)
+
+# WhatsApp Notifications & Next-Day Workout Dispatcher
+# Provider: 'callmebot' (default, free personal bot), 'twilio', or 'console' (dry-run)
+WHATSAPP_PROVIDER = os.getenv("WHATSAPP_PROVIDER", "callmebot").strip().lower()
+CALLMEBOT_PHONE = os.getenv("CALLMEBOT_PHONE", "").strip()
+CALLMEBOT_API_KEY = os.getenv("CALLMEBOT_API_KEY", "").strip()
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
+TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "").strip()
+TWILIO_WHATSAPP_TO = os.getenv("TWILIO_WHATSAPP_TO", "").strip()

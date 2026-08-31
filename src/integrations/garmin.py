@@ -68,6 +68,10 @@ def get_weekly_health_summary(start_date: date, end_date: date, client: Garmin =
     valid_sleep_days = 0
     rhr_list = []
     hrv_list = []
+    stress_list = []
+    body_battery_charged = []
+    body_battery_drained = []
+    readiness_list = []
 
     curr = start_date
     while curr <= end_date:
@@ -84,7 +88,13 @@ def get_weekly_health_summary(start_date: date, end_date: date, client: Garmin =
         except Exception:
             pass
 
-        # 2. Resting Heart Rate
+        # 2. Resting Heart Rate & User Summary
+        user_summary = None
+        try:
+            user_summary = client.get_user_summary(date_str)
+        except Exception:
+            pass
+
         try:
             rhr_data = client.get_rhr_day(date_str)
             rhr_val = None
@@ -95,12 +105,10 @@ def get_weekly_health_summary(start_date: date, end_date: date, client: Garmin =
                 if not rhr_val:
                     rhr_val = rhr_data.get("restingHeartRate")
 
-            if not rhr_val:
-                user_summary = client.get_user_summary(date_str)
-                if user_summary:
-                    rhr_val = user_summary.get("restingHeartRate")
+            if not rhr_val and user_summary:
+                rhr_val = user_summary.get("restingHeartRate")
 
-            if rhr_val and rhr_val > 0:
+            if rhr_val and float(rhr_val) > 0:
                 rhr_list.append(float(rhr_val))
         except Exception:
             pass
@@ -115,14 +123,62 @@ def get_weekly_health_summary(start_date: date, end_date: date, client: Garmin =
         except Exception:
             pass
 
+        # 4. Stress Data
+        try:
+            stress_data = client.get_stress_data(date_str)
+            stress_avg = None
+            if stress_data:
+                stress_avg = stress_data.get("avgStressLevel")
+            if not stress_avg and user_summary:
+                stress_avg = user_summary.get("averageStressLevel")
+            if stress_avg and float(stress_avg) > 0:
+                stress_list.append(float(stress_avg))
+        except Exception:
+            pass
+
+        # 5. Body Battery Data
+        try:
+            bb_data = client.get_body_battery(date_str)
+            if bb_data and isinstance(bb_data, list) and len(bb_data) > 0:
+                bb_entry = bb_data[0]
+                charged = bb_entry.get("charged")
+                drained = bb_entry.get("drained")
+                if charged is not None:
+                    body_battery_charged.append(float(charged))
+                if drained is not None:
+                    body_battery_drained.append(float(drained))
+            elif user_summary:
+                ch = user_summary.get("bodyBatteryChargedValue")
+                dr = user_summary.get("bodyBatteryDrainedValue")
+                if ch is not None:
+                    body_battery_charged.append(float(ch))
+                if dr is not None:
+                    body_battery_drained.append(float(dr))
+        except Exception:
+            pass
+
+        # 6. Training Readiness
+        try:
+            readiness_data = client.get_training_readiness(date_str)
+            if readiness_data and "score" in readiness_data:
+                readiness_list.append(float(readiness_data["score"]))
+            elif user_summary and "trainingReadinessScore" in user_summary:
+                readiness_list.append(float(user_summary["trainingReadinessScore"]))
+        except Exception:
+            pass
+
         curr += timedelta(days=1)
 
     total_sleep_h = (total_sleep_seconds / 3600.0) if total_sleep_seconds > 0 else None
     avg_sleep_h = (total_sleep_h / valid_sleep_days) if total_sleep_h and valid_sleep_days > 0 else None
     avg_rhr = round(sum(rhr_list) / len(rhr_list)) if rhr_list else None
     avg_hrv = round(sum(hrv_list) / len(hrv_list)) if hrv_list else None
+    avg_stress = round(sum(stress_list) / len(stress_list)) if stress_list else None
+    avg_bb_charged = round(sum(body_battery_charged) / len(body_battery_charged)) if body_battery_charged else None
+    avg_bb_drained = round(sum(body_battery_drained) / len(body_battery_drained)) if body_battery_drained else None
+    avg_readiness = round(sum(readiness_list) / len(readiness_list)) if readiness_list else None
 
-    if not total_sleep_h and not avg_rhr and not avg_hrv:
+    if not total_sleep_h and not avg_rhr and not avg_hrv and not avg_stress and not avg_bb_charged:
         return None
 
     return {
@@ -130,6 +186,10 @@ def get_weekly_health_summary(start_date: date, end_date: date, client: Garmin =
         "avg_sleep_h": avg_sleep_h,
         "avg_rhr": avg_rhr,
         "avg_hrv": avg_hrv,
+        "avg_stress": avg_stress,
+        "avg_bb_charged": avg_bb_charged,
+        "avg_bb_drained": avg_bb_drained,
+        "avg_readiness": avg_readiness,
     }
 
 

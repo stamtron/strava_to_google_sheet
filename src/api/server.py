@@ -21,7 +21,11 @@ from src.config import (
     ACTIVITIES_CACHE_FILE,
     ACTIVITIES_CACHE_TTL,
     ALLOWED_ORIGINS,
+    AUTO_SYNC_SHEET_ON_WEBHOOK,
+    HR_MAX,
+    HR_REST,
     STRAVA_DETAIL_DELAY_SEC,
+    STRAVA_WEBHOOK_VERIFY_TOKEN,
     WEB_DIR,
 )
 from src.integrations.strava import (
@@ -29,12 +33,14 @@ from src.integrations.strava import (
     StravaNetworkError,
     StravaRateLimitError,
     fetch_activities,
+    fetch_activity_detail,
     fetch_details_for_activities,
     get_access_token,
 )
 from src.integrations.garmin import get_weekly_health_summaries
-from src.integrations.sheets import write_to_sheet
+from src.integrations.sheets import get_planned_workout_for_date, write_to_sheet
 from src.integrations.strava_backfill import backfill_all
+from src.integrations.whatsapp import format_next_day_brief, send_whatsapp_message
 from src.storage.activity_store import (
     count_activities,
     date_range,
@@ -47,6 +53,8 @@ from src.storage.activity_store import (
 from src.analytics.metrics import (
     build_progression_history,
     calculate_acwr,
+    calculate_hr_zones,
+    calculate_polarized_distribution,
     process_activities_into_weeks,
 )
 from src.analytics.ai_coach import (
@@ -59,7 +67,7 @@ from src.analytics.durability import (
     sport_strength_profile,
     suggest_cross_training,
 )
-from src.integrations.weather import get_weather_outlook
+from src.integrations.weather import get_weather_for_date, get_weather_outlook
 from src.analytics.coach_agent import (
     CoachUnavailable,
     chat as coach_chat,
@@ -280,6 +288,11 @@ def get_dashboard_data(count: int = Query(50, ge=1, le=100)):
     acwr_map = calculate_acwr(sorted_week_keys, weeks)
     for w_key in sorted_week_keys:
         weeks[w_key]["acwr"] = acwr_map.get(w_key, {})
+        weeks[w_key]["polarized"] = calculate_polarized_distribution(
+            weeks[w_key].get("activities", []),
+            hr_max=HR_MAX,
+            hr_rest=HR_REST,
+        )
 
     # Garmin health for active weeks (disk-cached; finished weeks never refetch)
     week_ranges = {
@@ -305,11 +318,115 @@ def get_dashboard_data(count: int = Query(50, ge=1, le=100)):
         "weeks": weeks,
         "garmin": garmin_summaries,
         "weather": weather_outlook,
+        "hr_zones": calculate_hr_zones(hr_max=HR_MAX, hr_rest=HR_REST),
         "predictions": predict_race_performances(summaries),
         "triathlon": predict_triathlon_performances(activities=summaries, use_race_pb=False),
         "triathlon_pb": predict_triathlon_performances(activities=summaries, use_race_pb=True),
         "progression": build_progression_history(weeks, acwr_map=acwr_map),
         "activities_total": len(summaries),
+    }
+
+
+@app.get("/api/strava/webhook")
+def strava_webhook_challenge(
+    hub_mode: str = Query(None, alias="hub.mode"),
+    hub_verify_token: str = Query(None, alias="hub.verify_token"),
+    hub_challenge: str = Query(None, alias="hub.challenge"),
+):
+    """
+    Handle Strava Webhook subscription validation handshake.
+    Strava sends GET with hub.mode=subscribe, hub.verify_token, hub.challenge.
+    """
+    if hub_mode == "subscribe" and hub_verify_token == STRAVA_WEBHOOK_VERIFY_TOKEN:
+        return {"hub.challenge": hub_challenge}
+    raise HTTPException(status_code=403, detail="Invalid verify token.")
+
+
+@app.post("/api/strava/webhook")
+async def strava_webhook_event(event: dict):
+    """
+    Handle real-time activity events pushed by Strava.
+    """
+    object_type = event.get("object_type")
+    aspect_type = event.get("aspect_type")
+    object_id = event.get("object_id")
+
+    if object_type == "activity" and aspect_type in ("create", "update") and object_id:
+        try:
+            token = get_access_token(interactive=False)
+            detail = fetch_activity_detail(int(object_id), token)
+            if detail:
+                _write_history([detail], {int(object_id): detail})
+                cache = _load_cache()
+                cache["details"][str(object_id)] = detail
+                _save_cache(cache["activities"], cache["details"], cache["count"])
+
+                if AUTO_SYNC_SHEET_ON_WEBHOOK:
+                    summaries, details = _get_summaries(30)
+                    write_to_sheet(summaries, details=details)
+        except Exception as e:
+            print(f"⚠️  Webhook activity processing failed: {e}")
+
+    return {"status": "ok"}
+
+
+class WhatsAppNextDayRequest(BaseModel):
+    target_date: str | None = None  # YYYY-MM-DD, defaults to tomorrow
+    custom_tip: str | None = None
+    dry_run: bool = False
+
+
+@app.post("/api/notifications/whatsapp/next-day")
+def send_next_day_workout_notification(req: WhatsAppNextDayRequest = WhatsAppNextDayRequest()):
+    """
+    Extract tomorrow's planned workout from Google Sheets, combine with Athens
+    weather forecast and AI coaching advice, and dispatch to athlete's WhatsApp.
+    """
+    if req.target_date:
+        try:
+            t_date = date.fromisoformat(req.target_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+    else:
+        t_date = date.today() + timedelta(days=1)
+
+    workout_info = get_planned_workout_for_date(t_date)
+    weather_info = get_weather_for_date(t_date)
+
+    # Optional AI tip
+    tip = req.custom_tip
+    if not tip:
+        if weather_info and weather_info.get("precipitation_mm", 0) > 2.0:
+            tip = "Rain expected; check tire pressure for wet roads or consider indoor trainer."
+        elif weather_info and (weather_info.get("temp_max_c") or 0) > 32:
+            tip = "High heat expected; hydrate well and start early morning."
+        else:
+            tip = "Keep easy aerobic pace in Zone 2 for optimal mitochondrial development."
+
+    brief_text = format_next_day_brief(
+        target_date=t_date,
+        workout_text=workout_info.get("workout_text", ""),
+        weather_info=weather_info,
+        coach_tip=tip,
+    )
+
+    if req.dry_run:
+        return {
+            "success": True,
+            "target_date": t_date.isoformat(),
+            "preview": brief_text,
+            "workout_info": workout_info,
+            "weather_info": weather_info,
+            "provider": "dry-run",
+        }
+
+    dispatch_res = send_whatsapp_message(brief_text)
+    return {
+        "success": dispatch_res.get("success", False),
+        "target_date": t_date.isoformat(),
+        "preview": brief_text,
+        "dispatch": dispatch_res,
+        "workout_info": workout_info,
     }
 
 

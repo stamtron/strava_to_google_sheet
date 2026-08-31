@@ -1,8 +1,12 @@
 # Virtual environment
 .venv/
+venv/
+env/
 
 # Environment variables (contains secrets)
 .env
+.env.local
+.env.*.local
 
 # Cached OAuth / API tokens (contain secrets)
 token.json
@@ -27,7 +31,29 @@ __pycache__/
 *.pyo
 .pytest_cache/
 
+# Python build artifacts
+build/
+dist/
+*.egg-info/
+
+# Tooling caches
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
+
+# Editors
+.idea/
+.vscode/
+
+# Claude Code local settings
+.claude/settings.local.json
+
 # macOS
 .DS_Store
+._*
 
 

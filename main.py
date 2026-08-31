@@ -120,7 +120,52 @@ def main():
         action="store_true",
         help="With --backfill, restart the import from page 1 instead of the saved cursor",
     )
+    parser.add_argument(
+        "--whatsapp-next-day",
+        action="store_true",
+        help="Read tomorrow's planned workout from Google Sheets, add Athens weather & tip, and send to WhatsApp",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview actions without sending external notifications or writing data",
+    )
     args = parser.parse_args()
+
+    # WhatsApp Next-Day Dispatcher
+    if args.whatsapp_next_day:
+        from datetime import date, timedelta
+        from src.integrations.sheets import get_planned_workout_for_date
+        from src.integrations.weather import get_weather_for_date
+        from src.integrations.whatsapp import format_next_day_brief, send_whatsapp_message
+
+        target_date = date.today() + timedelta(days=1)
+        print(f"📱 Preparing Next-Day Workout Brief for {target_date}...")
+
+        workout_info = get_planned_workout_for_date(target_date)
+        weather_info = get_weather_for_date(target_date)
+
+        tip = "Keep easy aerobic pace in Zone 2 for optimal recovery and mitochondrial adaptation."
+        if weather_info and weather_info.get("precipitation_mm", 0) > 2.0:
+            tip = "Rain forecast; check tire pressure for wet roads or consider indoor trainer."
+        elif weather_info and (weather_info.get("temp_max_c") or 0) > 32:
+            tip = "High heat expected; hydrate well and start early morning."
+
+        brief = format_next_day_brief(
+            target_date=target_date,
+            workout_text=workout_info.get("workout_text", ""),
+            weather_info=weather_info,
+            coach_tip=tip,
+        )
+
+        if args.dry_run:
+            print("\n📋 [WhatsApp Next-Day Preview (Dry Run)]")
+            print(brief)
+            return 0
+
+        res = send_whatsapp_message(brief)
+        print(f"  Result: {res.get('detail')}")
+        return 0 if res.get("success") else 1
 
     print("🏃 Strava Training Log Fetcher\n")
 

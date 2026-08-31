@@ -104,6 +104,7 @@ function setupEventListeners() {
   document.getElementById("syncSheetBtn").addEventListener("click", handleSheetSync);
   document.getElementById("generateAiBtn").addEventListener("click", handleGenerateAiFeedback);
   document.getElementById("copyReportBtn").addEventListener("click", handleCopyReport);
+  document.getElementById("sendWhatsAppBtn").addEventListener("click", handleSendWhatsApp);
 
   // AI Coach chat drawer
   document.getElementById("chatLauncher").addEventListener("click", () => toggleChatDrawer(true));
@@ -264,14 +265,74 @@ function renderMetricCards(week, garmin) {
   document.getElementById("metricSwimDist").textContent = `${Math.round(week.swim_dist_m)} m`;
   document.getElementById("metricSwimTime").textContent = formatDuration(week.swim_time_sec);
 
-  if (garmin && garmin.total_sleep_h) {
-    document.getElementById("metricSleep").textContent = `${garmin.total_sleep_h.toFixed(1)}h Sleep`;
+  if (garmin && (garmin.total_sleep_h || garmin.avg_rhr || garmin.avg_hrv || garmin.avg_stress || garmin.avg_bb_charged)) {
+    document.getElementById("metricSleep").textContent = garmin.total_sleep_h ? `${garmin.total_sleep_h.toFixed(1)}h Sleep` : "--h Sleep";
     document.getElementById("metricRhr").textContent = garmin.avg_rhr ? `${garmin.avg_rhr} bpm` : "--";
     document.getElementById("metricHrv").textContent = garmin.avg_hrv ? `${garmin.avg_hrv} ms` : "--";
+    
+    const bbCharged = garmin.avg_bb_charged !== null && garmin.avg_bb_charged !== undefined ? `+${Math.round(garmin.avg_bb_charged)}` : "";
+    const bbDrained = garmin.avg_bb_drained !== null && garmin.avg_bb_drained !== undefined ? `-${Math.round(garmin.avg_bb_drained)}` : "";
+    const bbText = (bbCharged && bbDrained) ? `${bbCharged}/${bbDrained}` : (bbCharged || bbDrained || "--");
+    document.getElementById("metricBodyBattery").textContent = bbText;
+    document.getElementById("metricStress").textContent = garmin.avg_stress ? `${garmin.avg_stress}` : "--";
   } else {
     document.getElementById("metricSleep").textContent = "--h Sleep";
     document.getElementById("metricRhr").textContent = "--";
     document.getElementById("metricHrv").textContent = "--";
+    document.getElementById("metricBodyBattery").textContent = "--";
+    document.getElementById("metricStress").textContent = "--";
+  }
+
+  // 4. Update Polarized 80/20 Zone Bar
+  renderPolarizedBar(week.polarized);
+}
+
+function renderPolarizedBar(pol) {
+  if (!pol || pol.total_time_sec <= 0) {
+    document.getElementById("polarizedStatusBadge").textContent = "No Data";
+    document.getElementById("polarizedRatioText").textContent = "—";
+    document.getElementById("polarizedBarLow").style.width = "0%";
+    document.getElementById("polarizedBarMod").style.width = "0%";
+    document.getElementById("polarizedBarHigh").style.width = "0%";
+    document.getElementById("legendLowVal").textContent = "--";
+    document.getElementById("legendModVal").textContent = "--";
+    document.getElementById("legendHighVal").textContent = "--";
+    return;
+  }
+
+  const lowPct = pol.low_pct || 0;
+  const modPct = pol.moderate_pct || 0;
+  const highPct = pol.high_pct || 0;
+
+  document.getElementById("polarizedBarLow").style.width = `${lowPct}%`;
+  document.getElementById("polarizedBarMod").style.width = `${modPct}%`;
+  document.getElementById("polarizedBarHigh").style.width = `${highPct}%`;
+
+  document.getElementById("legendLowVal").textContent = `${lowPct}%`;
+  document.getElementById("legendModVal").textContent = `${modPct}%`;
+  document.getElementById("legendHighVal").textContent = `${highPct}%`;
+
+  const badge = document.getElementById("polarizedStatusBadge");
+  const ratioText = document.getElementById("polarizedRatioText");
+
+  ratioText.textContent = `${lowPct}% Low (Z1-Z2) • ${modPct}% Mid • ${highPct}% High`;
+
+  if (pol.classification === "polarized") {
+    badge.textContent = "🏆 80/20 Polarized Optimal";
+    badge.style.color = "#10b981";
+    badge.style.borderColor = "rgba(16, 185, 129, 0.4)";
+  } else if (pol.classification === "pyramidal") {
+    badge.textContent = "📈 Pyramidal Distribution";
+    badge.style.color = "#00f2fe";
+    badge.style.borderColor = "rgba(0, 242, 254, 0.4)";
+  } else if (pol.classification === "moderate_trap") {
+    badge.textContent = "⚠️ Zone 3 Tempo Trap";
+    badge.style.color = "#f59e0b";
+    badge.style.borderColor = "rgba(245, 158, 11, 0.4)";
+  } else {
+    badge.textContent = "Balanced Intensity";
+    badge.style.color = "var(--text-secondary)";
+    badge.style.borderColor = "var(--glass-border)";
   }
 }
 
@@ -799,6 +860,34 @@ function handleCopyReport() {
   }).catch(err => {
     showToast("Copy error: " + err.message, "error");
   });
+}
+
+async function handleSendWhatsApp() {
+  const btn = document.getElementById("sendWhatsAppBtn");
+  const origText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = "<span>⏳ Sending...</span>";
+
+  try {
+    const res = await fetch("/api/notifications/whatsapp/next-day", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dry_run: false }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Dispatch failed");
+
+    if (data.success) {
+      showToast(`📱 Next-day brief sent to WhatsApp! (${data.target_date})`, "success");
+    } else {
+      showToast(`⚠️ WhatsApp: ${data.dispatch ? data.dispatch.detail : 'Dispatched with dry-run'}`, "info");
+    }
+  } catch (err) {
+    showToast("WhatsApp dispatch error: " + err.message, "error");
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = origText;
+  }
 }
 
 async function handleGenerateAiFeedback() {

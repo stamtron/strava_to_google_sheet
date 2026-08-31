@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Endurance AI Dashboard — Strava & Garmin Coach</title>
-  <link rel="stylesheet" href="/static/styles.css?v=2.7">
+  <link rel="stylesheet" href="/static/styles.css?v=2.8">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
@@ -24,6 +24,9 @@
         </select>
         <button id="copyReportBtn" class="btn btn-share" title="Copy weekly report for WhatsApp / Coach">
           <span>📋 Copy Report</span>
+        </button>
+        <button id="sendWhatsAppBtn" class="btn btn-share" title="Send tomorrow's workout and weather to WhatsApp">
+          <span>📱 WhatsApp Brief</span>
         </button>
         <button id="syncSheetBtn" class="btn btn-primary">
           <span>📊 Sync to Google Sheet</span>
@@ -103,6 +106,8 @@
         <div class="biometrics-row">
           <div class="bio-badge">❤️ HRrest: <strong id="metricRhr">--</strong></div>
           <div class="bio-badge">📈 HRV: <strong id="metricHrv">--</strong></div>
+          <div class="bio-badge">🔋 Bat: <strong id="metricBodyBattery">--</strong></div>
+          <div class="bio-badge">🧘 Stress: <strong id="metricStress">--</strong></div>
         </div>
       </div>
     </div>
@@ -125,6 +130,27 @@
             <div class="chart-wrapper">
               <canvas id="recoveryChart"></canvas>
             </div>
+          </div>
+        </div>
+
+        <!-- 80/20 Polarized Intensity Zone Distribution -->
+        <div class="glass-panel polarized-card">
+          <div class="section-header">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <h3 style="font-size: 15px;">📊 80/20 Intensity Zone Balance</h3>
+              <span id="polarizedStatusBadge" class="acwr-badge">80/20 Polarized</span>
+            </div>
+            <span id="polarizedRatioText" class="brand-subtitle">80% Low • 20% High</span>
+          </div>
+          <div class="polarized-bar-wrapper">
+            <div id="polarizedBarLow" class="polarized-bar-seg seg-low" style="width: 75%;" title="Low Intensity (Z1-Z2)"></div>
+            <div id="polarizedBarMod" class="polarized-bar-seg seg-mod" style="width: 10%;" title="Moderate Intensity (Z3)"></div>
+            <div id="polarizedBarHigh" class="polarized-bar-seg seg-high" style="width: 15%;" title="High Intensity (Z4-Z5)"></div>
+          </div>
+          <div class="polarized-legend">
+            <span class="legend-item"><span class="legend-dot dot-low"></span> Z1-Z2 Aerobic: <strong id="legendLowVal">75%</strong></span>
+            <span class="legend-item"><span class="legend-dot dot-mod"></span> Z3 Tempo: <strong id="legendModVal">10%</strong></span>
+            <span class="legend-item"><span class="legend-dot dot-high"></span> Z4-Z5 Threshold/VO2: <strong id="legendHighVal">15%</strong></span>
           </div>
         </div>
 
@@ -356,6 +382,6 @@ Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
     </div>
   </div>
 
-  <script src="/static/app.js?v=2.7"></script>
+  <script src="/static/app.js?v=2.8"></script>
 </body>
 </html>

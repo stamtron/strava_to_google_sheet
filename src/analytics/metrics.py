@@ -272,3 +272,118 @@ def build_progression_history(weeks_dict: dict, acwr_map: dict | None = None) ->
         })
 
     return progression
+
+
+def calculate_hr_zones(hr_max: int = HR_MAX, hr_rest: int = HR_REST) -> dict[str, tuple[int, int]]:
+    """
+    Calculate 5 Heart Rate Training Zones using Karvonen Heart Rate Reserve (HRR).
+
+    Returns { 'z1': (min_bpm, max_bpm), 'z2': ..., 'z5': ... }
+    """
+    hrr = max(20, hr_max - hr_rest)
+    return {
+        "z1": (round(hr_rest + 0.50 * hrr), round(hr_rest + 0.60 * hrr)),
+        "z2": (round(hr_rest + 0.60 * hrr) + 1, round(hr_rest + 0.72 * hrr)),
+        "z3": (round(hr_rest + 0.72 * hrr) + 1, round(hr_rest + 0.82 * hrr)),
+        "z4": (round(hr_rest + 0.82 * hrr) + 1, round(hr_rest + 0.90 * hrr)),
+        "z5": (round(hr_rest + 0.90 * hrr) + 1, hr_max),
+    }
+
+
+def estimate_activity_zone_times(act: dict, hr_max: int = HR_MAX, hr_rest: int = HR_REST) -> dict[str, float]:
+    """
+    Estimate seconds spent in Z1-Z5 for a single workout based on average HR
+    and moving time.
+    """
+    moving_sec = float(act.get("moving_time", 0) or 0)
+    if moving_sec <= 0:
+        return {"z1": 0.0, "z2": 0.0, "z3": 0.0, "z4": 0.0, "z5": 0.0}
+
+    avg_hr = act.get("average_heartrate")
+    if not avg_hr or hr_max <= hr_rest:
+        # Without HR data, assume low-intensity Z2 baseline for aerobic endurance
+        return {"z1": 0.0, "z2": moving_sec, "z3": 0.0, "z4": 0.0, "z5": 0.0}
+
+    hr_ratio = (avg_hr - hr_rest) / max(20.0, float(hr_max - hr_rest))
+
+    # Spread time across adjacent zones centered around average intensity
+    if hr_ratio <= 0.60:
+        return {"z1": moving_sec * 0.75, "z2": moving_sec * 0.25, "z3": 0.0, "z4": 0.0, "z5": 0.0}
+    elif hr_ratio <= 0.72:
+        return {"z1": moving_sec * 0.20, "z2": moving_sec * 0.70, "z3": moving_sec * 0.10, "z4": 0.0, "z5": 0.0}
+    elif hr_ratio <= 0.82:
+        return {"z1": moving_sec * 0.10, "z2": moving_sec * 0.25, "z3": moving_sec * 0.55, "z4": moving_sec * 0.10, "z5": 0.0}
+    elif hr_ratio <= 0.90:
+        return {"z1": 0.0, "z2": moving_sec * 0.10, "z3": moving_sec * 0.25, "z4": moving_sec * 0.55, "z5": moving_sec * 0.10}
+    else:
+        return {"z1": 0.0, "z2": 0.0, "z3": moving_sec * 0.10, "z4": moving_sec * 0.30, "z5": moving_sec * 0.60}
+
+
+def calculate_polarized_distribution(
+    activities: list[dict],
+    hr_max: int = HR_MAX,
+    hr_rest: int = HR_REST,
+) -> dict:
+    """
+    Compute 3-tier intensity distribution (Low: Z1-Z2, Moderate: Z3, High: Z4-Z5)
+    and evaluate adherence to 80/20 Polarized Training principles.
+    """
+    total_z = {"z1": 0.0, "z2": 0.0, "z3": 0.0, "z4": 0.0, "z5": 0.0}
+    by_sport = {g: {"z1": 0.0, "z2": 0.0, "z3": 0.0, "z4": 0.0, "z5": 0.0} for g in SPORT_GROUPS}
+
+    for act in activities:
+        group = sport_group(act.get("sport_type") or act.get("type", ""))
+        z_times = estimate_activity_zone_times(act, hr_max=hr_max, hr_rest=hr_rest)
+        for k, v in z_times.items():
+            total_z[k] += v
+            if group in by_sport:
+                by_sport[group][k] += v
+
+    total_time_sec = sum(total_z.values())
+    if total_time_sec <= 0:
+        return {
+            "total_time_sec": 0,
+            "low_intensity_sec": 0,
+            "moderate_intensity_sec": 0,
+            "high_intensity_sec": 0,
+            "low_pct": 0.0,
+            "moderate_pct": 0.0,
+            "high_pct": 0.0,
+            "zones_sec": total_z,
+            "classification": "unknown",
+            "is_polarized": False,
+        }
+
+    low_sec = total_z["z1"] + total_z["z2"]
+    mod_sec = total_z["z3"]
+    high_sec = total_z["z4"] + total_z["z5"]
+
+    low_pct = round((low_sec / total_time_sec) * 100.0, 1)
+    mod_pct = round((mod_sec / total_time_sec) * 100.0, 1)
+    high_pct = round((high_sec / total_time_sec) * 100.0, 1)
+
+    # Sports science classification (Seiler Polarized / Pyramidal / Threshold)
+    if low_pct >= 75.0 and mod_pct <= 15.0:
+        classification = "polarized"  # Gold standard 80/20
+    elif low_pct >= 70.0 and mod_pct > high_pct:
+        classification = "pyramidal"  # Progressive pyramid
+    elif mod_pct >= 25.0:
+        classification = "moderate_trap"  # Too much tempo (grey zone)
+    elif high_pct >= 25.0:
+        classification = "high_intensity_heavy"
+    else:
+        classification = "balanced"
+
+    return {
+        "total_time_sec": round(total_time_sec),
+        "low_intensity_sec": round(low_sec),
+        "moderate_intensity_sec": round(mod_sec),
+        "high_intensity_sec": round(high_sec),
+        "low_pct": low_pct,
+        "moderate_pct": mod_pct,
+        "high_pct": high_pct,
+        "zones_sec": {k: round(v) for k, v in total_z.items()},
+        "classification": classification,
+        "is_polarized": classification == "polarized",
+        "by_sport": by_sport,
+    }

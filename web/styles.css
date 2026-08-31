@@ -1300,3 +1300,62 @@ input[type="range"] {
 .weather-meta-wind {
   color: var(--text-secondary);
 }
+
+/* ── Polarized 80/20 Intensity Card ────────────────────────────────────────── */
+
+.polarized-card {
+  margin-top: 14px;
+}
+
+.polarized-bar-wrapper {
+  height: 18px;
+  width: 100%;
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  overflow: hidden;
+  margin: 10px 0 8px 0;
+  border: 1px solid var(--glass-border);
+}
+
+.polarized-bar-seg {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+.seg-low {
+  background: linear-gradient(90deg, #10b981, #059669);
+}
+
+.seg-mod {
+  background: linear-gradient(90deg, #f59e0b, #d97706);
+}
+
+.seg-high {
+  background: linear-gradient(90deg, #ef4444, #dc2626);
+}
+
+.polarized-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.dot-low { background: #10b981; }
+.dot-mod { background: #f59e0b; }
+.dot-high { background: #ef4444; }

@@ -82,7 +82,7 @@ def parse_date_range(text: str) -> tuple[date, date] | None:
     return None
 
 
-def get_sheets_service():
+def get_sheets_service(interactive: bool = True):
     """Authenticate and return Google Sheets API service."""
     creds = None
     if os.path.exists(GSHEETS_TOKEN_FILE):
@@ -99,6 +99,8 @@ def get_sheets_service():
                 creds = None
 
         if not creds:
+            if not interactive:
+                raise PermissionError("Google Sheets requires interactive authentication (token expired or missing).")
             if not os.path.exists(CREDENTIALS_FILE):
                 raise FileNotFoundError(
                     f"Credentials file not found at '{CREDENTIALS_FILE}'.\n"
@@ -543,3 +545,94 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
         print(f"\n✅ Updated {updated_count} cells in Google Sheets!")
     else:
         print("\n✅ All cells are already up to date!")
+
+
+def get_planned_workout_for_date(target_date: date) -> dict:
+    """
+    Fetch the coach's planned workout for target_date from Google Sheets.
+    """
+    if not GOOGLE_SHEET_ID:
+        return {
+            "date": target_date.isoformat(),
+            "found": False,
+            "workout_text": "",
+            "reason": "GOOGLE_SHEET_ID is not configured.",
+        }
+
+    try:
+        service = get_sheets_service(interactive=False)
+        sheet = service.spreadsheets()
+
+        result = sheet.values().get(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range=f"'{SHEET_NAME}'!A13:A150",
+        ).execute()
+        col_a = result.get("values", [])
+
+        week_map = {}
+        for idx, row in enumerate(col_a):
+            row_num = 13 + idx
+            val = row[0] if row else ""
+            date_range = parse_date_range(val)
+            if date_range:
+                week_start, _ = date_range
+                week_map[week_start] = row_num
+
+        week_start = _get_week_start(target_date)
+        if week_start not in week_map:
+            return {
+                "date": target_date.isoformat(),
+                "found": False,
+                "workout_text": "",
+                "reason": f"No sheet row found for week starting {week_start}",
+            }
+
+        r = week_map[week_start]
+        col_letters = ["B", "C", "D", "E", "F", "G", "H"]
+        col = col_letters[target_date.weekday()]
+
+        # Check if new block layout or old
+        a4_check = sheet.values().get(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range=f"'{SHEET_NAME}'!A{r+4}",
+        ).execute().get("values", [[]])
+        val_a4 = a4_check[0][0] if a4_check and a4_check[0] else ""
+        is_new = "ΑΝΑΤΡΟΦΟΔΟΤΗΣΗ" in val_a4 or "FEEDBACK" in val_a4 or r >= 67
+
+        if is_new:
+            # In new block layout, planned workouts can span rows r+1 to r+3
+            read_res = sheet.values().get(
+                spreadsheetId=GOOGLE_SHEET_ID,
+                range=f"'{SHEET_NAME}'!{col}{r+1}:{col}{r+3}",
+            ).execute()
+            rows_val = read_res.get("values", [])
+            lines = [row[0].strip() for row in rows_val if row and row[0].strip()]
+            workout_text = "\n".join(lines)
+        else:
+            # In old layout, read row r and strip Strava section if already present
+            read_res = sheet.values().get(
+                spreadsheetId=GOOGLE_SHEET_ID,
+                range=f"'{SHEET_NAME}'!{col}{r}",
+            ).execute()
+            vals = read_res.get("values", [[]])
+            raw_text = vals[0][0] if vals and vals[0] else ""
+            if "── Strava Data ──" in raw_text:
+                workout_text = raw_text.split("── Strava Data ──")[0].strip()
+            else:
+                workout_text = raw_text.strip()
+
+        return {
+            "date": target_date.isoformat(),
+            "found": bool(workout_text),
+            "workout_text": workout_text,
+            "row": r,
+            "col": col,
+            "layout": "new" if is_new else "old",
+        }
+    except Exception as e:
+        return {
+            "date": target_date.isoformat(),
+            "found": False,
+            "workout_text": "",
+            "reason": f"Failed to read Google Sheet: {e}",
+        }
