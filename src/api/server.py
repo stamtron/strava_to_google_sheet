@@ -396,7 +396,7 @@ def send_next_day_workout_notification(req: WhatsAppNextDayRequest = WhatsAppNex
     # Optional AI tip
     tip = req.custom_tip
     if not tip:
-        if weather_info and weather_info.get("precipitation_mm", 0) > 2.0:
+        if weather_info and (weather_info.get("precipitation_mm") or 0) > 2.0:
             tip = "Rain expected; check tire pressure for wet roads or consider indoor trainer."
         elif weather_info and (weather_info.get("temp_max_c") or 0) > 32:
             tip = "High heat expected; hydrate well and start early morning."
@@ -408,6 +408,7 @@ def send_next_day_workout_notification(req: WhatsAppNextDayRequest = WhatsAppNex
         workout_text=workout_info.get("workout_text", ""),
         weather_info=weather_info,
         coach_tip=tip,
+        lookup_error=workout_info.get("reason"),
     )
 
     if req.dry_run:

@@ -145,8 +145,14 @@ def main():
         workout_info = get_planned_workout_for_date(target_date)
         weather_info = get_weather_for_date(target_date)
 
+        # `reason` is set only when the plan could not be determined; a genuine
+        # rest day comes back empty with no reason.
+        lookup_error = workout_info.get("reason")
+        if lookup_error:
+            print(f"  ⚠️  Could not read the planned workout: {lookup_error}")
+
         tip = "Keep easy aerobic pace in Zone 2 for optimal recovery and mitochondrial adaptation."
-        if weather_info and weather_info.get("precipitation_mm", 0) > 2.0:
+        if weather_info and (weather_info.get("precipitation_mm") or 0) > 2.0:
             tip = "Rain forecast; check tire pressure for wet roads or consider indoor trainer."
         elif weather_info and (weather_info.get("temp_max_c") or 0) > 32:
             tip = "High heat expected; hydrate well and start early morning."
@@ -156,6 +162,7 @@ def main():
             workout_text=workout_info.get("workout_text", ""),
             weather_info=weather_info,
             coach_tip=tip,
+            lookup_error=lookup_error,
         )
 
         if args.dry_run:

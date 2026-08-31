@@ -34,6 +34,25 @@ GREEK_DAY_NAMES = {
 }
 
 
+def _as_whatsapp_addr(number: str | None) -> str:
+    """
+    Normalize a phone number to Twilio's `whatsapp:+<E.164>` address form.
+
+    The `To` fallback is CALLMEBOT_PHONE, which is stored as a bare number, and
+    Twilio rejects an address without the channel prefix.
+    """
+    raw = (number or "").strip().replace(" ", "").replace("-", "")
+    if not raw:
+        return ""
+    if raw.startswith("whatsapp:"):
+        return raw
+    if raw.startswith("00"):
+        raw = "+" + raw[2:]
+    elif not raw.startswith("+"):
+        raw = "+" + raw
+    return f"whatsapp:{raw}"
+
+
 def send_whatsapp_message(message: str) -> dict:
     """
     Dispatch a message to athlete's WhatsApp using the configured provider.
@@ -60,8 +79,11 @@ def send_whatsapp_message(message: str) -> dict:
         if not phone.startswith("+") and not phone.startswith("00"):
             phone = "+" + phone
 
-        encoded_text = urllib.parse.quote_plus(text)
-        url = f"https://api.callmebot.com/whatsapp.php?phone={phone}&text={encoded_text}&apikey={CALLMEBOT_API_KEY}"
+        # urlencode, not f-string interpolation: a raw leading "+" in a query
+        # string is the wire encoding for a space, so CallMeBot would receive
+        # " 30..." and fail to match it to a registered number.
+        query = urllib.parse.urlencode({"phone": phone, "text": text, "apikey": CALLMEBOT_API_KEY})
+        url = f"https://api.callmebot.com/whatsapp.php?{query}"
 
         try:
             resp = requests.get(url, timeout=10.0)
@@ -87,10 +109,16 @@ def send_whatsapp_message(message: str) -> dict:
 
         url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json"
         data = {
-            "From": TWILIO_WHATSAPP_FROM or "whatsapp:+14155238886",
-            "To": TWILIO_WHATSAPP_TO or CALLMEBOT_PHONE,
+            "From": _as_whatsapp_addr(TWILIO_WHATSAPP_FROM) or "whatsapp:+14155238886",
+            "To": _as_whatsapp_addr(TWILIO_WHATSAPP_TO or CALLMEBOT_PHONE),
             "Body": text,
         }
+        if not data["To"]:
+            return {
+                "success": False,
+                "provider": "twilio",
+                "detail": "No recipient: set TWILIO_WHATSAPP_TO.",
+            }
         try:
             resp = requests.post(url, data=data, auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN), timeout=10.0)
             if resp.status_code in (200, 201):
@@ -115,9 +143,15 @@ def format_next_day_brief(
     workout_text: str,
     weather_info: dict | None = None,
     coach_tip: str | None = None,
+    lookup_error: str | None = None,
 ) -> str:
     """
     Format a clean, structured morning/evening briefing for WhatsApp.
+
+    `lookup_error` distinguishes "the sheet says nothing is planned" from "the
+    plan could not be read". Both arrive here as an empty `workout_text`, and
+    reporting the second as a rest day tells the athlete not to train on a day
+    the coach may well have programmed.
     """
     weekday_raw = GREEK_DAY_NAMES.get(target_date.weekday(), "")
     weekday_gr = _strip_greek_accents(weekday_raw).upper()
@@ -133,6 +167,10 @@ def format_next_day_brief(
     if clean_workout:
         lines.append("🏋️‍♂️ *Πλάνο Προπονητή:*")
         lines.append(clean_workout)
+    elif lookup_error:
+        lines.append("⚠️ *Πλάνο:* Δεν ήταν δυνατή η ανάγνωση του προγράμματος.")
+        lines.append(f"_({lookup_error})_")
+        lines.append("Έλεγξε το Google Sheet πριν προπονηθείς.")
     else:
         lines.append("🏋️‍♂️ *Πλάνο:* Rest Day / Ελεύθερη ημέρα ή δεν έχει καταχωρηθεί ακόμη.")
 
@@ -142,8 +180,11 @@ def format_next_day_brief(
         cond = weather_info.get("condition", "Fair")
         t_max = weather_info.get("temp_max_c")
         t_min = weather_info.get("temp_min_c")
-        rain_mm = weather_info.get("precipitation_mm", 0.0)
-        rain_pct = weather_info.get("precip_probability_pct", 0)
+        # Open-Meteo returns null inside the daily arrays for days it has no
+        # value for, so these keys can be present-but-None; `or 0` covers that
+        # in a way a `.get` default does not.
+        rain_mm = weather_info.get("precipitation_mm") or 0.0
+        rain_pct = weather_info.get("precip_probability_pct") or 0
         wind = weather_info.get("wind_speed_max_kmh")
 
         temp_str = f"{round(t_min)}°C – {round(t_max)}°C" if t_max is not None and t_min is not None else "N/A"
