@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Endurance AI Dashboard — Strava & Garmin Coach</title>
-  <link rel="stylesheet" href="/static/styles.css?v=2.8">
+  <link rel="stylesheet" href="/static/styles.css?v=3.3">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
@@ -38,6 +38,9 @@
     <div class="nav-tabs">
       <button id="tabWeeklyBtn" class="tab-btn active">
         <span>⚡ Weekly Analysis</span>
+      </button>
+      <button id="tabProjectionsBtn" class="tab-btn">
+        <span>🎯 Race & Triathlon Projections</span>
       </button>
       <button id="tabProgressionBtn" class="tab-btn">
         <span>📈 Long-Term Progression & Load (Multi-Week)</span>
@@ -96,6 +99,16 @@
         <div id="metricSwimTime" class="metric-subvalue">0h 0m</div>
       </div>
 
+      <!-- Strength Training Card -->
+      <div class="glass-panel metric-card card-strength">
+        <div class="metric-header">
+          <span class="metric-title">STRENGTH</span>
+          <span class="metric-icon">🏋️</span>
+        </div>
+        <div id="metricStrengthTime" class="metric-value">0h 0m</div>
+        <div id="metricStrengthSessions" class="metric-subvalue">0 sessions</div>
+      </div>
+
       <!-- Garmin Health Card -->
       <div class="glass-panel metric-card card-health">
         <div class="metric-header">
@@ -104,10 +117,10 @@
         </div>
         <div id="metricSleep" class="metric-value">--h Sleep</div>
         <div class="biometrics-row">
-          <div class="bio-badge">❤️ HRrest: <strong id="metricRhr">--</strong></div>
-          <div class="bio-badge">📈 HRV: <strong id="metricHrv">--</strong></div>
-          <div class="bio-badge">🔋 Bat: <strong id="metricBodyBattery">--</strong></div>
-          <div class="bio-badge">🧘 Stress: <strong id="metricStress">--</strong></div>
+          <div class="bio-badge" title="Resting Heart Rate">❤️ HR: <strong id="metricRhr">--</strong></div>
+          <div class="bio-badge" title="Heart Rate Variability">📈 HRV: <strong id="metricHrv">--</strong></div>
+          <div class="bio-badge" title="Body Battery (Charged / Drained)">🔋 Bat: <strong id="metricBodyBattery">--</strong></div>
+          <div class="bio-badge" title="Garmin Daily Stress Score">🧘 Str: <strong id="metricStress">--</strong></div>
         </div>
       </div>
     </div>
@@ -154,28 +167,17 @@
           </div>
         </div>
 
-        <!-- 7-Day Calendar Block -->
+        <!-- 7-Day Calendar Block with Integrated Daily Weather -->
         <div class="glass-panel calendar-section">
           <div class="section-header">
-            <h2 class="section-title">Weekly Workout Calendar</h2>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <h2 class="section-title">Weekly Workout Calendar</h2>
+              <span id="weatherLocationBadge" class="bio-badge">🌤️ Athens, GR Forecast</span>
+            </div>
             <span id="calendarDateRange" class="brand-subtitle">Monday – Sunday</span>
           </div>
           <div id="daysGrid" class="days-grid">
-            <!-- Rendered dynamically -->
-          </div>
-        </div>
-
-        <!-- Daily Weather Outlook (Athens, Greece) -->
-        <div class="glass-panel weather-section">
-          <div class="section-header">
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <h2 class="section-title">🌤️ Athens Daily Weather</h2>
-              <span id="weatherLocationBadge" class="bio-badge">Athens, GR</span>
-            </div>
-            <span id="weatherRangeSubtitle" class="brand-subtitle">Recent & 7-Day Forecast</span>
-          </div>
-          <div id="weatherGrid" class="weather-grid">
-            <!-- Rendered dynamically -->
+            <!-- Rendered dynamically with daily weather & workouts -->
           </div>
         </div>
       </div>
@@ -236,72 +238,126 @@ Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
           </div>
         </div>
       </div>
-     </div>
+    </div>
 
-     <!--
-       Insights row: full-width beneath the two-column layout. These three cards
-       were starving in the narrow right rail while the left column ran out of
-       content, so they get the whole width to themselves.
-     -->
-     <div class="insights-grid">
-        <!-- Triathlon Finish Projections Card -->
-        <div class="glass-panel ai-card insight-tri">
-          <div class="ai-header" style="flex-wrap: wrap; gap: 8px;">
-            <h3 style="font-size: 15px;">🏊🚴🏃 Triathlon Predictions</h3>
-            <div style="display: flex; gap: 6px;">
-              <button id="triModePbBtn" class="filter-btn active" style="padding: 3px 8px; font-size: 11px;">🏆 Based on Race PB</button>
-              <button id="triModeTrainBtn" class="filter-btn" style="padding: 3px 8px; font-size: 11px;">📈 Based on Training</button>
-            </div>
-          </div>
-          <div style="margin-bottom: 10px;">
-            <span id="triBaselinesBadge" class="bio-badge">Base: Multi-sport</span>
-          </div>
-          <div id="triathlonContainer">
-            <!-- Rendered dynamically -->
-          </div>
-        </div>
-
-        <!-- Run Durability & Cross-Training Card -->
-        <div class="glass-panel ai-card insight-durability">
-          <div class="ai-header">
-            <h3 style="font-size: 15px;">🦵 Run Durability</h3>
+      <!-- Run Durability & Cross-Training (Weekly view) -->
+      <div class="glass-panel ai-card weekly-durability-card">
+        <div class="ai-header">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <h3 style="font-size: 16px;">🦵 Run Durability & Injury Risk Assessment</h3>
             <span id="durabilityRiskBadge" class="acwr-badge">Loading…</span>
           </div>
-          <div id="durabilitySignals" class="durability-signals">
-            <!-- Rendered dynamically -->
-          </div>
-          <div class="durability-ramp-title">Weekly run-volume ramp</div>
-          <div id="durabilityRamp" class="durability-ramp">
-            <!-- Rendered dynamically -->
-          </div>
-          <div id="durabilityPlan" class="durability-plan">
-            <!-- Rendered dynamically -->
-          </div>
+          <span class="bio-badge">Deterministic Spacing & Ramp Engine</span>
         </div>
-
-        <!-- Running Race Predictions Card -->
-        <div class="glass-panel ai-card insight-race">
-          <div class="ai-header">
-            <h3 style="font-size: 15px;">🏆 Race Time Predictions</h3>
-            <span id="basePaceBadge" class="bio-badge">Base: 5:00 /km</span>
-          </div>
-          <table class="predictions-table">
-            <thead>
-              <tr>
-                <th>Distance</th>
-                <th>Estimated Time</th>
-                <th>Pace (/km)</th>
-              </tr>
-            </thead>
-            <tbody id="predictionsBody">
-              <!-- Rendered dynamically -->
-            </tbody>
-          </table>
+        <div id="durabilitySignals" class="durability-signals">
+          <!-- Rendered dynamically -->
+        </div>
+        <div class="durability-ramp-title">Weekly run-volume ramp</div>
+        <div id="durabilityRamp" class="durability-ramp">
+          <!-- Rendered dynamically -->
+        </div>
+        <div id="durabilityPlan" class="durability-plan">
+          <!-- Rendered dynamically -->
         </div>
       </div>
     </div>
 
-    <!-- VIEW 2: Long-Term Progression Analytics -->
+    <!-- VIEW 2: Race & Triathlon Projections -->
+    <div id="projectionsView" class="projections-section">
+      <!-- Projections Hero Banner -->
+      <div class="glass-panel projections-hero">
+        <div class="projections-hero-content">
+          <div class="projections-hero-title">
+            <span class="hero-icon">🎯</span>
+            <div>
+              <h2>Race Finish & Multi-Sport Projections</h2>
+              <p class="brand-subtitle">Peter Riegel Fatigue Ladders & Multi-Sport Transition Modeling</p>
+            </div>
+          </div>
+          <div class="projections-mode-controls">
+            <span class="control-label">Calibration Mode:</span>
+            <div class="btn-group">
+              <button id="triModePbBtn" class="filter-btn active" title="Calibrate projections against verified official PBs">🏆 Race PB Calibrated</button>
+              <button id="triModeTrainBtn" class="filter-btn" title="Calibrate projections against recent Strava workout paces">📈 Training Pace Derived</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="projections-grid">
+        <!-- Triathlon Multi-Sport Predictions Card -->
+        <div class="glass-panel ai-card projection-card-tri">
+          <div class="ai-header" style="flex-wrap: wrap; gap: 8px; margin-bottom: 14px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <h3 style="font-size: 16px;">🏊🚴🏃 Triathlon Finish Projections</h3>
+            </div>
+            <span id="triBaselinesBadge" class="bio-badge">Base: Multi-sport</span>
+          </div>
+          <div id="triathlonContainer" class="triathlon-container">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+
+        <!-- Right Side: Running Predictions & Riegel Science -->
+        <div class="projections-right-col">
+          <!-- Running Race Predictions Card -->
+          <div class="glass-panel ai-card projection-card-race">
+            <div class="ai-header" style="margin-bottom: 14px;">
+              <h3 style="font-size: 16px;">🏆 Running Race Predictions</h3>
+              <span id="basePaceBadge" class="bio-badge">Base: 5:00 /km</span>
+            </div>
+            <table class="predictions-table">
+              <thead>
+                <tr>
+                  <th>Distance</th>
+                  <th>Estimated Time</th>
+                  <th>Pace (/km)</th>
+                </tr>
+              </thead>
+              <tbody id="predictionsBody">
+                <!-- Rendered dynamically -->
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Mathematical Model & Science Info Card -->
+          <div class="glass-panel ai-card projection-card-info">
+            <div class="ai-header" style="margin-bottom: 10px;">
+              <h4 style="font-size: 14px; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+                <span>🔬</span> Riegel Distance-Fatigue Ladder
+              </h4>
+            </div>
+            <p class="model-desc">
+              Predictions use the calibrated formula <code>T₂ = T₁ × (D₂ / D₁)^exponent</code>, accounting for aerobic endurance decay across longer distances:
+            </p>
+            <div class="riegel-ladder-grid">
+              <div class="ladder-item">
+                <span class="ladder-dist">10K</span>
+                <span class="ladder-exp">^1.07</span>
+                <span class="ladder-note">Threshold</span>
+              </div>
+              <div class="ladder-item">
+                <span class="ladder-dist">Half (21.1K)</span>
+                <span class="ladder-exp">^1.10</span>
+                <span class="ladder-note">Tempo Glycogen</span>
+              </div>
+              <div class="ladder-item">
+                <span class="ladder-dist">30K</span>
+                <span class="ladder-exp">^1.13</span>
+                <span class="ladder-note">Aerobic Drift</span>
+              </div>
+              <div class="ladder-item">
+                <span class="ladder-dist">Marathon (42.2K)</span>
+                <span class="ladder-exp">^1.145</span>
+                <span class="ladder-note">Full Depletion</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW 3: Long-Term Progression Analytics -->
     <div id="progressionView" class="progression-section">
       <div class="progression-grid">
         <!-- Relative Effort & Hours Trend -->
@@ -382,6 +438,6 @@ Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
     </div>
   </div>
 
-  <script src="/static/app.js?v=2.8"></script>
+  <script src="/static/app.js?v=3.3"></script>
 </body>
 </html>

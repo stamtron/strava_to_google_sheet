@@ -223,13 +223,13 @@ header {
 /* Metric Cards Grid */
 .metrics-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 14px;
   margin-bottom: 24px;
 }
 
 .metric-card {
-  padding: 18px;
+  padding: 16px;
   position: relative;
   overflow: hidden;
 }
@@ -282,20 +282,24 @@ header {
 
 /* Garmin Biometric Badges */
 .biometrics-row {
-  display: flex;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
   margin-top: 8px;
 }
 
 .bio-badge {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid var(--glass-border);
-  padding: 4px 8px;
+  padding: 4px 6px;
   border-radius: var(--radius-sm);
-  font-size: 11px;
+  font-size: 10.5px;
   display: flex;
   align-items: center;
   gap: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .bio-badge strong {
@@ -433,16 +437,92 @@ header {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-height: 200px;
+  min-height: 220px;
+  transition: all 0.2s ease;
+}
+
+.day-column.today {
+  border-color: rgba(0, 242, 254, 0.5);
+  background: rgba(0, 242, 254, 0.05);
+  box-shadow: 0 0 15px rgba(0, 242, 254, 0.12);
 }
 
 .day-header {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--glass-border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.day-header-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   font-size: 12px;
   font-weight: 700;
   color: var(--accent-cyan);
+}
+
+.day-header-meta .day-date {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.day-today-tag {
+  background: var(--accent-cyan);
+  color: #04101e;
+  font-size: 9px;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  letter-spacing: 0.5px;
+}
+
+.day-weather {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: var(--radius-sm);
+  padding: 3px 6px;
+  font-size: 10.5px;
+  cursor: default;
+}
+
+.day-weather-icon {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.day-weather-temp {
+  font-weight: 700;
+  color: var(--text-primary);
+  font-family: 'Outfit', sans-serif;
+  font-size: 11px;
+}
+
+.day-weather-min {
+  color: var(--text-muted);
+  font-weight: 500;
+  font-size: 10px;
+}
+
+.day-weather-rain {
+  font-size: 10px;
+  color: var(--accent-cyan);
+  font-weight: 600;
+}
+
+.day-rest-label {
+  color: var(--text-muted);
+  font-size: 11px;
   text-align: center;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--glass-border);
+  margin-top: 20px;
+  font-style: italic;
 }
 
 .activity-item {
@@ -639,6 +719,156 @@ input[type="range"] {
   font-weight: 700;
   color: var(--accent-cyan);
   font-family: 'Outfit', sans-serif;
+}
+/* Projections Section View */
+.projections-section {
+  display: none;
+}
+
+.projections-section.active {
+  display: block;
+}
+
+.projections-hero {
+  padding: 20px 24px;
+  margin-bottom: 24px;
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.8) 0%, rgba(30, 41, 59, 0.6) 100%);
+  border: 1px solid var(--glass-border);
+}
+
+.projections-hero-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.projections-hero-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.hero-icon {
+  font-size: 32px;
+  background: rgba(0, 242, 254, 0.1);
+  padding: 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(0, 242, 254, 0.2);
+}
+
+.projections-hero-title h2 {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
+.projections-mode-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(15, 23, 42, 0.6);
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--glass-border);
+}
+
+.projections-mode-controls .control-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.projections-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 1050px) {
+  .projections-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.projection-card-tri,
+.projection-card-race,
+.projection-card-info {
+  padding: 24px;
+}
+
+.projections-right-col {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.projection-card-info {
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.model-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-bottom: 14px;
+}
+
+.model-desc code {
+  color: var(--accent-cyan);
+  background: rgba(0, 242, 254, 0.1);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-family: monospace;
+}
+
+.riegel-ladder-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+@media (max-width: 600px) {
+  .riegel-ladder-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.ladder-item {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  padding: 10px 8px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ladder-dist {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.ladder-exp {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--accent-cyan);
+  font-family: 'Outfit', sans-serif;
+}
+
+.ladder-note {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.weekly-durability-card {
+  padding: 24px;
+  margin-top: 8px;
 }
 
 /* Progression Analytics View */

@@ -61,6 +61,13 @@ const EXERCISE_LABELS = {
 };
 
 let currentTriMode = "pb"; // "pb" or "train"
+
+function getLocalDateString(d = new Date()) {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
 document.addEventListener("DOMContentLoaded", () => {
   initApp();
   setupEventListeners();
@@ -83,7 +90,7 @@ async function initApp() {
     }
 
     renderPredictions(dashboardData.predictions);
-    renderTriathlonPredictions(dashboardData.triathlon);
+    renderTriathlonPredictions(dashboardData.triathlon_pb || dashboardData.triathlon);
     renderWeatherOutlook(dashboardData.weather);
     updateProgressionCharts(dashboardData.progression);
   } catch (err) {
@@ -152,28 +159,41 @@ function setupEventListeners() {
 
   // Tab Navigation
   const tabWeekly = document.getElementById("tabWeeklyBtn");
+  const tabProjections = document.getElementById("tabProjectionsBtn");
   const tabProgression = document.getElementById("tabProgressionBtn");
   const weeklyView = document.getElementById("weeklyView");
+  const projectionsView = document.getElementById("projectionsView");
   const progressionView = document.getElementById("progressionView");
 
-  tabWeekly.addEventListener("click", () => {
-    tabWeekly.classList.add("active");
-    tabProgression.classList.remove("active");
-    weeklyView.style.display = "grid";
-    progressionView.classList.remove("active");
-  });
+  function switchTab(target) {
+    if (tabWeekly) tabWeekly.classList.toggle("active", target === "weekly");
+    if (tabProjections) tabProjections.classList.toggle("active", target === "projections");
+    if (tabProgression) tabProgression.classList.toggle("active", target === "progression");
 
-  tabProgression.addEventListener("click", () => {
-    tabProgression.classList.add("active");
-    tabWeekly.classList.remove("active");
-    weeklyView.style.display = "none";
-    progressionView.classList.add("active");
-    // Trigger chart resize
-    if (effortProgressionChart) effortProgressionChart.resize();
-    if (volumeProgressionChart) volumeProgressionChart.resize();
-    if (elevationProgressionChart) elevationProgressionChart.resize();
-    if (acwrProgressionChart) acwrProgressionChart.resize();
-  });
+    if (weeklyView) weeklyView.style.display = target === "weekly" ? "grid" : "none";
+    if (projectionsView) {
+      projectionsView.classList.toggle("active", target === "projections");
+      projectionsView.style.display = target === "projections" ? "block" : "none";
+    }
+    if (progressionView) {
+      progressionView.classList.toggle("active", target === "progression");
+      progressionView.style.display = target === "progression" ? "block" : "none";
+    }
+
+    // Trigger chart resize if moving to Progression tab
+    if (target === "progression") {
+      setTimeout(() => {
+        if (effortProgressionChart) effortProgressionChart.resize();
+        if (volumeProgressionChart) volumeProgressionChart.resize();
+        if (elevationProgressionChart) elevationProgressionChart.resize();
+        if (acwrProgressionChart) acwrProgressionChart.resize();
+      }, 50);
+    }
+  }
+
+  if (tabWeekly) tabWeekly.addEventListener("click", () => switchTab("weekly"));
+  if (tabProjections) tabProjections.addEventListener("click", () => switchTab("projections"));
+  if (tabProgression) tabProgression.addEventListener("click", () => switchTab("progression"));
 
   // Sliders
   setupSlider("fatigueSlider", "fatigueVal", "/10");
@@ -265,13 +285,30 @@ function renderMetricCards(week, garmin) {
   document.getElementById("metricSwimDist").textContent = `${Math.round(week.swim_dist_m)} m`;
   document.getElementById("metricSwimTime").textContent = formatDuration(week.swim_time_sec);
 
-  if (garmin && (garmin.total_sleep_h || garmin.avg_rhr || garmin.avg_hrv || garmin.avg_stress || garmin.avg_bb_charged)) {
+  // Strength Training Card
+  const strengthSec = week.strength_time_sec || 0;
+  const strengthTimeEl = document.getElementById("metricStrengthTime");
+  const strengthSessionsEl = document.getElementById("metricStrengthSessions");
+  if (strengthTimeEl) strengthTimeEl.textContent = formatDuration(strengthSec);
+  if (strengthSessionsEl) {
+    const strengthActs = (week.activities || []).filter((a) => {
+      const sp = (a.sport_type || a.type || "").toLowerCase();
+      return sp.includes("weight") || sp.includes("strength") || sp.includes("crossfit") || sp.includes("workout");
+    });
+    const count = strengthActs.length;
+    const strengthEffort = week.strength_relative_effort ? ` • 🔥 ${Math.round(week.strength_relative_effort)}` : "";
+    strengthSessionsEl.textContent = `${count} session${count === 1 ? "" : "s"}${strengthEffort}`;
+  }
+
+  if (garmin && (garmin.total_sleep_h || garmin.avg_rhr || garmin.avg_hrv || garmin.avg_stress || garmin.avg_bb_charged !== null || garmin.avg_bb_drained !== null)) {
     document.getElementById("metricSleep").textContent = garmin.total_sleep_h ? `${garmin.total_sleep_h.toFixed(1)}h Sleep` : "--h Sleep";
     document.getElementById("metricRhr").textContent = garmin.avg_rhr ? `${garmin.avg_rhr} bpm` : "--";
     document.getElementById("metricHrv").textContent = garmin.avg_hrv ? `${garmin.avg_hrv} ms` : "--";
     
-    const bbCharged = garmin.avg_bb_charged !== null && garmin.avg_bb_charged !== undefined ? `+${Math.round(garmin.avg_bb_charged)}` : "";
-    const bbDrained = garmin.avg_bb_drained !== null && garmin.avg_bb_drained !== undefined ? `-${Math.round(garmin.avg_bb_drained)}` : "";
+    const hasCharged = garmin.avg_bb_charged !== null && garmin.avg_bb_charged !== undefined;
+    const hasDrained = garmin.avg_bb_drained !== null && garmin.avg_bb_drained !== undefined;
+    const bbCharged = hasCharged ? `+${Math.round(garmin.avg_bb_charged)}` : "";
+    const bbDrained = hasDrained ? `-${Math.round(garmin.avg_bb_drained)}` : "";
     const bbText = (bbCharged && bbDrained) ? `${bbCharged}/${bbDrained}` : (bbCharged || bbDrained || "--");
     document.getElementById("metricBodyBattery").textContent = bbText;
     document.getElementById("metricStress").textContent = garmin.avg_stress ? `${garmin.avg_stress}` : "--";
@@ -360,39 +397,83 @@ function renderCalendar(week) {
   grid.innerHTML = "";
 
   const mDateStr = week.week_monday;
-  const mDate = new Date(mDateStr + "T00:00:00");
-  const sDate = new Date(week.week_sunday + "T00:00:00");
+  const [mYear, mMonth, mDay] = mDateStr.split("-").map(Number);
+  const mDate = new Date(mYear, mMonth - 1, mDay);
+  const [sYear, sMonth, sDay] = week.week_sunday.split("-").map(Number);
+  const sDate = new Date(sYear, sMonth - 1, sDay);
+
   const dateRangeEl = document.getElementById("calendarDateRange");
   dateRangeEl.textContent = `${mDate.toLocaleDateString("en-US", { month: "long", day: "numeric" })} – ${sDate.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}`;
 
-  const daysActivities = [[], [], [], [], [], [], []];
-  week.activities.forEach((act) => {
-    const rawDt = act.start_date_local || "";
-    const actDateStr = rawDt.substring(0, 10);
-    const actDateObj = new Date(actDateStr + "T00:00:00");
-    const diffTime = actDateObj.getTime() - mDate.getTime();
-    const dayIdx = Math.round(diffTime / (1000 * 3600 * 24));
-    if (dayIdx >= 0 && dayIdx <= 6) {
-      daysActivities[dayIdx].push(act);
+  const todayStr = getLocalDateString();
+
+  // Index weather items by date string YYYY-MM-DD
+  const weatherMap = {};
+  if (dashboardData && Array.isArray(dashboardData.weather)) {
+    dashboardData.weather.forEach((w) => {
+      if (w && w.date) {
+        weatherMap[w.date] = w;
+      }
+    });
+  }
+
+  // Index activities by local date string YYYY-MM-DD
+  const actsByDate = {};
+  (week.activities || []).forEach((act) => {
+    const actDateStr = (act.start_date_local || "").substring(0, 10);
+    if (!actsByDate[actDateStr]) {
+      actsByDate[actDateStr] = [];
     }
+    actsByDate[actDateStr].push(act);
   });
 
   for (let i = 0; i < 7; i++) {
-    const dayDate = new Date(mDate);
-    dayDate.setDate(dayDate.getDate() + i);
+    const dayDate = new Date(mYear, mMonth - 1, mDay + i);
+    const dateStr = getLocalDateString(dayDate);
+    const isToday = dateStr === todayStr;
 
     const col = document.createElement("div");
-    col.className = "day-column";
+    col.className = `day-column ${isToday ? "today" : ""}`;
 
     const header = document.createElement("div");
     header.className = "day-header";
-    header.innerHTML = `<div>${DAY_SHORT_EN[i]}</div><div style="font-size: 11px; color: var(--text-muted); font-weight: normal;">${dayDate.getMonth() + 1}/${dayDate.getDate()}</div>`;
+
+    // Daily weather information
+    const w = weatherMap[dateStr];
+    let weatherHtml = "";
+    if (w) {
+      const maxTemp = w.temp_max_c !== null ? `${Math.round(w.temp_max_c)}°` : "";
+      const minTemp = w.temp_min_c !== null ? `${Math.round(w.temp_min_c)}°` : "";
+      const tempStr = (maxTemp && minTemp) ? `${maxTemp}/${minTemp}` : (maxTemp || "");
+      const rainBadge = w.precipitation_mm > 0
+        ? `💧${w.precipitation_mm.toFixed(1)}mm`
+        : (w.precip_probability_pct > 0 ? `💧${w.precip_probability_pct}%` : "");
+      const windInfo = w.wind_speed_max_kmh !== null ? ` • 💨 ${Math.round(w.wind_speed_max_kmh)} km/h` : "";
+      const tooltip = `${w.condition || "Fair"}${windInfo}${w.precipitation_mm > 0 ? ` • Rain: ${w.precipitation_mm.toFixed(1)}mm` : ""}`;
+
+      weatherHtml = `
+        <div class="day-weather" title="${escapeHtml(tooltip)}">
+          <span class="day-weather-icon">${escapeHtml(w.icon || "🌡️")}</span>
+          <span class="day-weather-temp">${escapeHtml(tempStr)}</span>
+          ${rainBadge ? `<span class="day-weather-rain">${escapeHtml(rainBadge)}</span>` : ""}
+        </div>
+      `;
+    }
+
+    header.innerHTML = `
+      <div class="day-header-meta">
+        <span class="day-name">${DAY_SHORT_EN[i]}</span>
+        <span class="day-date">${dayDate.getMonth() + 1}/${dayDate.getDate()}</span>
+        ${isToday ? `<span class="day-today-tag">TODAY</span>` : ""}
+      </div>
+      ${weatherHtml}
+    `;
     col.appendChild(header);
 
-    const acts = daysActivities[i];
+    const acts = actsByDate[dateStr] || [];
     if (acts.length === 0) {
       const empty = document.createElement("div");
-      empty.style.cssText = "color: var(--text-muted); font-size: 11px; text-align: center; margin-top: 20px;";
+      empty.className = "day-rest-label";
       empty.textContent = "Rest";
       col.appendChild(empty);
     } else {
@@ -434,7 +515,7 @@ function renderCalendar(week) {
         const paceStr = formatPace(sport, movingTime, rawDistM);
 
         item.innerHTML = `
-          <div class="act-type ${sportClass}">${icon} ${a.name || sport}</div>
+          <div class="act-type ${sportClass}">${icon} ${escapeHtml(a.name || sport)}</div>
           <div class="act-stat">⏱️ ${timeStr}${distStr ? ` • 📏 ${distStr}` : ""}</div>
           ${paceStr ? `<div class="act-stat">🏎️ ${paceStr}</div>` : ""}
           ${a.total_elevation_gain ? `<div class="act-stat">⛰️ +${Math.round(a.total_elevation_gain)}m</div>` : ""}
@@ -790,7 +871,7 @@ function renderWeatherOutlook(weatherList) {
     return;
   }
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = getLocalDateString();
 
   const html = weatherList.map((day) => {
     const isToday = day.date === todayStr;
