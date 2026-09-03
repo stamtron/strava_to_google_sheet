@@ -37,7 +37,7 @@ from src.integrations.strava import (
     fetch_details_for_activities,
     get_access_token,
 )
-from src.integrations.garmin import get_weekly_health_summaries
+from src.integrations.garmin import _load_garmin_cache, get_weekly_health_summaries
 from src.integrations.sheets import get_planned_workout_for_date, write_to_sheet
 from src.integrations.strava_backfill import backfill_all
 from src.integrations.whatsapp import format_next_day_brief, send_whatsapp_message
@@ -96,7 +96,7 @@ class FeedbackRequest(BaseModel):
 
 
 class SyncRequest(BaseModel):
-    count: int = 35
+    count: int = 200
 
 
 class BackfillRequest(BaseModel):
@@ -268,14 +268,14 @@ def health_check():
 
 
 @app.get("/api/activities")
-def get_activities(count: int = Query(50, ge=1, le=100)):
+def get_activities(count: int = Query(200, ge=1, le=500)):
     """Fetch recent Strava activities with local caching."""
     summaries, details = _get_summaries(count)
     return {"activities": summaries, "details": details}
 
 
 @app.get("/api/dashboard")
-def get_dashboard_data(count: int = Query(50, ge=1, le=100)):
+def get_dashboard_data(count: int = Query(200, ge=1, le=500)):
     """Consolidated training metrics, Relative Effort, progression history & Garmin health."""
     summaries, _ = _get_summaries(count)
 
@@ -294,16 +294,21 @@ def get_dashboard_data(count: int = Query(50, ge=1, le=100)):
             hr_rest=HR_REST,
         )
 
-    # Garmin health for active weeks (disk-cached; finished weeks never refetch)
+    # Garmin health: always return all disk-cached weeks. For uncached weeks,
+    # only query the active/recent weeks (at most 1 uncached week per request)
+    # so that historical activity queries never block the dashboard on minutes of sequential API calls.
+    cached_garmin = _load_garmin_cache()
+    active_weeks = set(sorted_week_keys[-2:]) if sorted_week_keys else set()
     week_ranges = {
         w_key: (
             date.fromisoformat(weeks[w_key]["week_monday"]),
             date.fromisoformat(weeks[w_key]["week_sunday"]),
         )
         for w_key in sorted_week_keys
+        if w_key in cached_garmin or w_key in active_weeks
     }
     try:
-        garmin_summaries = get_weekly_health_summaries(week_ranges)
+        garmin_summaries = get_weekly_health_summaries(week_ranges, max_fetch=1)
     except Exception as e:
         print(f"⚠️  Garmin unavailable: {e}")
         garmin_summaries = {}
@@ -450,7 +455,7 @@ def get_weather(
 
 
 @app.get("/api/durability")
-def get_run_durability(count: int = Query(50, ge=1, le=100)):
+def get_run_durability(count: int = Query(200, ge=1, le=500)):
     """
     Run-specific load management: ramp rate, spacing, long-run share, monotony,
     and the cross-training plan that keeps the aerobic dose while lowering impact.

@@ -108,7 +108,7 @@ def run_backfill(access_token: str, resume: bool = True) -> int:
 
 def main():
     parser = argparse.ArgumentParser(description="Strava Training Log Fetcher & Google Sheets Sync")
-    parser.add_argument("--count", type=int, default=30, help="Number of activities to fetch")
+    parser.add_argument("--count", type=int, default=200, help="Number of activities to fetch")
     parser.add_argument("--sheet", action="store_true", help="Sync activities to Google Sheets")
     parser.add_argument(
         "--backfill",

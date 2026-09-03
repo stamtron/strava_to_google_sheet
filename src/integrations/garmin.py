@@ -225,7 +225,10 @@ def _cache_entry_is_fresh(entry: dict, week_sunday: date, today: date) -> bool:
     return (time.time() - entry.get("fetched_at", 0)) < GARMIN_CACHE_TTL
 
 
-def get_weekly_health_summaries(week_ranges: dict[str, tuple[date, date]]) -> dict[str, dict]:
+def get_weekly_health_summaries(
+    week_ranges: dict[str, tuple[date, date]],
+    max_fetch: int | None = None,
+) -> dict[str, dict]:
     """
     Return {week_key: health_summary} for many weeks, backed by a disk cache.
 
@@ -256,19 +259,20 @@ def get_weekly_health_summaries(week_ranges: dict[str, tuple[date, date]]) -> di
     if client is None:
         return results
 
-    dirty = False
-    for week_key, (start, end) in sorted(pending.items()):
+    # Fetch newest weeks first so recent training sees biometrics first
+    items_to_fetch = sorted(pending.items(), reverse=True)
+    if max_fetch is not None and max_fetch > 0:
+        items_to_fetch = items_to_fetch[:max_fetch]
+
+    for week_key, (start, end) in items_to_fetch:
         try:
             summary = get_weekly_health_summary(start, end, client)
         except Exception as e:
             print(f"  ⚠️  Garmin fetch failed for week {week_key}: {e}")
             continue
         cache[week_key] = {"summary": summary, "fetched_at": time.time()}
-        dirty = True
+        _save_garmin_cache(cache)
         if summary:
             results[week_key] = summary
-
-    if dirty:
-        _save_garmin_cache(cache)
 
     return results

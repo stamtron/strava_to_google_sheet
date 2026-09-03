@@ -222,7 +222,17 @@ function populateWeekSelector() {
     const sDate = new Date(w.week_sunday + "T00:00:00");
     const opt = document.createElement("option");
     opt.value = key;
-    opt.textContent = `${mDate.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${sDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} ${idx === 0 ? "(Current)" : ""}`;
+
+    // 18-week countdown to Ironman on October 25, 2026 (starts Monday June 22, 2026)
+    let countdownLabel = "";
+    if (w.week_monday >= "2026-06-22" && w.week_monday <= "2026-10-25") {
+      const msDiff = new Date(w.week_monday + "T00:00:00") - new Date("2026-06-22T00:00:00");
+      const weekNum = Math.round(msDiff / (7 * 86400000)) + 1;
+      const weeksOut = 18 - weekNum + 1;
+      countdownLabel = ` [IM W${weekNum} • ${weeksOut}w to go]`;
+    }
+
+    opt.textContent = `${mDate.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${sDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}${countdownLabel} ${idx === 0 ? "(Current)" : ""}`;
     selector.appendChild(opt);
   });
 }
