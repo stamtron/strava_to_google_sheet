@@ -121,9 +121,20 @@ def main():
         help="With --backfill, restart the import from page 1 instead of the saved cursor",
     )
     parser.add_argument(
+        "--telegram-today",
+        action="store_true",
+        help="Read today's planned workout from Google Sheets, add Athens weather & tip, and send to Telegram",
+    )
+    parser.add_argument(
         "--telegram-next-day",
         action="store_true",
         help="Read tomorrow's planned workout from Google Sheets, add Athens weather & tip, and send to Telegram",
+    )
+    parser.add_argument(
+        "--date",
+        type=str,
+        default=None,
+        help="Specific date (YYYY-MM-DD) to send briefing for",
     )
     parser.add_argument(
         "--whatsapp-next-day",
@@ -137,8 +148,8 @@ def main():
     )
     args = parser.parse_args()
 
-    # Telegram Next-Day Dispatcher
-    if args.telegram_next_day or args.whatsapp_next_day:
+    # Telegram Workout Dispatcher
+    if args.telegram_today or args.telegram_next_day or args.whatsapp_next_day or (args.date and not args.sheet):
         if args.whatsapp_next_day:
             print("  ℹ️  Note: WhatsApp is deprecated, routing to Telegram dispatcher.")
 
@@ -147,8 +158,15 @@ def main():
         from src.integrations.weather import get_weather_for_date
         from src.integrations.telegram import format_next_day_brief, send_telegram_message
 
-        target_date = date.today() + timedelta(days=1)
-        print(f"✈️ Preparing Next-Day Workout Brief for {target_date}...")
+        if args.date:
+            target_date = date.fromisoformat(args.date)
+        elif args.telegram_today:
+            target_date = date.today()
+        else:
+            target_date = date.today() + timedelta(days=1)
+
+        label = "Today's" if target_date == date.today() else "Next-Day"
+        print(f"✈️ Preparing {label} Workout Brief for {target_date}...")
 
         workout_info = get_planned_workout_for_date(target_date)
         weather_info = get_weather_for_date(target_date)
