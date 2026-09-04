@@ -9,7 +9,7 @@ AI coaching, and Google Sheets synchronization.
 import json
 import os
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,7 +40,7 @@ from src.integrations.strava import (
 from src.integrations.garmin import _load_garmin_cache, get_weekly_health_summaries
 from src.integrations.sheets import get_planned_workout_for_date, write_to_sheet
 from src.integrations.strava_backfill import backfill_all
-from src.integrations.whatsapp import format_next_day_brief, send_whatsapp_message
+from src.integrations.telegram import format_next_day_brief, send_telegram_message
 from src.storage.activity_store import (
     count_activities,
     date_range,
@@ -375,17 +375,21 @@ async def strava_webhook_event(event: dict):
     return {"status": "ok"}
 
 
-class WhatsAppNextDayRequest(BaseModel):
+class TelegramNextDayRequest(BaseModel):
     target_date: str | None = None  # YYYY-MM-DD, defaults to tomorrow
     custom_tip: str | None = None
     dry_run: bool = False
 
 
-@app.post("/api/notifications/whatsapp/next-day")
-def send_next_day_workout_notification(req: WhatsAppNextDayRequest = WhatsAppNextDayRequest()):
+# Backward compatibility alias
+WhatsAppNextDayRequest = TelegramNextDayRequest
+
+
+@app.post("/api/notifications/telegram/next-day")
+def send_telegram_next_day_workout_notification(req: TelegramNextDayRequest = TelegramNextDayRequest()):
     """
     Extract tomorrow's planned workout from Google Sheets, combine with Athens
-    weather forecast and AI coaching advice, and dispatch to athlete's WhatsApp.
+    weather forecast and AI coaching advice, and dispatch to athlete's Telegram.
     """
     if req.target_date:
         try:
@@ -426,7 +430,7 @@ def send_next_day_workout_notification(req: WhatsAppNextDayRequest = WhatsAppNex
             "provider": "dry-run",
         }
 
-    dispatch_res = send_whatsapp_message(brief_text)
+    dispatch_res = send_telegram_message(brief_text)
     return {
         "success": dispatch_res.get("success", False),
         "target_date": t_date.isoformat(),
@@ -434,6 +438,12 @@ def send_next_day_workout_notification(req: WhatsAppNextDayRequest = WhatsAppNex
         "dispatch": dispatch_res,
         "workout_info": workout_info,
     }
+
+
+@app.post("/api/notifications/whatsapp/next-day", deprecated=True)
+def send_next_day_workout_notification_deprecated(req: TelegramNextDayRequest = TelegramNextDayRequest()):
+    """Deprecated endpoint: forwarded to Telegram dispatcher."""
+    return send_telegram_next_day_workout_notification(req)
 
 
 @app.get("/api/weather")

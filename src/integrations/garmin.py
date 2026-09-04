@@ -65,6 +65,7 @@ def get_weekly_health_summary(start_date: date, end_date: date, client: Garmin =
         return None
 
     total_sleep_seconds = 0
+    total_nap_seconds = 0
     valid_sleep_days = 0
     rhr_list = []
     hrv_list = []
@@ -77,13 +78,17 @@ def get_weekly_health_summary(start_date: date, end_date: date, client: Garmin =
     while curr <= end_date:
         date_str = curr.isoformat()
 
-        # 1. Sleep Data
+        # 1. Sleep & Nap Data
         try:
             sleep_data = client.get_sleep_data(date_str)
             if sleep_data and "dailySleepDTO" in sleep_data:
-                sleep_sec = sleep_data["dailySleepDTO"].get("sleepTimeSeconds")
-                if sleep_sec and sleep_sec > 0:
-                    total_sleep_seconds += sleep_sec
+                dto = sleep_data["dailySleepDTO"]
+                sleep_sec = dto.get("sleepTimeSeconds") or 0
+                nap_sec = dto.get("napTimeSeconds") or 0
+                day_total_sleep = sleep_sec + nap_sec
+                if day_total_sleep > 0:
+                    total_sleep_seconds += day_total_sleep
+                    total_nap_seconds += nap_sec
                     valid_sleep_days += 1
         except Exception:
             pass
@@ -171,6 +176,7 @@ def get_weekly_health_summary(start_date: date, end_date: date, client: Garmin =
 
     total_sleep_h = (total_sleep_seconds / 3600.0) if total_sleep_seconds > 0 else None
     avg_sleep_h = (total_sleep_h / valid_sleep_days) if total_sleep_h and valid_sleep_days > 0 else None
+    total_nap_h = (total_nap_seconds / 3600.0) if total_nap_seconds > 0 else None
     avg_rhr = round(sum(rhr_list) / len(rhr_list)) if rhr_list else None
     avg_hrv = round(sum(hrv_list) / len(hrv_list)) if hrv_list else None
     avg_stress = round(sum(stress_list) / len(stress_list)) if stress_list else None
@@ -184,6 +190,7 @@ def get_weekly_health_summary(start_date: date, end_date: date, client: Garmin =
     return {
         "total_sleep_h": total_sleep_h,
         "avg_sleep_h": avg_sleep_h,
+        "total_nap_h": total_nap_h,
         "avg_rhr": avg_rhr,
         "avg_hrv": avg_hrv,
         "avg_stress": avg_stress,

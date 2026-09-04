@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Endurance AI Dashboard — Strava & Garmin Coach</title>
-  <link rel="stylesheet" href="/static/styles.css?v=3.4">
+  <link rel="stylesheet" href="/static/styles.css?v=3.5">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
@@ -22,11 +22,11 @@
         <select id="weekSelector" class="week-selector" aria-label="Select Week">
           <option value="current">Loading...</option>
         </select>
-        <button id="copyReportBtn" class="btn btn-share" title="Copy weekly report for WhatsApp / Coach">
+        <button id="copyReportBtn" class="btn btn-share" title="Copy weekly report for Telegram / Coach">
           <span>📋 Copy Report</span>
         </button>
-        <button id="sendWhatsAppBtn" class="btn btn-share" title="Send tomorrow's workout and weather to WhatsApp">
-          <span>📱 WhatsApp Brief</span>
+        <button id="sendTelegramBtn" class="btn btn-share" title="Send tomorrow's workout and weather to Telegram">
+          <span>✈️ Telegram Brief</span>
         </button>
         <button id="syncSheetBtn" class="btn btn-primary">
           <span>📊 Sync to Google Sheet</span>
@@ -438,6 +438,6 @@ Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
     </div>
   </div>
 
-  <script src="/static/app.js?v=3.4"></script>
+  <script src="/static/app.js?v=3.5"></script>
 </body>
 </html>

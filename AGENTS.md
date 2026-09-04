@@ -118,7 +118,7 @@ strava_to_google_sheet/
 5. **[`src/integrations/garmin.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/integrations/garmin.py)**
    - Connects to Garmin Connect using credentials from `.env` (`GARMIN_EMAIL`, `GARMIN_PASSWORD`).
    - Caches session tokens in `.garmin_tokens/` to prevent repeated logins.
-   - Queries daily sleep seconds, resting heart rate (RHR), and overnight HRV for any week range.
+   - Queries daily sleep seconds (including daytime naps), resting heart rate (RHR), and overnight HRV for any week range.
    - `get_weekly_health_summaries` batches many weeks behind **one** login and
      persists results to `.garmin_cache.json`. Finished weeks are cached
      indefinitely; the in-progress week honours `GARMIN_CACHE_TTL`. Prefer it over

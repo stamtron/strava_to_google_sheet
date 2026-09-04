@@ -111,7 +111,7 @@ function setupEventListeners() {
   document.getElementById("syncSheetBtn").addEventListener("click", handleSheetSync);
   document.getElementById("generateAiBtn").addEventListener("click", handleGenerateAiFeedback);
   document.getElementById("copyReportBtn").addEventListener("click", handleCopyReport);
-  document.getElementById("sendWhatsAppBtn").addEventListener("click", handleSendWhatsApp);
+  document.getElementById("sendTelegramBtn").addEventListener("click", handleSendTelegram);
 
   // AI Coach chat drawer
   document.getElementById("chatLauncher").addEventListener("click", () => toggleChatDrawer(true));
@@ -311,7 +311,8 @@ function renderMetricCards(week, garmin) {
   }
 
   if (garmin && (garmin.total_sleep_h || garmin.avg_rhr || garmin.avg_hrv || garmin.avg_stress || garmin.avg_bb_charged !== null || garmin.avg_bb_drained !== null)) {
-    document.getElementById("metricSleep").textContent = garmin.total_sleep_h ? `${garmin.total_sleep_h.toFixed(1)}h Sleep` : "--h Sleep";
+    const napText = (garmin.total_nap_h && garmin.total_nap_h > 0) ? ` (+${garmin.total_nap_h.toFixed(1)}h naps)` : "";
+    document.getElementById("metricSleep").textContent = garmin.total_sleep_h ? `${garmin.total_sleep_h.toFixed(1)}h Sleep${napText}` : "--h Sleep";
     document.getElementById("metricRhr").textContent = garmin.avg_rhr ? `${garmin.avg_rhr} bpm` : "--";
     document.getElementById("metricHrv").textContent = garmin.avg_hrv ? `${garmin.avg_hrv} ms` : "--";
     
@@ -947,20 +948,20 @@ function handleCopyReport() {
 🤖 AI Coach Status: Readiness ${document.getElementById("readinessScore").textContent}`;
 
   navigator.clipboard.writeText(reportText).then(() => {
-    showToast("📋 Report copied to clipboard (ready for WhatsApp/Coach)!", "success");
+    showToast("📋 Report copied to clipboard (ready for Telegram/Coach)!", "success");
   }).catch(err => {
     showToast("Copy error: " + err.message, "error");
   });
 }
 
-async function handleSendWhatsApp() {
-  const btn = document.getElementById("sendWhatsAppBtn");
+async function handleSendTelegram() {
+  const btn = document.getElementById("sendTelegramBtn");
   const origText = btn.innerHTML;
   btn.disabled = true;
   btn.innerHTML = "<span>⏳ Sending...</span>";
 
   try {
-    const res = await fetch("/api/notifications/whatsapp/next-day", {
+    const res = await fetch("/api/notifications/telegram/next-day", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ dry_run: false }),
@@ -969,12 +970,12 @@ async function handleSendWhatsApp() {
     if (!res.ok) throw new Error(data.detail || "Dispatch failed");
 
     if (data.success) {
-      showToast(`📱 Next-day brief sent to WhatsApp! (${data.target_date})`, "success");
+      showToast(`✈️ Next-day brief sent to Telegram! (${data.target_date})`, "success");
     } else {
-      showToast(`⚠️ WhatsApp: ${data.dispatch ? data.dispatch.detail : 'Dispatched with dry-run'}`, "info");
+      showToast(`⚠️ Telegram: ${data.dispatch ? data.dispatch.detail : 'Dispatched with dry-run'}`, "info");
     }
   } catch (err) {
-    showToast("WhatsApp dispatch error: " + err.message, "error");
+    showToast("Telegram dispatch error: " + err.message, "error");
   } finally {
     btn.disabled = false;
     btn.innerHTML = origText;

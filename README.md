@@ -56,7 +56,7 @@ strava_to_google_sheet/
 - ✅ **Garmin 24/7 Health Metrics**: Automatically fetches total weekly Sleep hours, weekly average Resting Heart Rate (HRrest), overnight HRV, daily Body Battery (charged/drained), and all-day Stress from Garmin Connect.
 - ✅ **80/20 Polarized Training & Zone Distribution (Z1–Z5)**: Computes 5-zone Karvonen Heart Rate Reserve thresholds and tracks weekly low (Z1-Z2) vs tempo (Z3) vs high (Z4-Z5) intensity distribution, detecting Zone 3 tempo traps.
 - ✅ **Daily Weather Integration (Athens, Greece)**: Real-time historical and 7-day forecast daily weather via Open-Meteo (temperature min/max, apparent temp, rain amount/probability, wind speed, WMO condition emojis).
-- ✅ **WhatsApp Next-Day Training Dispatcher**: Reads tomorrow's prescribed workout from Google Sheets, combines it with the Athens weather forecast and an AI coaching tip, and sends a daily brief to WhatsApp via CallMeBot or Twilio.
+- ✅ **Telegram Next-Day Training Dispatcher**: Reads tomorrow's prescribed workout from Google Sheets, combines it with the Athens weather forecast and an AI coaching tip, and sends a daily brief to Telegram via Telegram Bot API.
 - ✅ **Strava Real-Time Webhook Auto-Sync**: Receives incoming activity creation webhooks from Strava, updates the local SQLite store, and automatically syncs to Google Sheets.
 - ✅ **Google Sheets Sync**: Dynamically supports both **Old Single-Row Layout** (rows 13–66) and **New 7-Row Block Layout** (row 67+).
 - ✅ **Appends Below Coach Notes**: Preserves coach training instructions and appends Strava data under `── Strava Data ──`.
@@ -133,7 +133,7 @@ memory that persists indefinitely needs to be inspectable.
 | `POST /api/history/backfill` | Trigger a full history import |
 | `POST /api/sheet/sync` | Google Sheets sync |
 | `GET`/`POST /api/strava/webhook` | Strava real-time webhook handshake and automatic activity sync |
-| `POST /api/notifications/whatsapp/next-day` | Send tomorrow's workout brief + Athens weather + coach tip to WhatsApp |
+| `POST /api/notifications/telegram/next-day` | Send tomorrow's workout brief + Athens weather + coach tip to Telegram |
 
 ---
 

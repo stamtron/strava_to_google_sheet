@@ -121,9 +121,14 @@ def main():
         help="With --backfill, restart the import from page 1 instead of the saved cursor",
     )
     parser.add_argument(
+        "--telegram-next-day",
+        action="store_true",
+        help="Read tomorrow's planned workout from Google Sheets, add Athens weather & tip, and send to Telegram",
+    )
+    parser.add_argument(
         "--whatsapp-next-day",
         action="store_true",
-        help="Read tomorrow's planned workout from Google Sheets, add Athens weather & tip, and send to WhatsApp",
+        help="[Deprecated] Use --telegram-next-day instead",
     )
     parser.add_argument(
         "--dry-run",
@@ -132,15 +137,18 @@ def main():
     )
     args = parser.parse_args()
 
-    # WhatsApp Next-Day Dispatcher
-    if args.whatsapp_next_day:
+    # Telegram Next-Day Dispatcher
+    if args.telegram_next_day or args.whatsapp_next_day:
+        if args.whatsapp_next_day:
+            print("  ℹ️  Note: WhatsApp is deprecated, routing to Telegram dispatcher.")
+
         from datetime import date, timedelta
         from src.integrations.sheets import get_planned_workout_for_date
         from src.integrations.weather import get_weather_for_date
-        from src.integrations.whatsapp import format_next_day_brief, send_whatsapp_message
+        from src.integrations.telegram import format_next_day_brief, send_telegram_message
 
         target_date = date.today() + timedelta(days=1)
-        print(f"📱 Preparing Next-Day Workout Brief for {target_date}...")
+        print(f"✈️ Preparing Next-Day Workout Brief for {target_date}...")
 
         workout_info = get_planned_workout_for_date(target_date)
         weather_info = get_weather_for_date(target_date)
@@ -166,11 +174,11 @@ def main():
         )
 
         if args.dry_run:
-            print("\n📋 [WhatsApp Next-Day Preview (Dry Run)]")
+            print("\n📋 [Telegram Next-Day Preview (Dry Run)]")
             print(brief)
             return 0
 
-        res = send_whatsapp_message(brief)
+        res = send_telegram_message(brief)
         print(f"  Result: {res.get('detail')}")
         return 0 if res.get("success") else 1
 

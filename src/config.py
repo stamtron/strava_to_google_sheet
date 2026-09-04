@@ -210,12 +210,7 @@ ATHLETE_RACE_BIKE_SPEED_KMH = _env_float("ATHLETE_RACE_BIKE_SPEED_KMH", 32.5)
 STRAVA_WEBHOOK_VERIFY_TOKEN = os.getenv("STRAVA_WEBHOOK_VERIFY_TOKEN", "STRAVA_WEBHOOK_SECRET").strip()
 AUTO_SYNC_SHEET_ON_WEBHOOK = _env_bool("AUTO_SYNC_SHEET_ON_WEBHOOK", False)
 
-# WhatsApp Notifications & Next-Day Workout Dispatcher
-# Provider: 'callmebot' (default, free personal bot), 'twilio', or 'console' (dry-run)
-WHATSAPP_PROVIDER = os.getenv("WHATSAPP_PROVIDER", "callmebot").strip().lower()
-CALLMEBOT_PHONE = os.getenv("CALLMEBOT_PHONE", "").strip()
-CALLMEBOT_API_KEY = os.getenv("CALLMEBOT_API_KEY", "").strip()
-TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
-TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
-TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "").strip()
-TWILIO_WHATSAPP_TO = os.getenv("TWILIO_WHATSAPP_TO", "").strip()
+# Telegram Notifications & Next-Day Workout Dispatcher
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+
