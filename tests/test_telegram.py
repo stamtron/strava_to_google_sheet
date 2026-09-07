@@ -183,3 +183,20 @@ def test_whatsapp_deprecated_api_endpoint_routes_to_telegram():
     assert data["success"] is True
     assert "preview" in data
 
+
+def test_handle_telegram_command_help():
+    from src.integrations.telegram import handle_telegram_command
+    res = handle_telegram_command("/help")
+    assert "Endurance AI Telegram Assistant" in res
+    assert "/today" in res
+    assert "/sync" in res
+    assert "/gear" in res
+
+
+def test_handle_telegram_command_unauthorized(monkeypatch):
+    from src.integrations.telegram import handle_telegram_command
+    monkeypatch.setattr("src.integrations.telegram.TELEGRAM_CHAT_ID", "12345")
+    res = handle_telegram_command("/today", chat_id="99999")
+    assert "Δεν έχεις δικαίωμα πρόσβασης" in res
+
+

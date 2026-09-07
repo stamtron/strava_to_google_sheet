@@ -6,7 +6,10 @@ Relative Effort & ACWR tracking, multi-week progression analytics,
 AI coaching, and Google Sheets synchronization.
 """
 
+import asyncio
+from contextlib import asynccontextmanager
 import json
+import logging
 import os
 import time
 from datetime import date, datetime, timedelta
@@ -16,6 +19,48 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+server_logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifecycle manager running background Telegram bot poller and auto-dispatcher."""
+    async def telegram_worker():
+        from src.integrations.telegram import (
+            poll_telegram_updates,
+            process_incoming_update,
+            run_daily_dispatch_check,
+        )
+
+        offset = 0
+        server_logger.info("Starting Telegram bot background poller and daily scheduler...")
+        while True:
+            try:
+                # 1. Check if it is time to dispatch daily workout brief
+                await asyncio.to_thread(run_daily_dispatch_check)
+
+                # 2. Poll for incoming athlete commands from Telegram
+                offset, updates = await asyncio.to_thread(poll_telegram_updates, offset=offset, timeout=10)
+                for u in updates:
+                    await asyncio.to_thread(process_incoming_update, u)
+                await asyncio.sleep(0.5)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                server_logger.debug("Telegram worker error: %s", e)
+                await asyncio.sleep(5)
+
+    task = asyncio.create_task(telegram_worker())
+    yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+app = FastAPI(title="Endurance AI Training API", version="2.0.0", lifespan=lifespan)
 
 from src.config import (
     ACTIVITIES_CACHE_FILE,
@@ -75,8 +120,6 @@ from src.analytics.coach_agent import (
     forget_remembered_fact,
     list_remembered_facts,
 )
-
-app = FastAPI(title="Endurance AI Training API", version="2.0.0")
 
 # Explicit origins, credentials off: the API is unauthenticated, so a wildcard
 # origin with credentials would let any page the browser visits read this data.
@@ -646,6 +689,56 @@ def sync_google_sheets(req: SyncRequest):
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+@app.get("/api/compliance")
+def get_workout_compliance(target_date: str = Query(default_factory=lambda: date.today().isoformat())):
+    """Evaluate plan vs actual workout execution fidelity for target_date."""
+    try:
+        d = date.fromisoformat(target_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format, expected YYYY-MM-DD")
+
+    planned_info = get_planned_workout_for_date(d)
+    planned_text = planned_info.get("workout_text", "")
+
+    cache = _load_cache()
+    activities = cache.get("activities", [])
+    if not activities:
+        conn = init_db()
+        try:
+            activities = store_get_activities(conn, limit=120)
+        finally:
+            conn.close()
+
+    day_activities = [
+        a for a in activities
+        if (a.get("start_date_local") or "").startswith(target_date)
+    ]
+
+    from src.analytics.compliance import evaluate_daily_compliance
+    result = evaluate_daily_compliance(planned_text, day_activities)
+    result["date"] = target_date
+    result["planned_raw"] = planned_text
+    return result
+
+
+@app.get("/api/gear")
+def get_gear_tracker():
+    """Return equipment and shoe mileage statistics."""
+    cache = _load_cache()
+    activities = cache.get("activities", [])
+    details = cache.get("details", {})
+    if not activities:
+        conn = init_db()
+        try:
+            activities = store_get_activities(conn, limit=250)
+            details = get_details(conn)
+        finally:
+            conn.close()
+
+    from src.analytics.gear import extract_gear_summary
+    return {"gear": extract_gear_summary(activities, details)}
+
+
 # Serve Static UI
 if os.path.exists(WEB_DIR):
     app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
@@ -657,3 +750,12 @@ def serve_index():
     if os.path.exists(index_file):
         return FileResponse(index_file)
     return {"message": "Web app frontend building in progress..."}
+
+
+@app.get("/favicon.ico")
+def serve_favicon():
+    favicon_file = os.path.join(WEB_DIR, "favicon.svg")
+    if os.path.exists(favicon_file):
+        return FileResponse(favicon_file, media_type="image/svg+xml")
+    raise HTTPException(status_code=404, detail="Favicon not found")
+

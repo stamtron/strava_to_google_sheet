@@ -5,6 +5,7 @@ Entry point for terminal-based activity logging and Google Sheets synchronizatio
 """
 
 import argparse
+import time
 from collections import defaultdict
 
 from src.config import STRAVA_DETAIL_DELAY_SEC
@@ -142,11 +143,32 @@ def main():
         help="[Deprecated] Use --telegram-next-day instead",
     )
     parser.add_argument(
+        "--telegram-bot",
+        action="store_true",
+        help="Run the interactive two-way Telegram bot polling worker",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Preview actions without sending external notifications or writing data",
     )
     args = parser.parse_args()
+
+    # Standalone interactive Telegram bot listener
+    if args.telegram_bot:
+        from src.integrations.telegram import poll_telegram_updates, process_incoming_update, run_daily_dispatch_check
+        print("🤖 Starting interactive Telegram bot worker (Ctrl+C to stop)...")
+        offset = 0
+        try:
+            while True:
+                run_daily_dispatch_check()
+                offset, updates = poll_telegram_updates(offset=offset, timeout=10)
+                for u in updates:
+                    process_incoming_update(u)
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            print("\n👋 Telegram bot stopped.")
+            return 0
 
     # Telegram Workout Dispatcher
     if args.telegram_today or args.telegram_next_day or args.whatsapp_next_day or (args.date and not args.sheet):

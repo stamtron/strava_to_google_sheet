@@ -7,6 +7,7 @@ and race predictions using LLMs (Gemini) with robust heuristic fallbacks.
 
 import json
 import math
+import time
 
 from src.config import (
     ATHLETE_PB_10K_SEC,
@@ -407,22 +408,28 @@ Please return a JSON response with:
 4. "readiness_score": Integer from 1-100.
 """
         for model_name in GEMINI_MODELS:
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config={"response_mime_type": "application/json"}
-                )
-                data = json.loads(response.text)
-                return {
-                    "feedback": data.get("feedback", ""),
-                    "readiness_evaluation": data.get("readiness_evaluation", ""),
-                    "recommendations": data.get("recommendations", []),
-                    "readiness_score": data.get("readiness_score", readiness_score),
-                    "source": model_name,
-                }
-            except Exception as e:
-                print(f"⚠️  Gemini call with {model_name} failed: {e}")
+            for attempt in range(2):
+                try:
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=prompt,
+                        config={"response_mime_type": "application/json"}
+                    )
+                    data = json.loads(response.text)
+                    return {
+                        "feedback": data.get("feedback", ""),
+                        "readiness_evaluation": data.get("readiness_evaluation", ""),
+                        "recommendations": data.get("recommendations", []),
+                        "readiness_score": data.get("readiness_score", readiness_score),
+                        "source": model_name,
+                    }
+                except Exception as e:
+                    err_msg = str(e)
+                    if ("503" in err_msg or "UNAVAILABLE" in err_msg or "429" in err_msg) and attempt == 0:
+                        time.sleep(1.5)
+                        continue
+                    print(f"⚠️  Gemini call with {model_name} failed: {e}")
+                    break
 
     # Heuristic Coach Fallback
     feedback_text = (

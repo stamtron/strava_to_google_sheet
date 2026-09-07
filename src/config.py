@@ -150,15 +150,14 @@ AQUA_JOG_LOAD_FACTOR = _env_float("AQUA_JOG_LOAD_FACTOR", 0.90)
 BIKE_RUN_LOAD_FACTOR = _env_float("BIKE_RUN_LOAD_FACTOR", 0.55)
 
 # Gemini models tried in order for AI coaching. Google retires model IDs on a
-# rolling basis (gemini-2.0-flash now 404s), so the list is a fallback chain and
-# the newest generation goes first.
-GEMINI_MODELS = _env_list("GEMINI_MODELS", ["gemini-3.6-flash", "gemini-2.5-flash"])
+# rolling basis, so the list is a fallback chain and the newest generation goes first.
+GEMINI_MODELS = _env_list("GEMINI_MODELS", ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-flash-latest"])
 
 # Conversational coach (POST /api/ai/chat).
 # A separate model list from GEMINI_MODELS: the chat agent needs function
 # calling, so a model that can serve the one-shot weekly panel is not
 # automatically a valid choice here.
-COACH_CHAT_MODELS = _env_list("COACH_CHAT_MODELS", ["gemini-3.6-flash", "gemini-2.5-flash"])
+COACH_CHAT_MODELS = _env_list("COACH_CHAT_MODELS", ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-flash-latest"])
 # Ceiling on the automatic tool-calling loop for one turn. Without it a model
 # that keeps re-querying its own data can spend an unbounded number of requests
 # on a single question.
@@ -213,4 +212,11 @@ AUTO_SYNC_SHEET_ON_WEBHOOK = _env_bool("AUTO_SYNC_SHEET_ON_WEBHOOK", False)
 # Telegram Notifications & Next-Day Workout Dispatcher
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+TELEGRAM_DAILY_DISPATCH_TIME = os.getenv("TELEGRAM_DAILY_DISPATCH_TIME", "20:30").strip()
+
+# Google Sheets API resilience
+GSHEETS_MAX_RETRIES = _env_int("GSHEETS_MAX_RETRIES", 3)
+
+# Gear & shoe alerts
+SHOE_ALERT_KM = _env_int("SHOE_ALERT_KM", 650)
 

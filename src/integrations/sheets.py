@@ -8,6 +8,7 @@ and writes formatted Strava & Garmin training data.
 
 import os
 import re
+import time
 from datetime import date, datetime, timedelta
 
 from google.auth.exceptions import RefreshError
@@ -15,10 +16,12 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 from src.config import (
     BIKE_SPORTS,
     CREDENTIALS_FILE,
+    GSHEETS_MAX_RETRIES,
     GSHEETS_SCOPES,
     GSHEETS_TOKEN_FILE,
     GOOGLE_SHEET_ID,
@@ -34,6 +37,30 @@ from src.formatting import (
     format_pace,
 )
 from src.integrations.garmin import get_weekly_health_summaries
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def execute_with_retry(request, retries: int = GSHEETS_MAX_RETRIES, delay_sec: float = 1.5):
+    """Execute a Google API request with automatic retries on transient errors."""
+    for attempt in range(retries):
+        try:
+            return request.execute()
+        except HttpError as e:
+            status = getattr(e.resp, "status", None)
+            if status in (500, 502, 503, 504, 429) and attempt < retries - 1:
+                sleep_time = delay_sec * (2 ** attempt)
+                logger.warning(
+                    "Google Sheets API transient error (HTTP %s). Retrying in %.1fs (attempt %d/%d)...",
+                    status,
+                    sleep_time,
+                    attempt + 1,
+                    retries,
+                )
+                time.sleep(sleep_time)
+                continue
+            raise
 
 
 def _get_week_start(d: date) -> date:
@@ -239,10 +266,12 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
     print("\n📊 Syncing to Google Sheet...")
 
     # Fetch Column A to map week dates
-    result = sheet.values().get(
-        spreadsheetId=GOOGLE_SHEET_ID,
-        range=f"'{SHEET_NAME}'!A13:A120",
-    ).execute()
+    result = execute_with_retry(
+        sheet.values().get(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range=f"'{SHEET_NAME}'!A13:A120",
+        )
+    )
     col_a = result.get("values", [])
 
     week_map = {}
@@ -291,10 +320,12 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
     layout_check_ranges = [f"'{SHEET_NAME}'!A{r+4}" for r in unique_week_rows]
     layout_by_row = {}
     if layout_check_ranges:
-        layout_res = sheet.values().batchGet(
-            spreadsheetId=GOOGLE_SHEET_ID,
-            ranges=layout_check_ranges,
-        ).execute()
+        layout_res = execute_with_retry(
+            sheet.values().batchGet(
+                spreadsheetId=GOOGLE_SHEET_ID,
+                ranges=layout_check_ranges,
+            )
+        )
 
         for vr, r in zip(layout_res.get("valueRanges", []), unique_week_rows):
             vals = vr.get("values", [[]])
@@ -322,10 +353,12 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
 
     existing_values = {}
     if read_ranges:
-        batch_get_res = sheet.values().batchGet(
-            spreadsheetId=GOOGLE_SHEET_ID,
-            ranges=list(set(read_ranges)),
-        ).execute()
+        batch_get_res = execute_with_retry(
+            sheet.values().batchGet(
+                spreadsheetId=GOOGLE_SHEET_ID,
+                ranges=list(set(read_ranges)),
+            )
+        )
         for vr in batch_get_res.get("valueRanges", []):
             range_key = vr.get("range", "")
             vals = vr.get("values", [[]])
@@ -536,10 +569,8 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
 
     if updates:
         body = {"valueInputOption": "RAW", "data": updates}
-        result = (
-            sheet.values()
-            .batchUpdate(spreadsheetId=GOOGLE_SHEET_ID, body=body)
-            .execute()
+        result = execute_with_retry(
+            sheet.values().batchUpdate(spreadsheetId=GOOGLE_SHEET_ID, body=body)
         )
         updated_count = result.get("totalUpdatedCells", len(updates))
         print(f"\n✅ Updated {updated_count} cells in Google Sheets!")
@@ -563,10 +594,12 @@ def get_planned_workout_for_date(target_date: date) -> dict:
         service = get_sheets_service(interactive=False)
         sheet = service.spreadsheets()
 
-        result = sheet.values().get(
-            spreadsheetId=GOOGLE_SHEET_ID,
-            range=f"'{SHEET_NAME}'!A13:A150",
-        ).execute()
+        result = execute_with_retry(
+            sheet.values().get(
+                spreadsheetId=GOOGLE_SHEET_ID,
+                range=f"'{SHEET_NAME}'!A13:A150",
+            )
+        )
         col_a = result.get("values", [])
 
         week_map = {}
@@ -592,28 +625,34 @@ def get_planned_workout_for_date(target_date: date) -> dict:
         col = col_letters[target_date.weekday()]
 
         # Check if new block layout or old
-        a4_check = sheet.values().get(
-            spreadsheetId=GOOGLE_SHEET_ID,
-            range=f"'{SHEET_NAME}'!A{r+4}",
-        ).execute().get("values", [[]])
+        a4_check = execute_with_retry(
+            sheet.values().get(
+                spreadsheetId=GOOGLE_SHEET_ID,
+                range=f"'{SHEET_NAME}'!A{r+4}",
+            )
+        ).get("values", [[]])
         val_a4 = a4_check[0][0] if a4_check and a4_check[0] else ""
         is_new = "ΑΝΑΤΡΟΦΟΔΟΤΗΣΗ" in val_a4 or "FEEDBACK" in val_a4 or r >= 67
 
         if is_new:
             # In new block layout, planned workouts can span rows r+1 to r+3
-            read_res = sheet.values().get(
-                spreadsheetId=GOOGLE_SHEET_ID,
-                range=f"'{SHEET_NAME}'!{col}{r+1}:{col}{r+3}",
-            ).execute()
+            read_res = execute_with_retry(
+                sheet.values().get(
+                    spreadsheetId=GOOGLE_SHEET_ID,
+                    range=f"'{SHEET_NAME}'!{col}{r+1}:{col}{r+3}",
+                )
+            )
             rows_val = read_res.get("values", [])
             lines = [row[0].strip() for row in rows_val if row and row[0].strip()]
             workout_text = "\n".join(lines)
         else:
             # In old layout, read row r and strip Strava section if already present
-            read_res = sheet.values().get(
-                spreadsheetId=GOOGLE_SHEET_ID,
-                range=f"'{SHEET_NAME}'!{col}{r}",
-            ).execute()
+            read_res = execute_with_retry(
+                sheet.values().get(
+                    spreadsheetId=GOOGLE_SHEET_ID,
+                    range=f"'{SHEET_NAME}'!{col}{r}",
+                )
+            )
             vals = read_res.get("values", [[]])
             raw_text = vals[0][0] if vals and vals[0] else ""
             if "── Strava Data ──" in raw_text:

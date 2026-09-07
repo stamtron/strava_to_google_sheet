@@ -628,7 +628,7 @@ def test_the_next_model_is_tried_when_the_first_fails(provider, conn):
     client = FakeClient(replies=["Second model answered."], failing_models=[COACH_CHAT_MODELS[0]])
     result = _chat("Question?", client, conn, provider)
     assert result["source_model"] == COACH_CHAT_MODELS[1]
-    assert [model for model, _ in client.sent] == list(COACH_CHAT_MODELS)
+    assert [model for model, _ in client.sent] == list(COACH_CHAT_MODELS[:2])
 
 
 def test_an_empty_reply_counts_as_a_failure(provider, conn):

@@ -30,6 +30,7 @@ Design notes:
 """
 
 import json
+import time
 from datetime import date, timedelta
 
 from src.config import (
@@ -787,17 +788,27 @@ def chat(
 
         reply, model_used, failures = "", None, []
         for model_name in COACH_CHAT_MODELS:
-            try:
-                session = client.chats.create(model=model_name, config=config, history=history)
-                response = session.send_message(message)
-                text = (getattr(response, "text", None) or "").strip()
-                if not text:
-                    raise RuntimeError("empty reply")
-                reply, model_used = text, model_name
+            succeeded = False
+            for attempt in range(2):
+                try:
+                    session = client.chats.create(model=model_name, config=config, history=history)
+                    response = session.send_message(message)
+                    text = (getattr(response, "text", None) or "").strip()
+                    if not text:
+                        raise RuntimeError("empty reply")
+                    reply, model_used = text, model_name
+                    succeeded = True
+                    break
+                except Exception as e:  # noqa: BLE001 - try the next model, then give up
+                    err_msg = str(e)
+                    if ("503" in err_msg or "UNAVAILABLE" in err_msg or "429" in err_msg) and attempt == 0:
+                        time.sleep(1.5)
+                        continue
+                    failures.append(f"{model_name}: {e}")
+                    print(f"⚠️  Coach chat with {model_name} failed: {e}")
+                    break
+            if succeeded:
                 break
-            except Exception as e:  # noqa: BLE001 - try the next model, then give up
-                failures.append(f"{model_name}: {e}")
-                print(f"⚠️  Coach chat with {model_name} failed: {e}")
 
         if not model_used:
             # Every model's error, not just the last: when Google retires an ID the
