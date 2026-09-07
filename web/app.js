@@ -130,12 +130,49 @@ function setupEventListeners() {
     });
   }
 
+  const compPrevBtn = document.getElementById("compPrevDayBtn");
+  if (compPrevBtn) {
+    compPrevBtn.addEventListener("click", () => {
+      const picker = document.getElementById("complianceDatePicker");
+      const cur = picker?.value || getLocalDateString();
+      const [y, m, d] = cur.split("-").map(Number);
+      const prev = new Date(y, m - 1, d - 1);
+      const prevStr = getLocalDateString(prev);
+      if (picker) picker.value = prevStr;
+      loadCompliance(prevStr);
+    });
+  }
+
+  const compNextBtn = document.getElementById("compNextDayBtn");
+  if (compNextBtn) {
+    compNextBtn.addEventListener("click", () => {
+      const picker = document.getElementById("complianceDatePicker");
+      const cur = picker?.value || getLocalDateString();
+      const [y, m, d] = cur.split("-").map(Number);
+      const next = new Date(y, m - 1, d + 1);
+      const nextStr = getLocalDateString(next);
+      if (picker) picker.value = nextStr;
+      loadCompliance(nextStr);
+    });
+  }
+
+  const compTodayBtn = document.getElementById("compTodayBtn");
+  if (compTodayBtn) {
+    compTodayBtn.addEventListener("click", () => {
+      const todayStr = getLocalDateString();
+      const picker = document.getElementById("complianceDatePicker");
+      if (picker) picker.value = todayStr;
+      loadCompliance(todayStr);
+    });
+  }
+
   const compPicker = document.getElementById("complianceDatePicker");
   if (compPicker) {
-    compPicker.addEventListener("change", (e) => {
-      const val = e.target.value || getLocalDateString();
-      loadCompliance(val);
-    });
+    const handlePickerChange = (e) => {
+      if (e.target.value) loadCompliance(e.target.value);
+    };
+    compPicker.addEventListener("change", handlePickerChange);
+    compPicker.addEventListener("input", handlePickerChange);
   }
 
   // AI Coach chat drawer
@@ -470,6 +507,13 @@ function renderCalendar(week) {
 
     const col = document.createElement("div");
     col.className = `day-column ${isToday ? "today" : ""}`;
+    col.dataset.date = dateStr;
+    col.setAttribute("title", `Click to evaluate workout execution for ${dateStr}`);
+    col.addEventListener("click", () => {
+      const picker = document.getElementById("complianceDatePicker");
+      if (picker) picker.value = dateStr;
+      loadCompliance(dateStr);
+    });
 
     const header = document.createElement("div");
     header.className = "day-header";
@@ -1036,6 +1080,17 @@ async function handleSendTelegramToday() {
   }
 }
 
+function highlightCalendarDay(dateStr) {
+  if (!dateStr) return;
+  document.querySelectorAll(".day-column").forEach((el) => {
+    if (el.dataset.date === dateStr) {
+      el.classList.add("active-day");
+    } else {
+      el.classList.remove("active-day");
+    }
+  });
+}
+
 function initComplianceDate() {
   const picker = document.getElementById("complianceDatePicker");
   if (picker && !picker.value) {
@@ -1052,6 +1107,8 @@ async function loadCompliance(targetDate) {
   const dateToFetch = targetDate || (document.getElementById("complianceDatePicker")?.value) || getLocalDateString();
   const picker = document.getElementById("complianceDatePicker");
   if (picker && !picker.value) picker.value = dateToFetch;
+
+  highlightCalendarDay(dateToFetch);
 
   if (checkBtn) {
     checkBtn.disabled = true;

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Endurance AI Dashboard — Strava & Garmin Coach</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <link rel="stylesheet" href="/static/styles.css?v=3.7">
+  <link rel="stylesheet" href="/static/styles.css?v=3.8">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
@@ -192,9 +192,18 @@
               <h2 class="section-title">🎯 Workout Execution & Plan Compliance</h2>
               <span id="complianceScoreBadge" class="acwr-badge badge-unknown" style="display: none;">--</span>
             </div>
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <input type="date" id="complianceDatePicker" class="date-picker-input" />
-              <button id="checkComplianceBtn" class="btn btn-share" style="padding: 4px 10px; font-size: 12px;">🔄 Check</button>
+            <div class="compliance-date-toolbar">
+              <div class="date-nav-group">
+                <button id="compPrevDayBtn" class="btn-icon-nav" title="Previous Day">◀</button>
+                <button id="compTodayBtn" class="btn-date-quick" title="Jump to Today">Today</button>
+                <button id="compNextDayBtn" class="btn-icon-nav" title="Next Day">▶</button>
+              </div>
+              <div class="date-input-wrapper">
+                <input type="date" id="complianceDatePicker" class="date-picker-input" />
+              </div>
+              <button id="checkComplianceBtn" class="btn btn-share btn-compact" title="Re-evaluate Workout Compliance">
+                <span>🔄 Check</span>
+              </button>
             </div>
           </div>
           <div id="complianceContent" class="compliance-content">
@@ -460,6 +469,6 @@ Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
     </div>
   </div>
 
-  <script src="/static/app.js?v=3.7"></script>
+  <script src="/static/app.js?v=3.8"></script>
 </body>
 </html>
