@@ -483,6 +483,14 @@ def send_telegram_next_day_workout_notification(req: TelegramNextDayRequest = Te
     }
 
 
+@app.post("/api/notifications/telegram/today")
+def send_telegram_today_workout_notification(req: TelegramNextDayRequest = TelegramNextDayRequest()):
+    """Dispatch today's planned workout brief + weather + coach tip to athlete's Telegram."""
+    if not req.target_date:
+        req.target_date = date.today().isoformat()
+    return send_telegram_next_day_workout_notification(req)
+
+
 @app.post("/api/notifications/whatsapp/next-day", deprecated=True)
 def send_next_day_workout_notification_deprecated(req: TelegramNextDayRequest = TelegramNextDayRequest()):
     """Deprecated endpoint: forwarded to Telegram dispatcher."""

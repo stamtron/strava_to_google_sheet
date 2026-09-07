@@ -200,3 +200,17 @@ def test_handle_telegram_command_unauthorized(monkeypatch):
     assert "Δεν έχεις δικαίωμα πρόσβασης" in res
 
 
+def test_telegram_today_api_endpoint_dry_run():
+    from fastapi.testclient import TestClient
+    from src.api.server import app
+
+    client = TestClient(app)
+    resp = client.post("/api/notifications/telegram/today", json={"dry_run": True})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    assert "preview" in data
+    assert data["provider"] == "dry-run"
+
+
+

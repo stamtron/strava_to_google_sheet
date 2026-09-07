@@ -101,6 +101,11 @@ async function initApp() {
   // Outside the try: a separate endpoint on its own error path, so a durability
   // failure neither blanks the dashboard nor is masked by a dashboard failure.
   fetchDurability();
+
+  // Load workout plan compliance & gear monitor
+  initComplianceDate();
+  loadCompliance();
+  loadGearTracker();
 }
 
 function setupEventListeners() {
@@ -112,6 +117,24 @@ function setupEventListeners() {
   document.getElementById("generateAiBtn").addEventListener("click", handleGenerateAiFeedback);
   document.getElementById("copyReportBtn").addEventListener("click", handleCopyReport);
   document.getElementById("sendTelegramBtn").addEventListener("click", handleSendTelegram);
+
+  const todayBtn = document.getElementById("sendTelegramTodayBtn");
+  if (todayBtn) todayBtn.addEventListener("click", handleSendTelegramToday);
+
+  const checkCompBtn = document.getElementById("checkComplianceBtn");
+  if (checkCompBtn) {
+    checkCompBtn.addEventListener("click", () => {
+      const picker = document.getElementById("complianceDatePicker");
+      if (picker && picker.value) loadCompliance(picker.value);
+    });
+  }
+
+  const compPicker = document.getElementById("complianceDatePicker");
+  if (compPicker) {
+    compPicker.addEventListener("change", (e) => {
+      if (e.target.value) loadCompliance(e.target.value);
+    });
+  }
 
   // AI Coach chat drawer
   document.getElementById("chatLauncher").addEventListener("click", () => toggleChatDrawer(true));
@@ -979,6 +1002,202 @@ async function handleSendTelegram() {
   } finally {
     btn.disabled = false;
     btn.innerHTML = origText;
+  }
+}
+
+async function handleSendTelegramToday() {
+  const btn = document.getElementById("sendTelegramTodayBtn");
+  if (!btn) return;
+  const origText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = "<span>⏳ Sending...</span>";
+
+  try {
+    const res = await fetch("/api/notifications/telegram/today", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dry_run: false }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Dispatch failed");
+
+    if (data.success) {
+      showToast(`✈️ Today's workout brief sent to Telegram! (${data.target_date})`, "success");
+    } else {
+      showToast(`⚠️ Telegram: ${data.dispatch ? data.dispatch.detail : 'Dispatched with dry-run'}`, "info");
+    }
+  } catch (err) {
+    showToast("Telegram dispatch error: " + err.message, "error");
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = origText;
+  }
+}
+
+function initComplianceDate() {
+  const picker = document.getElementById("complianceDatePicker");
+  if (picker && !picker.value) {
+    picker.value = new Date().toISOString().slice(0, 10);
+  }
+}
+
+async function loadCompliance(targetDate) {
+  const contentEl = document.getElementById("complianceContent");
+  const badgeEl = document.getElementById("complianceScoreBadge");
+  if (!contentEl) return;
+
+  const dateToFetch = targetDate || (document.getElementById("complianceDatePicker")?.value) || new Date().toISOString().slice(0, 10);
+  contentEl.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 16px;">Loading workout compliance for ${dateToFetch}...</div>`;
+
+  try {
+    const res = await fetch(`/api/compliance?target_date=${encodeURIComponent(dateToFetch)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    const score = data.compliance_score !== undefined ? data.compliance_score : 100;
+    const status = data.status || "evaluated";
+
+    let badgeClass = "badge-optimal";
+    let badgeText = `${score}% Spot-on`;
+    if (status === "rest_day_honored") {
+      badgeClass = "badge-low";
+      badgeText = "100% Rest Honored";
+    } else if (status === "rest_day_broken") {
+      badgeClass = "badge-spike";
+      badgeText = `${score}% Rest Broken`;
+    } else if (score < 75) {
+      badgeClass = "badge-overreach";
+      badgeText = `${score}% Under/Over`;
+    }
+
+    if (badgeEl) {
+      badgeEl.className = `acwr-badge ${badgeClass}`;
+      badgeEl.textContent = badgeText;
+    }
+
+    const plannedRaw = data.planned_raw ? escapeHtml(data.planned_raw) : "<em>Rest Day or no scheduled workout found in sheet.</em>";
+
+    let matchesHtml = "";
+    if (data.matches && data.matches.length > 0) {
+      matchesHtml = data.matches.map(m => {
+        const tagClass = m.status === "spot_on" ? "tag-spot-on" : (m.status === "overreach" ? "tag-overreach" : "tag-underreach");
+        const paceDiff = (m.pace_diff_sec !== null && m.pace_diff_sec !== undefined)
+          ? ` • Pace Diff: <strong>${m.pace_diff_sec > 0 ? "+" : ""}${m.pace_diff_sec}s/km</strong>`
+          : "";
+        return `
+          <div style="margin-bottom: 8px;">
+            <span class="compliance-match-tag ${tagClass}">${m.sport.toUpperCase()}: ${m.status.replace("_", " ").toUpperCase()}</span>
+            <span style="font-size: 12px; color: var(--text-secondary); margin-left: 6px;">
+              Actual: <strong>${m.actual_km} km</strong> (Planned: ${m.planned_km || "--"} km)${paceDiff}
+            </span>
+          </div>
+        `;
+      }).join("");
+    } else if (status === "rest_day_honored") {
+      matchesHtml = `<div style="font-size: 12px; color: #a855f7;">• Recovery day honored. No strenuous sessions logged.</div>`;
+    } else if (data.unmatched_actual && data.unmatched_actual.length > 0) {
+      matchesHtml = `<div style="font-size: 12px; color: var(--text-muted);">Unplanned activities: ${data.unmatched_actual.map(escapeHtml).join(", ")}</div>`;
+    } else {
+      matchesHtml = `<div style="font-size: 12px; color: var(--text-muted);">No Strava activity recorded for this date.</div>`;
+    }
+
+    contentEl.innerHTML = `
+      <div class="compliance-grid">
+        <div class="compliance-box">
+          <div class="compliance-box-title">
+            <span>📋 Prescribed Plan (Coach)</span>
+            <span style="font-size: 11px; color: var(--text-muted);">${dateToFetch}</span>
+          </div>
+          <div class="compliance-box-body">${plannedRaw}</div>
+        </div>
+        <div class="compliance-box">
+          <div class="compliance-box-title">
+            <span>⚡ Strava Execution</span>
+            <span style="font-size: 11px; color: var(--text-muted);">${data.matches ? data.matches.length : 0} session(s)</span>
+          </div>
+          <div class="compliance-box-body">${matchesHtml}</div>
+        </div>
+      </div>
+      <div class="compliance-summary-box">
+        <span style="font-size: 20px;">💡</span>
+        <div><strong>Execution Summary:</strong> ${escapeHtml(data.summary || "Workout evaluation completed.")}</div>
+      </div>
+    `;
+  } catch (err) {
+    contentEl.innerHTML = `<div style="color: #ef4444; padding: 12px; font-size: 13px;">Failed to evaluate workout compliance: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function loadGearTracker() {
+  const gridEl = document.getElementById("gearGrid");
+  const badgeEl = document.getElementById("gearAlertBadge");
+  if (!gridEl) return;
+
+  try {
+    const res = await fetch("/api/gear");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const gearList = data.gear || [];
+
+    if (gearList.length === 0) {
+      gridEl.innerHTML = `<div style="color: var(--text-muted); font-size: 13px; grid-column: 1 / -1; padding: 12px;">No active shoes or bikes with Strava gear_id detected in history.</div>`;
+      return;
+    }
+
+    let hasAlert = false;
+    gridEl.innerHTML = gearList.map(g => {
+      const pct = Math.min(100, Math.round((g.total_km / g.threshold_km) * 100));
+      let fillClass = "fill-optimal";
+      let statusBadge = `<span class="compliance-match-tag tag-spot-on">Optimal</span>`;
+
+      if (g.alert) {
+        hasAlert = true;
+        fillClass = "fill-retire";
+        statusBadge = `<span class="compliance-match-tag tag-overreach">⚠️ Retire</span>`;
+      } else if (g.status === "warning") {
+        fillClass = "fill-warning";
+        statusBadge = `<span class="compliance-match-tag tag-underreach">Wear Warning</span>`;
+      }
+
+      const icon = g.gear_type === "Shoes" ? "👟" : (g.gear_type === "Bike" ? "🚴" : "⚙️");
+      const cardAlertClass = g.alert ? "alert-retire" : "";
+
+      return `
+        <div class="gear-card ${cardAlertClass}">
+          <div class="gear-card-header">
+            <div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span>${icon}</span>
+                <span class="gear-name">${escapeHtml(g.name)}</span>
+              </div>
+              <span style="font-size: 11px; color: var(--text-muted);">${g.activity_count} activities • since ${g.first_used || "--"}</span>
+            </div>
+            ${statusBadge}
+          </div>
+          <div class="gear-bar-wrap" title="${pct}% of threshold">
+            <div class="gear-bar-fill ${fillClass}" style="width: ${pct}%;"></div>
+          </div>
+          <div class="gear-stats-row">
+            <span><strong>${g.total_km} km</strong> / ${g.threshold_km} km</span>
+            <span>${g.remaining_km} km left (${100 - pct}%)</span>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    if (badgeEl) {
+      if (hasAlert) {
+        badgeEl.textContent = "⚠️ Shoes Need Retirement!";
+        badgeEl.style.borderColor = "rgba(239, 68, 68, 0.5)";
+        badgeEl.style.color = "#ef4444";
+      } else {
+        badgeEl.textContent = `${gearList.length} Active Items`;
+        badgeEl.style.borderColor = "rgba(255, 255, 255, 0.1)";
+        badgeEl.style.color = "var(--text-secondary)";
+      }
+    }
+  } catch (err) {
+    gridEl.innerHTML = `<div style="color: #ef4444; font-size: 13px; grid-column: 1 / -1; padding: 12px;">Failed to load gear monitor: ${escapeHtml(err.message)}</div>`;
   }
 }
 

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Endurance AI Dashboard — Strava & Garmin Coach</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <link rel="stylesheet" href="/static/styles.css?v=3.5">
+  <link rel="stylesheet" href="/static/styles.css?v=3.6">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
@@ -26,8 +26,11 @@
         <button id="copyReportBtn" class="btn btn-share" title="Copy weekly report for Telegram / Coach">
           <span>📋 Copy Report</span>
         </button>
+        <button id="sendTelegramTodayBtn" class="btn btn-share" title="Send today's workout brief to Telegram">
+          <span>✈️ Today</span>
+        </button>
         <button id="sendTelegramBtn" class="btn btn-share" title="Send tomorrow's workout and weather to Telegram">
-          <span>✈️ Telegram Brief</span>
+          <span>✈️ Tomorrow</span>
         </button>
         <button id="syncSheetBtn" class="btn btn-primary">
           <span>📊 Sync to Google Sheet</span>
@@ -179,6 +182,39 @@
           </div>
           <div id="daysGrid" class="days-grid">
             <!-- Rendered dynamically with daily weather & workouts -->
+          </div>
+        </div>
+
+        <!-- Plan vs. Actual Workout Execution & Compliance -->
+        <div class="glass-panel compliance-section">
+          <div class="section-header">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <h2 class="section-title">🎯 Workout Execution & Plan Compliance</h2>
+              <span id="complianceScoreBadge" class="acwr-badge badge-optimal">100% Spot-on</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <input type="date" id="complianceDatePicker" class="date-picker-input" />
+              <button id="checkComplianceBtn" class="btn btn-share" style="padding: 4px 10px; font-size: 12px;">🔄 Check</button>
+            </div>
+          </div>
+          <div id="complianceContent" class="compliance-content">
+            <!-- Rendered dynamically by app.js -->
+            <div style="text-align: center; color: var(--text-muted); padding: 16px;">Loading workout compliance...</div>
+          </div>
+        </div>
+
+        <!-- Equipment & Shoe Mileage Wear Monitor -->
+        <div class="glass-panel gear-section">
+          <div class="section-header">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <h2 class="section-title">👟 Equipment & Shoe Wear Monitor</h2>
+              <span id="gearAlertBadge" class="bio-badge">Alert: 650 km</span>
+            </div>
+            <span class="brand-subtitle">Cushioning & Durability Health</span>
+          </div>
+          <div id="gearGrid" class="gear-grid">
+            <!-- Rendered dynamically by app.js -->
+            <div style="text-align: center; color: var(--text-muted); padding: 16px;">Loading equipment mileage...</div>
           </div>
         </div>
       </div>
@@ -439,6 +475,6 @@ Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
     </div>
   </div>
 
-  <script src="/static/app.js?v=3.5"></script>
+  <script src="/static/app.js?v=3.6"></script>
 </body>
 </html>
