@@ -697,6 +697,10 @@ def sync_google_sheets(req: SyncRequest):
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+_PLANNED_WORKOUT_CACHE: dict[str, tuple[float, dict]] = {}
+_PLANNED_WORKOUT_TTL = 300.0
+
+
 @app.get("/api/compliance")
 def get_workout_compliance(target_date: str = Query(default_factory=lambda: date.today().isoformat())):
     """Evaluate plan vs actual workout execution fidelity for target_date."""
@@ -705,7 +709,14 @@ def get_workout_compliance(target_date: str = Query(default_factory=lambda: date
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format, expected YYYY-MM-DD")
 
-    planned_info = get_planned_workout_for_date(d)
+    now = time.time()
+    cached_entry = _PLANNED_WORKOUT_CACHE.get(target_date)
+    if cached_entry and (now - cached_entry[0]) < _PLANNED_WORKOUT_TTL:
+        planned_info = cached_entry[1]
+    else:
+        planned_info = get_planned_workout_for_date(d)
+        _PLANNED_WORKOUT_CACHE[target_date] = (now, planned_info)
+
     planned_text = planned_info.get("workout_text", "")
 
     cache = _load_cache()

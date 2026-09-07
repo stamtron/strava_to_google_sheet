@@ -69,6 +69,7 @@ function getLocalDateString(d = new Date()) {
   return `${year}-${month}-${day}`;
 }
 document.addEventListener("DOMContentLoaded", () => {
+  initComplianceDate();
   initApp();
   setupEventListeners();
   initChatDrawer();
@@ -102,10 +103,8 @@ async function initApp() {
   // failure neither blanks the dashboard nor is masked by a dashboard failure.
   fetchDurability();
 
-  // Load workout plan compliance & gear monitor
-  initComplianceDate();
+  // Load workout plan compliance
   loadCompliance();
-  loadGearTracker();
 }
 
 function setupEventListeners() {
@@ -125,14 +124,17 @@ function setupEventListeners() {
   if (checkCompBtn) {
     checkCompBtn.addEventListener("click", () => {
       const picker = document.getElementById("complianceDatePicker");
-      if (picker && picker.value) loadCompliance(picker.value);
+      const targetDate = (picker && picker.value) ? picker.value : getLocalDateString();
+      if (picker && !picker.value) picker.value = targetDate;
+      loadCompliance(targetDate);
     });
   }
 
   const compPicker = document.getElementById("complianceDatePicker");
   if (compPicker) {
     compPicker.addEventListener("change", (e) => {
-      if (e.target.value) loadCompliance(e.target.value);
+      const val = e.target.value || getLocalDateString();
+      loadCompliance(val);
     });
   }
 
@@ -1037,16 +1039,25 @@ async function handleSendTelegramToday() {
 function initComplianceDate() {
   const picker = document.getElementById("complianceDatePicker");
   if (picker && !picker.value) {
-    picker.value = new Date().toISOString().slice(0, 10);
+    picker.value = getLocalDateString();
   }
 }
 
 async function loadCompliance(targetDate) {
   const contentEl = document.getElementById("complianceContent");
   const badgeEl = document.getElementById("complianceScoreBadge");
+  const checkBtn = document.getElementById("checkComplianceBtn");
   if (!contentEl) return;
 
-  const dateToFetch = targetDate || (document.getElementById("complianceDatePicker")?.value) || new Date().toISOString().slice(0, 10);
+  const dateToFetch = targetDate || (document.getElementById("complianceDatePicker")?.value) || getLocalDateString();
+  const picker = document.getElementById("complianceDatePicker");
+  if (picker && !picker.value) picker.value = dateToFetch;
+
+  if (checkBtn) {
+    checkBtn.disabled = true;
+    checkBtn.innerHTML = "<span>⏳ Checking...</span>";
+  }
+
   contentEl.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 16px;">Loading workout compliance for ${dateToFetch}...</div>`;
 
   try {
@@ -1067,12 +1078,13 @@ async function loadCompliance(targetDate) {
       badgeText = `${score}% Rest Broken`;
     } else if (score < 75) {
       badgeClass = "badge-overreach";
-      badgeText = `${score}% Under/Over`;
+      badgeText = `${score}% Compliance`;
     }
 
     if (badgeEl) {
       badgeEl.className = `acwr-badge ${badgeClass}`;
       badgeEl.textContent = badgeText;
+      badgeEl.style.display = "inline-flex";
     }
 
     const plannedRaw = data.planned_raw ? escapeHtml(data.planned_raw) : "<em>Rest Day or no scheduled workout found in sheet.</em>";
@@ -1084,11 +1096,13 @@ async function loadCompliance(targetDate) {
         const paceDiff = (m.pace_diff_sec !== null && m.pace_diff_sec !== undefined)
           ? ` • Pace Diff: <strong>${m.pace_diff_sec > 0 ? "+" : ""}${m.pace_diff_sec}s/km</strong>`
           : "";
+        const distActual = m.actual_km !== null && m.actual_km !== undefined ? `${m.actual_km} km` : "--";
+        const distPlanned = m.planned_km !== null && m.planned_km !== undefined ? `${m.planned_km} km` : (m.notes || "--");
         return `
           <div style="margin-bottom: 8px;">
             <span class="compliance-match-tag ${tagClass}">${m.sport.toUpperCase()}: ${m.status.replace("_", " ").toUpperCase()}</span>
             <span style="font-size: 12px; color: var(--text-secondary); margin-left: 6px;">
-              Actual: <strong>${m.actual_km} km</strong> (Planned: ${m.planned_km || "--"} km)${paceDiff}
+              Actual: <strong>${distActual}</strong> (Planned: ${distPlanned})${paceDiff}
             </span>
           </div>
         `;
@@ -1125,79 +1139,11 @@ async function loadCompliance(targetDate) {
     `;
   } catch (err) {
     contentEl.innerHTML = `<div style="color: #ef4444; padding: 12px; font-size: 13px;">Failed to evaluate workout compliance: ${escapeHtml(err.message)}</div>`;
-  }
-}
-
-async function loadGearTracker() {
-  const gridEl = document.getElementById("gearGrid");
-  const badgeEl = document.getElementById("gearAlertBadge");
-  if (!gridEl) return;
-
-  try {
-    const res = await fetch("/api/gear");
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const gearList = data.gear || [];
-
-    if (gearList.length === 0) {
-      gridEl.innerHTML = `<div style="color: var(--text-muted); font-size: 13px; grid-column: 1 / -1; padding: 12px;">No active shoes or bikes with Strava gear_id detected in history.</div>`;
-      return;
+  } finally {
+    if (checkBtn) {
+      checkBtn.disabled = false;
+      checkBtn.innerHTML = "<span>🔄 Check</span>";
     }
-
-    let hasAlert = false;
-    gridEl.innerHTML = gearList.map(g => {
-      const pct = Math.min(100, Math.round((g.total_km / g.threshold_km) * 100));
-      let fillClass = "fill-optimal";
-      let statusBadge = `<span class="compliance-match-tag tag-spot-on">Optimal</span>`;
-
-      if (g.alert) {
-        hasAlert = true;
-        fillClass = "fill-retire";
-        statusBadge = `<span class="compliance-match-tag tag-overreach">⚠️ Retire</span>`;
-      } else if (g.status === "warning") {
-        fillClass = "fill-warning";
-        statusBadge = `<span class="compliance-match-tag tag-underreach">Wear Warning</span>`;
-      }
-
-      const icon = g.gear_type === "Shoes" ? "👟" : (g.gear_type === "Bike" ? "🚴" : "⚙️");
-      const cardAlertClass = g.alert ? "alert-retire" : "";
-
-      return `
-        <div class="gear-card ${cardAlertClass}">
-          <div class="gear-card-header">
-            <div>
-              <div style="display: flex; align-items: center; gap: 6px;">
-                <span>${icon}</span>
-                <span class="gear-name">${escapeHtml(g.name)}</span>
-              </div>
-              <span style="font-size: 11px; color: var(--text-muted);">${g.activity_count} activities • since ${g.first_used || "--"}</span>
-            </div>
-            ${statusBadge}
-          </div>
-          <div class="gear-bar-wrap" title="${pct}% of threshold">
-            <div class="gear-bar-fill ${fillClass}" style="width: ${pct}%;"></div>
-          </div>
-          <div class="gear-stats-row">
-            <span><strong>${g.total_km} km</strong> / ${g.threshold_km} km</span>
-            <span>${g.remaining_km} km left (${100 - pct}%)</span>
-          </div>
-        </div>
-      `;
-    }).join("");
-
-    if (badgeEl) {
-      if (hasAlert) {
-        badgeEl.textContent = "⚠️ Shoes Need Retirement!";
-        badgeEl.style.borderColor = "rgba(239, 68, 68, 0.5)";
-        badgeEl.style.color = "#ef4444";
-      } else {
-        badgeEl.textContent = `${gearList.length} Active Items`;
-        badgeEl.style.borderColor = "rgba(255, 255, 255, 0.1)";
-        badgeEl.style.color = "var(--text-secondary)";
-      }
-    }
-  } catch (err) {
-    gridEl.innerHTML = `<div style="color: #ef4444; font-size: 13px; grid-column: 1 / -1; padding: 12px;">Failed to load gear monitor: ${escapeHtml(err.message)}</div>`;
   }
 }
 

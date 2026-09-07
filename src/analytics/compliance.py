@@ -20,15 +20,28 @@ def _normalize_greek(text: str) -> str:
     return text.translate(accents).lower()
 
 
+def _clean_sheet_workout_text(text: str) -> str:
+    """Strip Greek coaching sheet athlete logging template at the bottom of the cell."""
+    if not text:
+        return ""
+    # Strip everything from the athlete feedback header onwards
+    cleaned = re.split(
+        r"(?i)\n\s*(?:ΚΟΛΥΜΒΗΣΗ|ΤΡΕΞΙΜΟ|ΠΟΔΗΛΑΣΙΑ|ΕΝΔΥΝΑΜΩΣΗ)?\s*\n?\s*ΣΥΝΟΛΙΚΑ\s+(?:ΜΕΤΡΑ|ΧΙΛΙΟΜΕΤΡΑ|ΧΡΟΝΟΣ)",
+        text,
+    )[0]
+    return cleaned.strip()
+
+
 def parse_planned_workout(text: str) -> list[dict[str, Any]]:
     """
     Parse planned workout text into structured items.
     Detects sport, target distance (km or m), target duration (mins), and target pace.
     """
-    if not text or not text.strip():
+    cleaned_text = _clean_sheet_workout_text(text)
+    if not cleaned_text:
         return []
 
-    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    lines = [line.strip() for line in cleaned_text.split("\n") if line.strip()]
     items: list[dict[str, Any]] = []
 
     current_sport = None
@@ -49,9 +62,9 @@ def parse_planned_workout(text: str) -> list[dict[str, Any]]:
             if m_match and int(m_match.group(1)) >= 100:
                 dist_km = float(m_match.group(1)) / 1000.0
 
-        # Parse duration
+        # Parse duration (match single quote/min/λεπτά, but avoid double quotes like 30'' which are seconds)
         duration_min = None
-        min_match = re.search(r"(\d+)(?:[-–]\d+)?\s*(?:['΄’]|min|λεπτα)", desc, re.IGNORECASE)
+        min_match = re.search(r"(\d+)(?:[-–]\d+)?\s*(?:(?<!['’\"])['΄’](?!['’\"])|min|λεπτα)", desc, re.IGNORECASE)
         if min_match:
             duration_min = float(min_match.group(1))
 

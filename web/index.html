@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Endurance AI Dashboard — Strava & Garmin Coach</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <link rel="stylesheet" href="/static/styles.css?v=3.6">
+  <link rel="stylesheet" href="/static/styles.css?v=3.7">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
@@ -190,7 +190,7 @@
           <div class="section-header">
             <div style="display: flex; align-items: center; gap: 8px;">
               <h2 class="section-title">🎯 Workout Execution & Plan Compliance</h2>
-              <span id="complianceScoreBadge" class="acwr-badge badge-optimal">100% Spot-on</span>
+              <span id="complianceScoreBadge" class="acwr-badge badge-unknown" style="display: none;">--</span>
             </div>
             <div style="display: flex; align-items: center; gap: 8px;">
               <input type="date" id="complianceDatePicker" class="date-picker-input" />
@@ -200,21 +200,6 @@
           <div id="complianceContent" class="compliance-content">
             <!-- Rendered dynamically by app.js -->
             <div style="text-align: center; color: var(--text-muted); padding: 16px;">Loading workout compliance...</div>
-          </div>
-        </div>
-
-        <!-- Equipment & Shoe Mileage Wear Monitor -->
-        <div class="glass-panel gear-section">
-          <div class="section-header">
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <h2 class="section-title">👟 Equipment & Shoe Wear Monitor</h2>
-              <span id="gearAlertBadge" class="bio-badge">Alert: 650 km</span>
-            </div>
-            <span class="brand-subtitle">Cushioning & Durability Health</span>
-          </div>
-          <div id="gearGrid" class="gear-grid">
-            <!-- Rendered dynamically by app.js -->
-            <div style="text-align: center; color: var(--text-muted); padding: 16px;">Loading equipment mileage...</div>
           </div>
         </div>
       </div>
@@ -475,6 +460,6 @@ Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
     </div>
   </div>
 
-  <script src="/static/app.js?v=3.6"></script>
+  <script src="/static/app.js?v=3.7"></script>
 </body>
 </html>
