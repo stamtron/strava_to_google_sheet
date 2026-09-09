@@ -68,3 +68,24 @@ def test_evaluate_compliance_rest_day_broken():
     res = evaluate_daily_compliance(plan, acts)
     assert res["status"] == "rest_day_broken"
     assert res["compliance_score"] < 50
+
+
+def test_evaluate_compliance_duration_targets():
+    # Prescribed 60' run, athlete logs 90' (overreach)
+    plan = "Τρέξιμο 60' rpe 3-4"
+    acts = [{
+        "id": 1003,
+        "name": "Longer Run",
+        "sport_type": "Run",
+        "distance": 15000.0,
+        "moving_time": 5400,  # 90 minutes
+    }]
+    res = evaluate_daily_compliance(plan, acts)
+    assert res["status"] == "evaluated"
+    assert len(res["matches"]) == 1
+    match = res["matches"][0]
+    assert match["status"] == "overreach"
+    assert match["dist_compliance_pct"] is None  # no distance in plan
+    assert match["dur_compliance_pct"] == 150.0  # 90 / 60
+    assert "Volume overshot" in res["summary"]
+

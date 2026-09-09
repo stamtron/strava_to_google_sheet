@@ -755,7 +755,31 @@ def get_gear_tracker():
             conn.close()
 
     from src.analytics.gear import extract_gear_summary
-    return {"gear": extract_gear_summary(activities, details)}
+@app.get("/api/workouts/preview")
+def preview_workouts_endpoint(week_offset: int = 0):
+    """Preview running and cycling workouts parsed from Google Sheets for Garmin & Tacx."""
+    from src.integrations.garmin_workouts import preview_week_workouts
+    try:
+        return preview_week_workouts(week_offset=week_offset)
+    except Exception as e:
+        server_logger.error("Error previewing workouts: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+class WorkoutSyncRequest(BaseModel):
+    week_offset: int = 0
+    dry_run: bool = False
+
+
+@app.post("/api/workouts/sync")
+def sync_workouts_endpoint(req: WorkoutSyncRequest = WorkoutSyncRequest()):
+    """Sync running and cycling workouts to Garmin Connect Calendar (syncs to Watch & Tacx)."""
+    from src.integrations.garmin_workouts import sync_week_workouts_to_garmin
+    try:
+        return sync_week_workouts_to_garmin(week_offset=req.week_offset, dry_run=req.dry_run)
+    except Exception as e:
+        server_logger.error("Error syncing workouts to Garmin: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 # Serve Static UI

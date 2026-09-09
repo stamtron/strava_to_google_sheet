@@ -127,7 +127,8 @@ header {
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .week-selector {
@@ -207,6 +208,18 @@ header {
 .btn-primary:hover {
   transform: translateY(-2px);
   box-shadow: 0 0 25px rgba(0, 242, 254, 0.5);
+}
+
+.btn-garmin {
+  background: linear-gradient(135deg, #0284c7 0%, #2563eb 100%);
+  color: #ffffff;
+  box-shadow: 0 0 15px rgba(2, 132, 199, 0.35);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+}
+
+.btn-garmin:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 25px rgba(2, 132, 199, 0.6);
 }
 
 .btn-ai {
@@ -1778,4 +1791,77 @@ input[type="range"] {
 .tag-overreach { background: rgba(249, 115, 22, 0.15); color: #f97316; border: 1px solid rgba(249, 115, 22, 0.3); }
 .tag-underreach { background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); }
 .tag-rest-honored { background: rgba(121, 40, 202, 0.15); color: #a855f7; border: 1px solid rgba(121, 40, 202, 0.3); }
+
+/* Garmin & Tacx Workouts Modal */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 15, 30, 0.82);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 1.5rem;
+  opacity: 1;
+  transition: opacity 0.25s ease;
+}
+
+.modal-backdrop.hidden {
+  display: none !important;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.modal-content {
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-lg, 16px);
+  width: 100%;
+  max-width: 680px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+  padding: 1.5rem;
+  animation: modalSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes modalSlideUp {
+  from { transform: translateY(20px) scale(0.97); opacity: 0; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+.workout-item-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 12px 14px;
+  transition: border-color 0.2s;
+}
+
+.workout-item-card:hover {
+  border-color: rgba(0, 242, 254, 0.25);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.workout-badge-run {
+  background: rgba(249, 115, 22, 0.15);
+  color: #f97316;
+  border: 1px solid rgba(249, 115, 22, 0.3);
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.workout-badge-bike {
+  background: rgba(59, 130, 246, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
 

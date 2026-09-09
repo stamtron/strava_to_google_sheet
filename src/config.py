@@ -151,7 +151,7 @@ BIKE_RUN_LOAD_FACTOR = _env_float("BIKE_RUN_LOAD_FACTOR", 0.55)
 
 # Gemini models tried in order for AI coaching. Google retires model IDs on a
 # rolling basis, so the list is a fallback chain and the newest generation goes first.
-GEMINI_MODELS = _env_list("GEMINI_MODELS", ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-flash-latest"])
+GEMINI_MODELS = _env_list("GEMINI_MODELS", ["gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash", "gemini-flash-latest"])
 
 # Conversational coach (POST /api/ai/chat).
 # A separate model list from GEMINI_MODELS: the chat agent needs function

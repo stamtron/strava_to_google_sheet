@@ -117,6 +117,18 @@ function setupEventListeners() {
   document.getElementById("copyReportBtn").addEventListener("click", handleCopyReport);
   document.getElementById("sendTelegramBtn").addEventListener("click", handleSendTelegram);
 
+  const garminBtn = document.getElementById("garminWorkoutsBtn");
+  if (garminBtn) garminBtn.addEventListener("click", openGarminModal);
+
+  const closeGarminBtn = document.getElementById("closeGarminModalBtn");
+  if (closeGarminBtn) closeGarminBtn.addEventListener("click", closeGarminModal);
+
+  const refreshGarminBtn = document.getElementById("refreshGarminWorkoutsBtn");
+  if (refreshGarminBtn) refreshGarminBtn.addEventListener("click", loadGarminWorkouts);
+
+  const sendGarminBtn = document.getElementById("sendToGarminBtn");
+  if (sendGarminBtn) sendGarminBtn.addEventListener("click", handleSendToGarmin);
+
   const todayBtn = document.getElementById("sendTelegramTodayBtn");
   if (todayBtn) todayBtn.addEventListener("click", handleSendTelegramToday);
 
@@ -1153,8 +1165,12 @@ async function loadCompliance(targetDate) {
         const paceDiff = (m.pace_diff_sec !== null && m.pace_diff_sec !== undefined)
           ? ` • Pace Diff: <strong>${m.pace_diff_sec > 0 ? "+" : ""}${m.pace_diff_sec}s/km</strong>`
           : "";
-        const distActual = m.actual_km !== null && m.actual_km !== undefined ? `${m.actual_km} km` : "--";
-        const distPlanned = m.planned_km !== null && m.planned_km !== undefined ? `${m.planned_km} km` : (m.notes || "--");
+        const distActual = (m.actual_km !== null && m.actual_km > 0)
+          ? `${m.actual_km} km`
+          : (m.actual_min ? `${m.actual_min}m` : (m.actual_km !== null && m.actual_km !== undefined ? `${m.actual_km} km` : "--"));
+        const distPlanned = (m.planned_km !== null && m.planned_km !== undefined)
+          ? `${m.planned_km} km`
+          : (m.planned_min ? `${m.planned_min}m` : (m.notes || "--"));
         return `
           <div style="margin-bottom: 8px;">
             <span class="compliance-match-tag ${tagClass}">${m.sport.toUpperCase()}: ${m.status.replace("_", " ").toUpperCase()}</span>
@@ -1272,7 +1288,7 @@ async function handleGenerateAiFeedback() {
 async function handleSheetSync() {
   const btn = document.getElementById("syncSheetBtn");
   btn.disabled = true;
-  btn.innerHTML = "<span>🔄 Syncing...</span>";
+  btn.innerHTML = "<span>🔄 Syncing Logs...</span>";
 
   try {
     const res = await fetch("/api/sheet/sync", {
@@ -1291,7 +1307,7 @@ async function handleSheetSync() {
     showToast("Google Sheets sync error: " + err.message, "error");
   } finally {
     btn.disabled = false;
-    btn.innerHTML = "<span>📊 Sync to Google Sheet</span>";
+    btn.innerHTML = "<span>📊 Sync Training Logs to Spreadsheet</span>";
   }
 }
 
@@ -1683,3 +1699,157 @@ async function forgetChatFact(factId) {
     showToast("Couldn't forget that: " + err.message, "error");
   }
 }
+
+// Garmin Connect & Tacx Workouts Preview and Sync
+let currentGarminWorkouts = [];
+
+function openGarminModal() {
+  const modal = document.getElementById("garminModal");
+  if (!modal) return;
+  modal.classList.remove("hidden");
+  modal.style.display = "flex";
+  loadGarminWorkouts();
+}
+
+function closeGarminModal() {
+  const modal = document.getElementById("garminModal");
+  if (!modal) return;
+  modal.classList.add("hidden");
+  modal.style.display = "none";
+}
+
+async function loadGarminWorkouts() {
+  const listEl = document.getElementById("garminWorkoutsList");
+  const statusEl = document.getElementById("garminStatusMsg");
+  if (!listEl) return;
+  listEl.innerHTML = `<div style="text-align: center; padding: 25px; color: #94a3b8;">🔍 Reading coach plan from Google Sheet & parsing running & cycling workouts...</div>`;
+  if (statusEl) statusEl.textContent = "";
+
+  try {
+    const res = await fetch("/api/workouts/preview?week_offset=0");
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.detail || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    currentGarminWorkouts = data.workouts || [];
+    renderGarminWorkouts(data);
+  } catch (err) {
+    console.error("Failed to load workouts for Garmin:", err);
+    listEl.innerHTML = `<div style="padding: 16px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; color: #fca5a5;">
+      ⚠️ Error reading workouts: ${escapeHtml(err.message)}
+    </div>`;
+  }
+}
+
+function renderGarminWorkouts(data) {
+  const listEl = document.getElementById("garminWorkoutsList");
+  const statusEl = document.getElementById("garminStatusMsg");
+  const workouts = data.workouts || [];
+
+  if (statusEl) {
+    statusEl.textContent = `${workouts.length} running/cycling workout(s) found for week ${data.week_start} → ${data.week_end}`;
+  }
+
+  if (workouts.length === 0) {
+    listEl.innerHTML = `<div style="text-align: center; padding: 25px; color: #94a3b8;">
+      No running or cycling workouts found in this week's plan.
+    </div>`;
+    return;
+  }
+
+  listEl.innerHTML = workouts.map((w) => {
+    const isRun = w.sport === "running";
+    const badgeClass = isRun ? "workout-badge-run" : "workout-badge-bike";
+    const badgeText = isRun ? "🏃 Running" : "🚴 Cycling / Tacx";
+
+    const stepsHtml = (w.steps || []).map(s => {
+      let condStr = `${s.condition_value} ${s.condition_type}`;
+      if (s.condition_type === "time") {
+        const mins = Math.round(s.condition_value / 60);
+        condStr = `${mins} min`;
+      } else if (s.condition_type === "distance") {
+        condStr = s.condition_value >= 1000 ? `${(s.condition_value / 1000).toFixed(1)} km` : `${Math.round(s.condition_value)}m`;
+      }
+
+      let targetStr = "";
+      if (s.target_type === "speed" && s.target_value_low) {
+        targetStr = ` • pace: ${s.target_value_low} - ${s.target_value_high} m/s`;
+      } else if (s.target_type === "heart_rate" && s.target_value_low) {
+        targetStr = ` • HR: ${Math.round(s.target_value_low)}-${Math.round(s.target_value_high)} bpm`;
+      }
+
+      return `<div style="font-size: 11px; color: #cbd5e1; display: flex; align-items: center; gap: 6px; padding: 2px 0;">
+        <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: ${isRun ? '#f97316' : '#38bdf8'};"></span>
+        <strong style="text-transform: capitalize;">${escapeHtml(s.step_type)}:</strong> ${condStr}${targetStr}
+      </div>`;
+    }).join("");
+
+    return `
+      <div class="workout-item-card">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px;">
+          <div>
+            <span style="font-size: 12px; font-weight: 700; color: #fff; margin-right: 8px;">${escapeHtml(w.day_name)} (${escapeHtml(w.date)})</span>
+            <span class="${badgeClass}">${badgeText}</span>
+          </div>
+          <span style="font-size: 11px; color: #64748b;">${escapeHtml(w.source || "gemini")}</span>
+        </div>
+        <div style="font-size: 13px; font-weight: 600; color: ${isRun ? '#fdba74' : '#7dd3fc'}; margin-bottom: 6px;">
+          ${escapeHtml(w.workout_name)}
+        </div>
+        <div style="background: rgba(0,0,0,0.25); border-radius: 6px; padding: 6px 10px; margin-bottom: 6px;">
+          ${stepsHtml}
+        </div>
+        <div style="font-size: 11px; color: #94a3b8; font-style: italic;">
+          "${escapeHtml(w.raw_coach_text || "").replace(/\\n/g, ' ')}"
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+async function handleSendToGarmin() {
+  const sendBtn = document.getElementById("sendToGarminBtn");
+  const statusEl = document.getElementById("garminStatusMsg");
+
+  if (!confirm("Send these running and cycling workouts to your Garmin Connect Calendar?\\n\\nThey will automatically sync to your Garmin Watch and the Tacx Training app!")) {
+    return;
+  }
+
+  const originalHtml = sendBtn.innerHTML;
+  sendBtn.disabled = true;
+  sendBtn.innerHTML = `<span>⏳ Uploading to Garmin...</span>`;
+  if (statusEl) statusEl.textContent = "Connecting to Garmin Connect...";
+
+  try {
+    const res = await fetch("/api/workouts/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ week_offset: 0, dry_run: false })
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.detail || `HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    const scheduled = (data.results || []).filter(r => r.status === "scheduled");
+    const count = scheduled.length;
+
+    showToast(`✅ Successfully scheduled ${count} workout(s) on Garmin Connect! Synced to Watch & Tacx.`, "success");
+    if (statusEl) {
+      statusEl.innerHTML = `<span style="color: #10b981; font-weight: 600;">✅ ${count} workout(s) scheduled on Garmin Calendar!</span>`;
+    }
+  } catch (err) {
+    console.error("Garmin sync error:", err);
+    showToast("Garmin sync failed: " + err.message, "error");
+    if (statusEl) {
+      statusEl.innerHTML = `<span style="color: #ef4444;">❌ Failed: ${escapeHtml(err.message)}</span>`;
+    }
+  } finally {
+    sendBtn.disabled = false;
+    sendBtn.innerHTML = originalHtml;
+  }
+}
+

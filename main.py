@@ -148,11 +148,57 @@ def main():
         help="Run the interactive two-way Telegram bot polling worker",
     )
     parser.add_argument(
+        "--sync-workouts",
+        action="store_true",
+        help="Sync this week's running and cycling workouts from Google Sheets to Garmin Connect",
+    )
+    parser.add_argument(
+        "--preview-workouts",
+        action="store_true",
+        help="Preview detected running and cycling workouts from Google Sheets without uploading to Garmin",
+    )
+    parser.add_argument(
+        "--week-offset",
+        type=int,
+        default=0,
+        help="Week offset for workout sync (0 = current week, 1 = next week)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Preview actions without sending external notifications or writing data",
     )
     args = parser.parse_args()
+
+    # Garmin Workout Sync & Preview CLI
+    if args.preview_workouts or args.sync_workouts:
+        from src.integrations.garmin_workouts import preview_week_workouts, sync_week_workouts_to_garmin
+        if args.preview_workouts or args.dry_run:
+            print(f"\n🔍 Previewing Running & Cycling workouts (Week offset: {args.week_offset})...\n")
+            preview = preview_week_workouts(week_offset=args.week_offset)
+            print(f"📅 Week: {preview['week_start']} → {preview['week_end']} (Layout: {preview['layout']})")
+            print(f"Found {preview['workouts_found']} target workouts (Running & Cycling only):\n")
+            for w in preview["workouts"]:
+                print(f"  📌 [{w['date']} - {w['day_name']}] {w['sport'].upper()}: {w['workout_name']}")
+                print(f"     Steps ({len(w.get('steps', []))}):")
+                for s in w.get("steps", []):
+                    c_info = f"{s.get('condition_value')} {s.get('condition_type')}"
+                    t_info = f"target: {s.get('target_type')}"
+                    if s.get("target_value_low"):
+                        t_info += f" ({s.get('target_value_low')} - {s.get('target_value_high')})"
+                    print(f"       • {s.get('step_type').capitalize():<10} | {c_info:<20} | {t_info}")
+                print(f"     Notes: {w.get('raw_coach_text')[:100].replace(chr(10), ' ')}...\n")
+            return 0
+
+        print(f"\n🚀 Syncing Running & Cycling workouts to Garmin Connect (Week offset: {args.week_offset})...\n")
+        sync_res = sync_week_workouts_to_garmin(week_offset=args.week_offset, dry_run=False)
+        print(f"📅 Week: {sync_res['week_start']} → {sync_res['week_end']}")
+        print(f"Synced {len(sync_res['results'])} workouts to Garmin Connect Calendar:")
+        for r in sync_res["results"]:
+            status_icon = "✅" if r.get("status") == "scheduled" else "❌"
+            w_id = r.get("workout_id", "N/A")
+            print(f"  {status_icon} [{r['date']}] {r['sport'].upper()} - {r['workout_name']} (ID: {w_id}, status: {r.get('status')})")
+        return 0
 
     # Standalone interactive Telegram bot listener
     if args.telegram_bot:

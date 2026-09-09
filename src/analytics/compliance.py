@@ -201,9 +201,12 @@ def evaluate_daily_compliance(
                 "status": "missed",
                 "planned_km": target_km,
                 "actual_km": 0.0,
+                "planned_min": target_min,
+                "actual_min": 0.0,
+                "dur_compliance_pct": 0.0 if target_min else None,
                 "planned_pace_sec": target_pace_sec,
                 "actual_pace_sec": None,
-                "dist_compliance_pct": 0.0,
+                "dist_compliance_pct": 0.0 if target_km else None,
                 "notes": f"Prescribed {p_sport} session was missed.",
             })
             continue
@@ -216,6 +219,11 @@ def evaluate_daily_compliance(
         dist_comp = None
         if target_km and target_km > 0:
             dist_comp = round((act_dist_km / target_km) * 100, 1)
+
+        dur_comp = None
+        if target_min and target_min > 0:
+            act_min = moving_time_sec / 60.0
+            dur_comp = round((act_min / target_min) * 100, 1)
 
         # Pace difference
         pace_diff = None
@@ -249,6 +257,9 @@ def evaluate_daily_compliance(
             "planned_km": target_km,
             "actual_km": round(act_dist_km, 2),
             "dist_compliance_pct": dist_comp,
+            "planned_min": target_min,
+            "actual_min": round(moving_time_sec / 60.0, 1),
+            "dur_compliance_pct": dur_comp,
             "planned_pace_sec": target_pace_sec,
             "actual_pace_sec": round(actual_pace_sec, 1) if actual_pace_sec else None,
             "pace_diff_sec": pace_diff,
@@ -274,7 +285,9 @@ def evaluate_daily_compliance(
             elif st == "completed":
                 scores.append(90)
             elif st in ("overreach", "underreach"):
-                pct = m.get("dist_compliance_pct") or 80.0
+                pct = m.get("dist_compliance_pct") if m.get("dist_compliance_pct") is not None else m.get("dur_compliance_pct")
+                if pct is None:
+                    pct = 80.0
                 scores.append(max(40, int(100 - abs(100 - pct))))
             elif st == "missed":
                 scores.append(0)
@@ -284,12 +297,26 @@ def evaluate_daily_compliance(
 
     summary_parts = []
     for m in matches:
+        comp_pct = m.get("dist_compliance_pct") if m.get("dist_compliance_pct") is not None else m.get("dur_compliance_pct")
         if m["status"] == "spot_on":
-            summary_parts.append(f"{m['sport']}: Executed accurately ({m['actual_km']}km vs planned {m['planned_km']}km).")
+            if m.get("planned_km") and m.get("actual_km") is not None:
+                summary_parts.append(f"{m['sport']}: Executed accurately ({m['actual_km']}km vs planned {m['planned_km']}km).")
+            elif m.get("planned_min") and m.get("actual_min") is not None:
+                summary_parts.append(f"{m['sport']}: Executed accurately ({m['actual_min']:.0f}m vs planned {m['planned_min']:.0f}m).")
+            else:
+                summary_parts.append(f"{m['sport']}: Executed accurately.")
         elif m["status"] == "overreach":
-            summary_parts.append(f"{m['sport']}: Volume overshot (+{m['dist_compliance_pct'] - 100:.0f}%). Watch recovery.")
+            pct_str = f" (+{comp_pct - 100:.0f}%)" if comp_pct is not None else ""
+            summary_parts.append(f"{m['sport']}: Volume overshot{pct_str}. Watch recovery.")
         elif m["status"] == "underreach":
-            summary_parts.append(f"{m['sport']}: Volume under prescribed target ({m['actual_km']}km of {m['planned_km']}km).")
+            if m.get("planned_km") and m.get("actual_km") is not None:
+                summary_parts.append(f"{m['sport']}: Volume under prescribed target ({m['actual_km']}km of {m['planned_km']}km).")
+            elif m.get("planned_min") and m.get("actual_min") is not None:
+                summary_parts.append(f"{m['sport']}: Volume under prescribed target ({m['actual_min']:.0f}m of {m['planned_min']:.0f}m).")
+            elif comp_pct is not None:
+                summary_parts.append(f"{m['sport']}: Volume under prescribed target ({comp_pct:.0f}%).")
+            else:
+                summary_parts.append(f"{m['sport']}: Volume under prescribed target.")
         elif m["status"] == "missed":
             summary_parts.append(f"{m['sport']}: Session was not completed.")
 
