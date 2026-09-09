@@ -78,7 +78,14 @@ from src.analytics.durability import (
     sport_strength_profile,
     suggest_cross_training,
 )
+from src.analytics.gear import extract_gear_summary
+from src.analytics.compliance import evaluate_daily_compliance
+from src.analytics.weather_pace import calculate_weather_pace_adjustment, parse_pace_string_to_sec
+from src.config import SHOE_ALERT_KM
+from src.integrations.sheets import get_planned_workout_for_date
+from src.integrations.garmin import get_daily_recovery_metrics, assess_workout_readiness
 from src.integrations.weather import get_weather_outlook
+from src.storage.activity_store import get_details as store_get_details
 
 # How many activities the tools read. Generous because the questions worth asking
 # ("how was my run volume last month?") span far more than a dashboard page, and
@@ -126,6 +133,10 @@ race finding, and strength/mobility work.
 - When running load looks risky, say so plainly and propose the cross-training \
 swap that keeps the aerobic dose while dropping the impact — get_run_durability \
 returns exactly that plan.
+- Check get_athlete_recovery and preview_next_workout when discussing upcoming sessions or fatigue, \
+adapting intensity if recovery is compromised or poor.
+- Reference get_gear_status for running shoe mileage & replacement alerts, and \
+get_workout_compliance to evaluate planned vs actual workout execution.
 - Use remember_fact when the athlete tells you something durable about \
 themselves: an injury, a constraint, a goal, a schedule, a piece of equipment. \
 Do not use it for passing chat.
@@ -612,6 +623,116 @@ def build_tools(
         except Exception as e:  # noqa: BLE001
             return {"error": f"Weather fetch failed: {e}"}
 
+    def get_gear_status() -> dict:
+        """Report cumulative mileage, wear status, and replacement alerts for running shoes and bicycles.
+
+        Returns total mileage, remaining km before midsole foam exhaustion, and alert statuses.
+        Use when answering questions about equipment, running shoe mileage, wear thresholds,
+        or when to replace footwear.
+        """
+        _used("get_gear_status")
+        try:
+            acts = _activities()
+            conn = init_db()
+            details = store_get_details(conn)
+            conn.close()
+            gear_list = extract_gear_summary(acts, details=details, shoe_alert_km=SHOE_ALERT_KM)
+            shoes = [g for g in gear_list if g.get("gear_type") == "Shoes"]
+            bikes = [g for g in gear_list if g.get("gear_type") == "Bike"]
+            alerts = [g for g in gear_list if g.get("alert")]
+            return {
+                "total_gear_tracked": len(gear_list),
+                "shoes": shoes,
+                "bikes": bikes,
+                "replacement_alerts": alerts,
+            }
+        except Exception as e:
+            return {"error": f"Failed to retrieve gear status: {e}"}
+
+    def get_workout_compliance(target_date: str = "") -> dict:
+        """Compare coach's prescribed workout against actual Strava activity execution.
+
+        Reports planned workout targets (sport, distance, duration, pace), actual logged activity,
+        volume deltas, and overall execution compliance score (0-100%).
+        Use when answering questions like 'Did I hit my intervals on Tuesday?' or reviewing execution fidelity.
+
+        Args:
+            target_date: Date to evaluate as YYYY-MM-DD. Leave empty for today.
+        """
+        _used("get_workout_compliance")
+        try:
+            t_date = date.fromisoformat(target_date.strip()) if target_date.strip() else date.today()
+            date_str = t_date.isoformat()
+            w_info = get_planned_workout_for_date(t_date)
+            planned_text = w_info.get("workout_text", "")
+            acts = _activities()
+            day_acts = [a for a in acts if (a.get("start_date_local") or "").startswith(date_str)]
+            res = evaluate_daily_compliance(planned_text, day_acts)
+            res["date"] = date_str
+            res["planned_text"] = planned_text
+            return res
+        except Exception as e:
+            return {"error": f"Failed to evaluate workout compliance: {e}"}
+
+    def preview_next_workout(target_date: str = "") -> dict:
+        """Read coach's prescribed workout from Google Sheets with weather adjustments and recovery readiness.
+
+        Returns structured workout targets (warmup, intervals, paces, cooldown) enriched with
+        Athens weather forecasts, thermal pace adjustments, and physiological readiness guidance.
+        Use when answering questions like 'What is my workout tomorrow?' or 'How should I pace today's run?'.
+
+        Args:
+            target_date: Date to inspect as YYYY-MM-DD. Defaults to tomorrow if empty.
+        """
+        _used("preview_next_workout")
+        try:
+            t_date = date.fromisoformat(target_date.strip()) if target_date.strip() else (date.today() + timedelta(days=1))
+            w_info = get_planned_workout_for_date(t_date)
+            workout_text = w_info.get("workout_text", "")
+
+            weath = get_weather_outlook(past_days=0, forecast_days=7)
+            day_weath = next((w for w in weath if w.get("date") == t_date.isoformat()), None)
+
+            rec = get_daily_recovery_metrics(t_date)
+            readiness = assess_workout_readiness(rec, workout_text=workout_text)
+
+            weather_adj = None
+            if day_weath and any(k in workout_text.lower() for k in ("τρεξιμο", "δρομικες", "run")):
+                t_max = day_weath.get("temp_max_c")
+                wind = day_weath.get("wind_speed_max_kmh")
+                import re
+                pace_match = re.search(r"@\s*(\d{1,2}[:,\.]\d{2})", workout_text)
+                base_sec = parse_pace_string_to_sec(pace_match.group(1)) if pace_match else 315.0
+                weather_adj = calculate_weather_pace_adjustment(base_sec, temp_c=t_max, wind_kmh=wind)
+
+            return {
+                "target_date": t_date.isoformat(),
+                "workout_text": workout_text,
+                "sheet_read_status": "ok" if not w_info.get("reason") else w_info.get("reason"),
+                "weather": day_weath,
+                "weather_pace_adjustment": weather_adj,
+                "readiness": readiness,
+            }
+        except Exception as e:
+            return {"error": f"Failed to preview workout: {e}"}
+
+    def get_athlete_recovery(target_date: str = "") -> dict:
+        """Fetch Garmin 24/7 recovery biometrics: sleep hours, overnight HRV, resting HR, and Body Battery.
+
+        Returns physiological recovery status ('optimal', 'adequate', 'compromised', 'poor') and readiness flags.
+        Use when answering questions like 'How recovered am I?', 'Should I train hard today?',
+        or analyzing sleep and HRV fatigue.
+
+        Args:
+            target_date: Date to query as YYYY-MM-DD. Defaults to today if empty.
+        """
+        _used("get_athlete_recovery")
+        try:
+            t_date = date.fromisoformat(target_date.strip()) if target_date.strip() else date.today()
+            return get_daily_recovery_metrics(t_date)
+        except Exception as e:
+            return {"error": f"Failed to fetch recovery metrics: {e}"}
+
     tools = [
         get_week_summary,
         get_activities,
@@ -619,6 +740,10 @@ def build_tools(
         get_run_durability,
         get_race_projections,
         get_health_metrics,
+        get_athlete_recovery,
+        get_gear_status,
+        get_workout_compliance,
+        preview_next_workout,
         get_weather_forecast,
         search_web,
         find_exercise_videos,

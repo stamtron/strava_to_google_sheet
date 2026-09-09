@@ -14,7 +14,7 @@ import os
 import time
 from datetime import date, datetime, timedelta
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -432,7 +432,7 @@ WhatsAppNextDayRequest = TelegramNextDayRequest
 def send_telegram_next_day_workout_notification(req: TelegramNextDayRequest = TelegramNextDayRequest()):
     """
     Extract tomorrow's planned workout from Google Sheets, combine with Athens
-    weather forecast and AI coaching advice, and dispatch to athlete's Telegram.
+    weather forecast, Garmin recovery biometrics, and AI coaching advice, and dispatch to athlete's Telegram.
     """
     if req.target_date:
         try:
@@ -442,8 +442,12 @@ def send_telegram_next_day_workout_notification(req: TelegramNextDayRequest = Te
     else:
         t_date = date.today() + timedelta(days=1)
 
+    from src.integrations.garmin import get_daily_recovery_metrics, assess_workout_readiness
+
     workout_info = get_planned_workout_for_date(t_date)
     weather_info = get_weather_for_date(t_date)
+    recovery_info = get_daily_recovery_metrics(t_date)
+    readiness_info = assess_workout_readiness(recovery_info, workout_text=workout_info.get("workout_text", ""))
 
     # Optional AI tip
     tip = req.custom_tip
@@ -461,6 +465,8 @@ def send_telegram_next_day_workout_notification(req: TelegramNextDayRequest = Te
         weather_info=weather_info,
         coach_tip=tip,
         lookup_error=workout_info.get("reason"),
+        recovery_info=recovery_info,
+        readiness_info=readiness_info,
     )
 
     if req.dry_run:
@@ -470,6 +476,8 @@ def send_telegram_next_day_workout_notification(req: TelegramNextDayRequest = Te
             "preview": brief_text,
             "workout_info": workout_info,
             "weather_info": weather_info,
+            "recovery_info": recovery_info,
+            "readiness_info": readiness_info,
             "provider": "dry-run",
         }
 
@@ -480,7 +488,29 @@ def send_telegram_next_day_workout_notification(req: TelegramNextDayRequest = Te
         "preview": brief_text,
         "dispatch": dispatch_res,
         "workout_info": workout_info,
+        "recovery_info": recovery_info,
+        "readiness_info": readiness_info,
     }
+
+
+@app.post("/api/notifications/telegram/webhook")
+async def telegram_webhook_handler(request: Request):
+    """
+    Receive webhook updates directly from Telegram Bot API without polling.
+    Allows instant processing of athlete commands (/today, /tomorrow, /recovery, /coach, etc.).
+    """
+    from src.integrations.telegram import process_incoming_update
+    try:
+        update_data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    if not isinstance(update_data, dict):
+        raise HTTPException(status_code=400, detail="Expected JSON object")
+
+    # Run processing in background thread
+    await asyncio.to_thread(process_incoming_update, update_data)
+    return {"ok": True}
 
 
 @app.post("/api/notifications/telegram/today")
@@ -757,10 +787,22 @@ def get_gear_tracker():
     from src.analytics.gear import extract_gear_summary
 @app.get("/api/workouts/preview")
 def preview_workouts_endpoint(week_offset: int = 0):
-    """Preview running and cycling workouts parsed from Google Sheets for Garmin & Tacx."""
+    """Preview running and cycling workouts parsed from Google Sheets for Garmin & Tacx with recovery readiness."""
     from src.integrations.garmin_workouts import preview_week_workouts
+    from src.integrations.garmin import get_daily_recovery_metrics, assess_workout_readiness
     try:
-        return preview_week_workouts(week_offset=week_offset)
+        preview = preview_week_workouts(week_offset=week_offset)
+        for w in preview.get("workouts", []):
+            w_date_str = w.get("date")
+            if w_date_str:
+                try:
+                    w_date = date.fromisoformat(w_date_str)
+                    rec = get_daily_recovery_metrics(w_date)
+                    w["recovery"] = rec
+                    w["readiness"] = assess_workout_readiness(rec, workout_text=w.get("raw_coach_text", ""))
+                except Exception:
+                    pass
+        return preview
     except Exception as e:
         server_logger.error("Error previewing workouts: %s", e)
         raise HTTPException(status_code=500, detail=str(e)) from e

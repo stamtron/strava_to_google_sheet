@@ -141,6 +141,10 @@ def test_every_planned_tool_is_exposed(tools):
         "get_run_durability",
         "get_race_projections",
         "get_health_metrics",
+        "get_athlete_recovery",
+        "get_gear_status",
+        "get_workout_compliance",
+        "preview_next_workout",
         "get_weather_forecast",
         "search_web",
         "find_exercise_videos",
@@ -387,6 +391,68 @@ def test_weather_forecast_tool_returns_forecast(tools, monkeypatch):
     assert result["city"] == "Athens, Greece"
     assert len(result["forecast"]) == 1
     assert result["forecast"][0]["temp_max_c"] == 32.0
+
+
+def test_gear_status_tool_reports_tracked_gear(tools):
+    by_name, used, _ = tools
+    result = by_name["get_gear_status"]()
+    assert "total_gear_tracked" in result
+    assert "shoes" in result
+    assert "bikes" in result
+    assert "get_gear_status" in used
+
+
+def test_workout_compliance_tool_evaluates_plan(tools, monkeypatch):
+    import src.analytics.coach_agent as coach_agent_mod
+
+    def fake_planned(d):
+        return {"workout_text": "Τρέξιμο 10 χλμ @ 5:15"}
+
+    monkeypatch.setattr(coach_agent_mod, "get_planned_workout_for_date", fake_planned)
+    by_name, used, _ = tools
+    result = by_name["get_workout_compliance"](target_date="2026-09-08")
+    assert "compliance_score" in result
+    assert "status" in result
+    assert "get_workout_compliance" in used
+
+
+def test_preview_next_workout_tool(tools, monkeypatch):
+    import src.analytics.coach_agent as coach_agent_mod
+
+    def fake_planned(d):
+        return {"workout_text": "Τρέξιμο 8 χλμ @ 5:00"}
+
+    def fake_outlook(*args, **kwargs):
+        return [{"date": "2026-09-10", "temp_max_c": 28.0, "wind_speed_max_kmh": 12.0}]
+
+    def fake_recovery(d):
+        return {"target_date": d.isoformat(), "available": True, "recovery_status": "optimal", "recovery_score": 85}
+
+    monkeypatch.setattr(coach_agent_mod, "get_planned_workout_for_date", fake_planned)
+    monkeypatch.setattr(coach_agent_mod, "get_weather_outlook", fake_outlook)
+    monkeypatch.setattr(coach_agent_mod, "get_daily_recovery_metrics", fake_recovery)
+
+    by_name, used, _ = tools
+    result = by_name["preview_next_workout"](target_date="2026-09-10")
+    assert result["target_date"] == "2026-09-10"
+    assert "8 χλμ" in result["workout_text"]
+    assert result["readiness"]["recovery_status"] == "optimal"
+    assert "preview_next_workout" in used
+
+
+def test_athlete_recovery_tool(tools, monkeypatch):
+    import src.analytics.coach_agent as coach_agent_mod
+
+    def fake_recovery(d):
+        return {"target_date": d.isoformat(), "available": True, "recovery_status": "adequate", "sleep_hours": 7.2}
+
+    monkeypatch.setattr(coach_agent_mod, "get_daily_recovery_metrics", fake_recovery)
+
+    by_name, used, _ = tools
+    result = by_name["get_athlete_recovery"](target_date="2026-09-09")
+    assert result["available"] is True
+    assert result["sleep_hours"] == 7.2
+    assert "get_athlete_recovery" in used
 
 
 # --------------------------------------------------------------------------- #
@@ -667,7 +733,8 @@ def test_the_full_tool_surface_is_handed_to_the_model(provider, conn):
     _chat("Question?", client, conn, provider)
     names = {f.__name__ for f in client.created[-1]["config"]["tools"]}
     assert "get_run_durability" in names and "search_web" in names and "get_weather_forecast" in names
-    assert len(names) == 10
+    assert "get_gear_status" in names and "get_workout_compliance" in names and "preview_next_workout" in names
+    assert len(names) == 14
 
 
 def test_remembered_facts_reach_the_next_conversation(provider, conn):

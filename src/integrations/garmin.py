@@ -283,3 +283,316 @@ def get_weekly_health_summaries(
             results[week_key] = summary
 
     return results
+
+
+def get_daily_recovery_metrics(target_date: date, client: Garmin | None = None) -> dict:
+    """
+    Fetch comprehensive daily recovery biometrics for a specific date from Garmin Connect.
+    
+    Returns:
+    {
+        'target_date': str (YYYY-MM-DD),
+        'available': bool,
+        'sleep_seconds': int | None,
+        'sleep_hours': float | None,
+        'sleep_score': int | None,
+        'resting_hr': int | None,
+        'hrv_last_night': int | None,
+        'hrv_status': str,
+        'body_battery_charged': int | None,
+        'body_battery_drained': int | None,
+        'body_battery_latest': int | None,
+        'avg_stress': int | None,
+        'recovery_score': int,
+        'recovery_status': 'optimal' | 'adequate' | 'compromised' | 'poor' | 'unknown',
+        'flags': list[str]
+    }
+    """
+    if client is None:
+        client = get_garmin_client()
+
+    date_str = target_date.isoformat()
+    res = {
+        "target_date": date_str,
+        "available": False,
+        "sleep_seconds": None,
+        "sleep_hours": None,
+        "sleep_score": None,
+        "resting_hr": None,
+        "hrv_last_night": None,
+        "hrv_status": "unknown",
+        "body_battery_charged": None,
+        "body_battery_drained": None,
+        "body_battery_latest": None,
+        "avg_stress": None,
+        "recovery_score": 75,
+        "recovery_status": "unknown",
+        "flags": [],
+    }
+
+    if client is None:
+        return res
+
+    has_data = False
+
+    # 1. Sleep data
+    try:
+        sleep_data = client.get_sleep_data(date_str)
+        if sleep_data and "dailySleepDTO" in sleep_data:
+            dto = sleep_data["dailySleepDTO"]
+            sec = dto.get("sleepTimeSeconds") or 0
+            nap = dto.get("napTimeSeconds") or 0
+            total_sec = sec + nap
+            if total_sec > 0:
+                res["sleep_seconds"] = total_sec
+                res["sleep_hours"] = round(total_sec / 3600.0, 1)
+                has_data = True
+            
+            # Extract sleep score if available
+            scores = dto.get("sleepScores") or {}
+            overall = scores.get("overall") or {}
+            if isinstance(overall, dict) and overall.get("value"):
+                res["sleep_score"] = int(overall["value"])
+    except Exception:
+        pass
+
+    # 2. Resting Heart Rate & User Summary
+    user_summary = None
+    try:
+        user_summary = client.get_user_summary(date_str)
+    except Exception:
+        pass
+
+    try:
+        rhr_data = client.get_rhr_day(date_str)
+        rhr_val = None
+        if rhr_data:
+            metrics = rhr_data.get("allMetrics", {}).get("metricsMap", {}).get("WELLNESS_RESTING_HEART_RATE", [])
+            if metrics and isinstance(metrics, list) and len(metrics) > 0:
+                rhr_val = metrics[0].get("value")
+            if not rhr_val:
+                rhr_val = rhr_data.get("restingHeartRate")
+        if not rhr_val and user_summary:
+            rhr_val = user_summary.get("restingHeartRate")
+
+        if rhr_val and float(rhr_val) > 0:
+            res["resting_hr"] = int(round(float(rhr_val)))
+            has_data = True
+    except Exception:
+        pass
+
+    # 3. Overnight HRV
+    try:
+        hrv_data = client.get_hrv_data(date_str)
+        if hrv_data and "hrvSummary" in hrv_data:
+            summary = hrv_data["hrvSummary"]
+            last_night = summary.get("lastNightAvg")
+            status = summary.get("status")
+            if last_night and last_night > 0:
+                res["hrv_last_night"] = int(round(last_night))
+                has_data = True
+            if status:
+                res["hrv_status"] = str(status).lower()
+    except Exception:
+        pass
+
+    # 4. Stress Data
+    try:
+        stress_data = client.get_stress_data(date_str)
+        stress_val = None
+        if stress_data:
+            stress_val = stress_data.get("avgStressLevel")
+        if not stress_val and user_summary:
+            stress_val = user_summary.get("averageStressLevel")
+        if stress_val and float(stress_val) > 0:
+            res["avg_stress"] = int(round(float(stress_val)))
+            has_data = True
+    except Exception:
+        pass
+
+    # 5. Body Battery
+    try:
+        bb_data = client.get_body_battery(date_str)
+        if bb_data and isinstance(bb_data, list) and len(bb_data) > 0:
+            entry = bb_data[0]
+            ch = entry.get("charged")
+            dr = entry.get("drained")
+            if ch is not None:
+                res["body_battery_charged"] = int(ch)
+                has_data = True
+            if dr is not None:
+                res["body_battery_drained"] = int(dr)
+                has_data = True
+            
+            # Most recent battery level in the day
+            values = entry.get("bodyBatteryValuesArray") or []
+            if values and len(values) > 0:
+                res["body_battery_latest"] = int(values[-1][1])
+        elif user_summary:
+            ch = user_summary.get("bodyBatteryChargedValue")
+            dr = user_summary.get("bodyBatteryDrainedValue")
+            if ch is not None:
+                res["body_battery_charged"] = int(ch)
+                has_data = True
+            if dr is not None:
+                res["body_battery_drained"] = int(dr)
+                has_data = True
+    except Exception:
+        pass
+
+    if not has_data:
+        return res
+
+    res["available"] = True
+
+    # Compute composite recovery score and flags
+    flags = []
+    score = 80  # Baseline
+
+    # Sleep impact
+    sleep_h = res.get("sleep_hours")
+    if sleep_h is not None:
+        if sleep_h < 5.5:
+            score -= 30
+            flags.append("critically_low_sleep")
+        elif sleep_h < 6.5:
+            score -= 15
+            flags.append("low_sleep")
+        elif sleep_h >= 7.5:
+            score += 10
+
+    # HRV impact
+    hrv_stat = res.get("hrv_status", "").lower()
+    if hrv_stat in ("poor", "low", "unbalanced"):
+        score -= 25
+        flags.append("depressed_hrv")
+    elif hrv_stat in ("balanced", "good"):
+        score += 10
+
+    # RHR impact
+    rhr = res.get("resting_hr")
+    if rhr is not None:
+        if rhr > 60:
+            score -= 15
+            flags.append("elevated_rhr")
+        elif rhr <= 50:
+            score += 5
+
+    # Body battery impact
+    bb = res.get("body_battery_latest") or res.get("body_battery_charged")
+    if bb is not None:
+        if bb < 30:
+            score -= 20
+            flags.append("depleted_body_battery")
+        elif bb < 50:
+            score -= 10
+            flags.append("moderate_body_battery")
+        elif bb >= 75:
+            score += 10
+
+    final_score = max(10, min(100, score))
+    res["recovery_score"] = final_score
+    res["flags"] = flags
+
+    if final_score >= 80:
+        res["recovery_status"] = "optimal"
+    elif final_score >= 65:
+        res["recovery_status"] = "adequate"
+    elif final_score >= 45:
+        res["recovery_status"] = "compromised"
+    else:
+        res["recovery_status"] = "poor"
+
+    return res
+
+
+def assess_workout_readiness(recovery: dict, workout_text: str = "") -> dict:
+    """
+    Correlate athlete's physiological recovery status with the day's workout prescription.
+    
+    If recovery is compromised or poor and the planned session includes high-intensity
+    intervals, tempo, or threshold work, generates concrete modulation advice.
+    """
+    target_date = recovery.get("target_date")
+    status = recovery.get("recovery_status", "unknown")
+    score = recovery.get("recovery_score", 75)
+    flags = recovery.get("flags", [])
+
+    clean_text = (workout_text or "").lower()
+
+    # Detect workout intensity
+    is_rest = not clean_text or any(w in clean_text for w in ("ξεκουραση", "rest", "off", "ρεπο"))
+    high_intensity_keywords = (
+        "διαλειμματικη",
+        "διαλειμματα",
+        "tempo",
+        "κατωφλι",
+        "threshold",
+        "vo2",
+        "strides",
+        "ανοίγματα",
+        "repeat",
+        "1000m",
+        "400m",
+        "800m",
+        "2000m",
+        "z4",
+        "z5",
+        "interval",
+    )
+    is_high_intensity = any(k in clean_text for k in high_intensity_keywords) or "@ 3:" in clean_text or "@ 4:" in clean_text or "@ 3," in clean_text or "@ 4," in clean_text
+    is_run = any(k in clean_text for k in ("τρεξιμο", "δρομικες", "run", "χαλαρο"))
+
+    needs_modulation = False
+    advice = "Εκτέλεσε την προπόνηση κανονικά σύμφωνα με τις οδηγίες του προπονητή."
+    substitute_option = None
+
+    if is_rest:
+        advice = "Ημέρα ξεκούρασης/αποφόρτισης. Επικεντρώσου στον ύπνο και τη σωστή διατροφή."
+    elif status == "poor":
+        needs_modulation = True
+        if is_high_intensity:
+            advice = (
+                "⚠️ *Κόκκινος Δείκτης Αποκατάστασης (Poor Recovery):* Η φυσιολογική κόπωση είναι υψηλή "
+                f"({', '.join(flags) if flags else 'χαμηλή ετοιμότητα'}). Συνιστάται πλήρης ακύρωση των έντονων "
+                "διαλειμμάτων και αντικατάσταση με 40' χαλαρό αερόβιο τρέξιμο (Zone 1-2) ή 50' χαλαρό ποδήλατο Tacx."
+            )
+            substitute_option = {
+                "sport": "Cycling",
+                "duration_min": 50,
+                "target_zone": "Z1-Z2 Recovery",
+                "notes": "Χωρίς αντίσταση, 85-90 rpm cadence για μυϊκή ανακούφιση.",
+            }
+        else:
+            advice = (
+                "⚠️ *Χαμηλή Αποκατάσταση:* Διατήρησε τον ρυθμό αυστηρά στην καρδιακή Zone 1/2. "
+                "Μην πιέσεις για ρυθμό αν οι καρδιακοί παλμοί ανεβαίνουν γρήγορα."
+            )
+    elif status == "compromised":
+        if is_high_intensity:
+            needs_modulation = True
+            advice = (
+                "🟡 *Μέτρια Αποκατάσταση (Compromised):* Τα βιομετρικά δείχνουν μερική κόπωση "
+                f"({', '.join(flags) if flags else 'μη βέλτιστο HRV/ύπνος'}). Συνιστάται μείωση της έντασης "
+                "στα διαστήματα κατά 10–15 δευτ/χλμ ή μείωση των επαναλήψεων (π.χ. 4 αντί για 6) "
+                "ώστε να μην υπερφορτωθεί το καρδιαγγειακό σύστημα."
+            )
+            substitute_option = {
+                "pace_adjustment_sec": 12,
+                "suggested_action": "Reduce intensity by 10-15s/km or cut 1-2 intervals",
+            }
+        else:
+            advice = "Αποδεκτή αποκατάσταση. Εκτέλεσε το αερόβιο πρόγραμμα δίνοντας έμφαση στην ενυδάτωση."
+    elif status == "optimal":
+        advice = "🟢 *Βέλτιστη Ετοιμότητα (Optimal Readiness):* Οργανισμός πλήρως αναρρωμένος! Έτοιμος για υψηλή ένταση."
+
+    return {
+        "date": target_date,
+        "recovery_status": status,
+        "recovery_score": score,
+        "flags": flags,
+        "workout_detected_intensity": "high" if is_high_intensity else ("rest" if is_rest else "moderate"),
+        "needs_modulation": needs_modulation,
+        "modulation_advice": advice,
+        "substitute_option": substitute_option,
+    }

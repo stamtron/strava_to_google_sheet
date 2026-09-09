@@ -213,4 +213,98 @@ def test_telegram_today_api_endpoint_dry_run():
     assert data["provider"] == "dry-run"
 
 
+def test_format_next_day_brief_with_recovery():
+    t_date = date(2026, 9, 1)
+    workout = "🏃 8x400m @ 3:55"
+    recovery = {
+        "available": True,
+        "recovery_status": "compromised",
+        "sleep_hours": 5.8,
+        "hrv_last_night": 42,
+        "resting_hr": 58,
+        "body_battery_latest": 35,
+    }
+    readiness = {
+        "needs_modulation": True,
+        "modulation_advice": "Συνιστάται μείωση της έντασης κατά 10s/χλμ.",
+    }
+    brief = format_next_day_brief(
+        target_date=t_date,
+        workout_text=workout,
+        recovery_info=recovery,
+        readiness_info=readiness,
+    )
+    assert "Αποκατάσταση (Garmin)" in brief
+    assert "5.8h" in brief
+    assert "42ms" in brief
+    assert "58 bpm" in brief
+    assert "35%" in brief
+    assert "Συνιστάται μείωση της έντασης" in brief
+
+
+def test_handle_telegram_command_recovery(monkeypatch):
+    from src.integrations.telegram import handle_telegram_command
+    import src.integrations.garmin as garmin_mod
+
+    fake_rec = {
+        "available": True,
+        "recovery_status": "optimal",
+        "recovery_score": 88,
+        "sleep_hours": 8.1,
+        "sleep_score": 85,
+        "hrv_last_night": 74,
+        "hrv_status": "balanced",
+        "resting_hr": 47,
+        "body_battery_latest": 90,
+        "flags": [],
+    }
+    monkeypatch.setattr(garmin_mod, "get_daily_recovery_metrics", lambda d, client=None: fake_rec)
+
+    res = handle_telegram_command("/recovery")
+    assert "Ημερήσια Αποκατάσταση & Ετοιμότητα" in res
+    assert "OPTIMAL" in res
+    assert "8.1 ώρες" in res
+    assert "74 ms" in res
+    assert "47 bpm" in res
+    assert "90%" in res
+
+
+def test_handle_telegram_command_compliance(monkeypatch):
+    from src.integrations.telegram import handle_telegram_command
+    import src.analytics.compliance as comp_mod
+
+    fake_comp = {
+        "compliance_score": 95,
+        "status": "fully_compliant",
+        "planned_text": "Τρέξιμο 10 χλμ",
+        "matches": [{"sport": "Run", "actual_distance_km": 10.2, "actual_pace": "5:12/χλμ", "status": "fully_compliant"}],
+        "summary": "100% adherence to planned distance and pace.",
+    }
+    monkeypatch.setattr(comp_mod, "evaluate_daily_compliance", lambda planned, acts: fake_comp)
+
+    res = handle_telegram_command("/compliance 2026-09-08")
+    assert "Συμμόρφωση Προπόνησης" in res
+    assert "95%" in res
+    assert "10.2km" in res
+
+
+def test_telegram_webhook_endpoint():
+    from fastapi.testclient import TestClient
+    from src.api.server import app
+
+    client = TestClient(app)
+    payload = {
+        "update_id": 123456,
+        "message": {
+            "message_id": 1,
+            "chat": {"id": 999},
+            "text": "/help",
+        }
+    }
+    resp = client.post("/api/notifications/telegram/webhook", json=payload)
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+
+
+
 

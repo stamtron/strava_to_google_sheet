@@ -120,12 +120,14 @@ def format_next_day_brief(
     weather_info: dict | None = None,
     coach_tip: str | None = None,
     lookup_error: str | None = None,
+    recovery_info: dict | None = None,
+    readiness_info: dict | None = None,
 ) -> str:
     """
     Format a clean, structured morning/evening briefing for Telegram.
 
     Includes weather-adjusted pacing guidance when outdoor running is detected
-    and thermal/wind conditions warrant adjustment.
+    and thermal/wind conditions warrant adjustment, plus Garmin recovery readiness.
     """
     weekday_raw = GREEK_DAY_NAMES.get(target_date.weekday(), "")
     weekday_gr = _strip_greek_accents(weekday_raw).upper()
@@ -147,6 +149,31 @@ def format_next_day_brief(
         lines.append("Έλεγξε το Google Sheet πριν προπονηθείς.")
     else:
         lines.append("🏋️‍♂️ *Πλάνο:* Rest Day / Ελεύθερη ημέρα ή δεν έχει καταχωρηθεί ακόμη.")
+
+    # Garmin Recovery & Readiness section (if available)
+    if recovery_info and recovery_info.get("available"):
+        sleep_h = recovery_info.get("sleep_hours")
+        hrv_ms = recovery_info.get("hrv_last_night")
+        rhr = recovery_info.get("resting_hr")
+        bb = recovery_info.get("body_battery_latest") or recovery_info.get("body_battery_charged")
+        status = recovery_info.get("recovery_status", "unknown")
+
+        status_icon = "🟢" if status == "optimal" else ("🟡" if status == "adequate" else ("🟠" if status == "compromised" else "🔴"))
+        lines.append(f"\n🔋 *Αποκατάσταση (Garmin) — {status_icon} {status.upper()}:*")
+        items = []
+        if sleep_h is not None:
+            items.append(f"Ύπνος: *{sleep_h}h*")
+        if hrv_ms is not None:
+            items.append(f"HRV: *{hrv_ms}ms*")
+        if rhr is not None:
+            items.append(f"RHR: *{rhr} bpm*")
+        if bb is not None:
+            items.append(f"Battery: *{bb}%*")
+        if items:
+            lines.append("• " + " | ".join(items))
+
+        if readiness_info and readiness_info.get("needs_modulation"):
+            lines.append(f"• {readiness_info.get('modulation_advice')}")
 
     # Weather section
     if weather_info:
@@ -203,6 +230,7 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
     """
     from src.integrations.sheets import get_planned_workout_for_date
     from src.integrations.weather import get_weather_for_date
+    from src.integrations.garmin import get_daily_recovery_metrics, assess_workout_readiness
 
     clean_text = (command_text or "").strip()
     if not clean_text:
@@ -220,8 +248,10 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
         return (
             "🤖 *Endurance AI Telegram Assistant*\n\n"
             "Διαθέσιμες εντολές:\n"
-            "• `/today` — Πλάνο προπόνησης & καιρός για σήμερα\n"
+            "• `/today` — Πλάνο προπόνησης, καιρός & αποκατάσταση για σήμερα\n"
             "• `/tomorrow` — Πλάνο προπόνησης & καιρός για αύριο\n"
+            "• `/recovery` — Βιομετρικά Garmin (Ύπνος, HRV, Body Battery) & ετοιμότητα\n"
+            "• `/compliance [YYYY-MM-DD]` — Αξιολόγηση εκτέλεσης προπόνησης vs πλάνο\n"
             "• `/sync` — Συγχρονισμός Strava & Garmin στο Google Sheets\n"
             "• `/stats` — Εβδομαδιαίος όγκος προπόνησης & δείκτης ACWR\n"
             "• `/gear` — Χιλιόμετρα παπουτσιών & ποδηλάτων\n"
@@ -232,6 +262,8 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
         target_d = date.today()
         w_info = get_planned_workout_for_date(target_d)
         weath = get_weather_for_date(target_d)
+        rec = get_daily_recovery_metrics(target_d)
+        readiness = assess_workout_readiness(rec, workout_text=w_info.get("workout_text", ""))
         tip = "Keep easy aerobic pace in Zone 2 for optimal recovery."
         return format_next_day_brief(
             target_date=target_d,
@@ -239,12 +271,16 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
             weather_info=weath,
             coach_tip=tip,
             lookup_error=w_info.get("reason"),
+            recovery_info=rec,
+            readiness_info=readiness,
         )
 
     if cmd in ("/tomorrow", "/next", "tomorrow", "αυριο", "/avrio"):
         target_d = date.today() + timedelta(days=1)
         w_info = get_planned_workout_for_date(target_d)
         weath = get_weather_for_date(target_d)
+        rec = get_daily_recovery_metrics(target_d)
+        readiness = assess_workout_readiness(rec, workout_text=w_info.get("workout_text", ""))
         tip = "Hydrate and fuel early for tomorrow's session."
         return format_next_day_brief(
             target_date=target_d,
@@ -252,7 +288,97 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
             weather_info=weath,
             coach_tip=tip,
             lookup_error=w_info.get("reason"),
+            recovery_info=rec,
+            readiness_info=readiness,
         )
+
+    if cmd in ("/recovery", "recovery", "/health", "/sleep"):
+        try:
+            target_d = date.today()
+            w_info = get_planned_workout_for_date(target_d)
+            rec = get_daily_recovery_metrics(target_d)
+            readiness = assess_workout_readiness(rec, workout_text=w_info.get("workout_text", ""))
+
+            if not rec.get("available"):
+                return "ℹ️ *Garmin Recovery:* Δεν βρέθηκαν διαθέσιμα βιομετρικά για σήμερα. Βεβαιώσου ότι το ρολόι έχει συγχρονιστεί με το Garmin Connect."
+
+            status = rec.get("recovery_status", "unknown")
+            icon = "🟢" if status == "optimal" else ("🟡" if status == "adequate" else ("🟠" if status == "compromised" else "🔴"))
+            score = rec.get("recovery_score", 75)
+
+            lines = [
+                f"🔋 *Ημερήσια Αποκατάσταση & Ετοιμότητα*",
+                "━━━━━━━━━━━━━━━━━━━━",
+                f"• Κατάσταση: {icon} *{status.upper()}* (Score: {score}/100)",
+            ]
+            if rec.get("sleep_hours") is not None:
+                lines.append(f"• 😴 Ύπνος: *{rec['sleep_hours']} ώρες*" + (f" (Score: {rec['sleep_score']})" if rec.get("sleep_score") else ""))
+            if rec.get("hrv_last_night") is not None:
+                lines.append(f"• 💓 HRV: *{rec['hrv_last_night']} ms* ({rec.get('hrv_status', 'unknown')})")
+            if rec.get("resting_hr") is not None:
+                lines.append(f"• 🫀 Resting HR: *{rec['resting_hr']} bpm*")
+            bb = rec.get("body_battery_latest") or rec.get("body_battery_charged")
+            if bb is not None:
+                lines.append(f"• ⚡ Body Battery: *{bb}%*")
+            if rec.get("avg_stress") is not None:
+                lines.append(f"• 🧘 Stress Level: *{rec['avg_stress']}/100*")
+
+            if rec.get("flags"):
+                lines.append(f"• ⚠️ Σημάδια κόπωσης: _{', '.join(rec['flags'])}_")
+
+            lines.append("━━━━━━━━━━━━━━━━━━━━")
+            lines.append(f"💡 *Οδηγία Προπόνησης:*\n{readiness.get('modulation_advice', '')}")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"❌ Σφάλμα ανάκτησης αποκατάστασης: `{e}`"
+
+    if cmd in ("/compliance", "compliance", "/execution"):
+        try:
+            parts = clean_text.split()
+            target_str = parts[1] if len(parts) > 1 else date.today().isoformat()
+            t_date = date.fromisoformat(target_str)
+        except ValueError:
+            return "⚠️ Μη έγκυρη ημερομηνία. Χρησιμοποίησε `/compliance YYYY-MM-DD` (π.χ. `/compliance 2026-09-08`)."
+
+        try:
+            from src.integrations.sheets import get_planned_workout_for_date
+            from src.storage.activity_store import get_activities, init_db
+            from src.analytics.compliance import evaluate_daily_compliance
+
+            w_info = get_planned_workout_for_date(t_date)
+            planned_text = w_info.get("workout_text", "")
+
+            conn = init_db()
+            acts = get_activities(conn, limit=250)
+            conn.close()
+
+            day_acts = [a for a in acts if (a.get("start_date_local") or "").startswith(t_date.isoformat())]
+            comp = evaluate_daily_compliance(planned_text, day_acts)
+            comp["planned_text"] = planned_text
+            score = comp.get("compliance_score", 100)
+            score_icon = "🟢" if score >= 80 else ("🟡" if score >= 50 else "🔴")
+
+            lines = [
+                f"🎯 *Συμμόρφωση Προπόνησης — {t_date.strftime('%d/%m/%Y')}*",
+                "━━━━━━━━━━━━━━━━━━━━",
+                f"• Βαθμός Εκτέλεσης: {score_icon} *{score}%*",
+                f"• Πλάνο Προπονητή:\n  _{comp.get('planned_text') or 'Δεν βρέθηκε καταχωρημένο πλάνο'}_",
+            ]
+            matches = comp.get("matches", [])
+            if matches:
+                lines.append("• Εκτελεσθείσες Δραστηριότητες:")
+                for m in matches:
+                    st = m.get("status", "unknown").upper()
+                    st_icon = "✅" if "COMPLIANT" in st else ("🟡" if "PARTIAL" in st else "ℹ️")
+                    lines.append(f"  {st_icon} *{m.get('sport')}*: {m.get('actual_distance_km', 0):.1f}km @ {m.get('actual_pace', 'N/A')} ({st})")
+            else:
+                lines.append("• Καμία δραστηριότητα Strava δεν ταυτοποιήθηκε για αυτή την ημέρα.")
+
+            lines.append("━━━━━━━━━━━━━━━━━━━━")
+            lines.append(f"📝 {comp.get('summary', '')}")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"❌ Σφάλμα αξιολόγησης συμμόρφωσης: `{e}`"
 
     if cmd in ("/sync", "sync", "/sheets"):
         try:
@@ -441,10 +567,13 @@ def run_daily_dispatch_check() -> bool:
         logger.info("Executing daily automated Telegram dispatch for tomorrow's workout...")
         from src.integrations.sheets import get_planned_workout_for_date
         from src.integrations.weather import get_weather_for_date
+        from src.integrations.garmin import get_daily_recovery_metrics, assess_workout_readiness
 
         target_date = date.today() + timedelta(days=1)
         w_info = get_planned_workout_for_date(target_date)
         weath = get_weather_for_date(target_date)
+        rec = get_daily_recovery_metrics(target_date)
+        readiness = assess_workout_readiness(rec, workout_text=w_info.get("workout_text", ""))
         tip = "Keep easy aerobic pace in Zone 2 for optimal recovery and mitochondrial adaptation."
 
         brief = format_next_day_brief(
@@ -453,6 +582,8 @@ def run_daily_dispatch_check() -> bool:
             weather_info=weath,
             coach_tip=tip,
             lookup_error=w_info.get("reason"),
+            recovery_info=rec,
+            readiness_info=readiness,
         )
         res = send_telegram_message(brief)
         if res.get("success"):

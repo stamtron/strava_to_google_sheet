@@ -17,11 +17,16 @@ strava_to_google_sheet/
 │   │   ├── strava.py             # Strava OAuth2 & activity fetcher
 │   │   ├── strava_backfill.py    # Paginated full-history import + incremental sync
 │   │   ├── garmin.py             # Garmin Connect authentication & biometrics
+│   │   ├── garmin_workouts.py    # Structured workout generator & watch sync
 │   │   ├── sheets.py             # Google Sheets API & dual-layout sync engine
+│   │   ├── telegram.py           # Telegram notification dispatcher & interactive bot
 │   │   └── weather.py            # Open-Meteo daily weather integration & caching
 │   ├── analytics/                # Data processing & AI
 │   │   ├── metrics.py            # Relative Effort (Suffer Score), ACWR, weekly/monthly volume
 │   │   ├── durability.py         # Run ramp rate, spacing, monotony/strain, cross-training
+│   │   ├── compliance.py         # Workout plan vs actual execution compliance engine
+│   │   ├── gear.py               # Running shoe & bike mileage wear tracker
+│   │   ├── weather_pace.py       # Thermal & aerodynamic pace adjustment calculator
 │   │   ├── ai_coach.py           # Gemini LLM coach & Peter Riegel race predictor
 │   │   ├── coach_agent.py        # Conversational coach: tools, sessions, fact extraction
 │   │   └── coach_memory.py       # ChromaDB long-term memory (Gemini embeddings)
@@ -31,13 +36,12 @@ strava_to_google_sheet/
 │   └── api/                      # Web API Server
 │       └── server.py             # FastAPI REST endpoints & routes
 ├── web/                          # Frontend Single Page App
-│   ├── index.html                # Dashboard + floating AI Coach chat drawer
+│   ├── index.html                # Dashboard + floating AI Coach chat drawer + Garmin modal
 │   ├── styles.css                # Custom glassmorphic design system
 │   └── app.js                    # Chart.js charts, chat drawer & interaction logic
 ├── main.py                       # Root CLI entry point (incl. --backfill)
 ├── server.py                     # Root Web server entry point
-├── tests/                        # pytest suite (offline: formatting, metrics, sheets,
-│                                 #   caching, storage, backfill, durability, coach, weather)
+├── tests/                        # pytest suite (offline, 320+ tests)
 ├── pyproject.toml                # Project dependencies and config
 ├── README.md                     # User documentation
 ├── AGENTS.md                     # AI Agent Technical Manual
@@ -54,11 +58,15 @@ strava_to_google_sheet/
 
 - ✅ **Strava Workouts & Relative Effort**: OAuth2 authentication with automatic token refresh, activity metrics, and Suffer Score calculation.
 - ✅ **Garmin 24/7 Health Metrics**: Automatically fetches total weekly Sleep hours, weekly average Resting Heart Rate (HRrest), overnight HRV, daily Body Battery (charged/drained), and all-day Stress from Garmin Connect.
+- ✅ **Garmin Structured Workout Sync & Direct Watch Export**: Parses natural Greek coaching sheet training sessions into structured workout steps (warmup, intervals, pace/power targets, recovery, cooldown) using Gemini LLM and schedules them directly onto Garmin Connect for over-the-air sync to Garmin Watches and Tacx.
+- ✅ **Plan vs. Actual Execution Compliance**: Automatically parses coach's prescribed targets from Google Sheets and compares them against actual Strava telemetry to calculate distance/time deltas, pace fidelity, and a 0–100% compliance score.
+- ✅ **Gear & Running Shoe Mileage Wear Tracker**: Aggregates running shoe and bike mileage from Strava activity history and triggers warning alerts before shoe midsole cushioning degrades past injury prevention limits (`SHOE_ALERT_KM`, default 650 km).
+- ✅ **Weather-Adjusted Pacing Calculator**: Computes thermal slowdown penalties for temperatures above 15°C (preventing cardiac drift) and wind penalties above 18 km/h, ensuring target Zone 2 metabolic stimulus is accurately preserved.
 - ✅ **80/20 Polarized Training & Zone Distribution (Z1–Z5)**: Computes 5-zone Karvonen Heart Rate Reserve thresholds and tracks weekly low (Z1-Z2) vs tempo (Z3) vs high (Z4-Z5) intensity distribution, detecting Zone 3 tempo traps.
 - ✅ **Daily Weather Integration (Athens, Greece)**: Real-time historical and 7-day forecast daily weather via Open-Meteo (temperature min/max, apparent temp, rain amount/probability, wind speed, WMO condition emojis).
-- ✅ **Telegram Next-Day Training Dispatcher**: Reads tomorrow's prescribed workout from Google Sheets, combines it with the Athens weather forecast and an AI coaching tip, and sends a daily brief to Telegram via Telegram Bot API.
-- ✅ **Strava Real-Time Webhook Auto-Sync**: Receives incoming activity creation webhooks from Strava, updates the local SQLite store, and automatically syncs to Google Sheets.
-- ✅ **Google Sheets Sync**: Dynamically supports both **Old Single-Row Layout** (rows 13–66) and **New 7-Row Block Layout** (row 67+).
+- ✅ **Telegram Next-Day Training Dispatcher & Bot**: Reads tomorrow's prescribed workout from Google Sheets, combines it with Athens weather forecast, thermal pace adjustments, and an AI coaching tip, dispatching daily briefs to Telegram via Telegram Bot API with two-way command handling (`/today`, `/tomorrow`, `/sync`, `/stats`, `/gear`, `/coach`).
+- ✅ **Strava Real-Time Webhook Auto-Sync**: Receives incoming activity creation webhooks from Strava, updates the local SQLite store, and optionally syncs to Google Sheets immediately.
+- ✅ **Google Sheets Sync**: Dynamically supports both **Old Single-Row Layout** (rows 13–66) and **New 7-Row Block Layout** (row 67+), retrying transient quota limits with exponential backoff.
 - ✅ **Appends Below Coach Notes**: Preserves coach training instructions and appends Strava data under `── Strava Data ──`.
 - ✅ **Weekly Totals**: Automatically sums and writes weekly totals for Running, Cycling, Swimming, Strength Training (Ενδυνάμωση), Total Training Hours, and Garmin Health Tracker (`Ύπνος __h • HRrest __ • HRV __`).
 - ✅ **Swimming Pace in /100m**: Formats swimming pace in time per 100 meters (e.g. `1:24 /100μ`).
@@ -87,7 +95,7 @@ The dashboard's original AI panel is a single stateless Gemini call and still wo
 unchanged (`POST /api/ai/coach`, with heuristic fallbacks when no API key is set).
 Alongside it, the 💬 launcher in the bottom-right opens a conversational coach.
 
-**What it can reach.** The agent has ten tools and decides which to call:
+**What it can reach.** The agent has 14 tools and decides which to call:
 
 | Tool | What it answers |
 | --- | --- |
@@ -96,7 +104,11 @@ Alongside it, the 💬 launcher in the bottom-right opens a conversational coach
 | `get_training_load` | Total and per-sport ACWR |
 | `get_run_durability` | "Is my running load risky right now?" |
 | `get_race_projections` | Race and triathlon finish projections, PB or training mode |
-| `get_health_metrics` | Sleep, resting HR, HRV |
+| `get_health_metrics` | Multi-week Sleep, resting HR, HRV trends |
+| `get_athlete_recovery` | "How recovered am I today? Should I train hard?" (HRV, Sleep, Body Battery) |
+| `get_gear_status` | Running shoe mileage, threshold wear alerts & bike distance |
+| `get_workout_compliance` | "Did I hit my intervals on Tuesday?" (Plan vs. Strava execution score) |
+| `preview_next_workout` | "What workout is planned tomorrow and how should I pace it?" |
 | `get_weather_forecast` | Daily forecast & conditions in Athens, Greece |
 | `search_web` | Races to enter, gear for the conditions |
 | `find_exercise_videos` | Exercise demos, scoped to YouTube |
@@ -125,6 +137,10 @@ memory that persists indefinitely needs to be inspectable.
 | `GET /api/dashboard` | Weekly metrics, progression history, ACWR, weather, HR zones & Polarized 80/20 balance |
 | `GET /api/weather` | Daily historical and 7-day forecast weather (Athens, Greece) |
 | `GET /api/durability` | Run durability assessment & cross-training suggestions |
+| `GET /api/compliance` | Planned workout vs. Strava execution matching & score |
+| `GET /api/gear` | Running shoe and bicycle mileage & replacement alerts |
+| `GET /api/workouts/preview` | Preview structured Garmin workouts extracted from Google Sheets |
+| `POST /api/workouts/sync` | Schedule structured workouts onto Garmin Connect calendar |
 | `POST /api/ai/coach` | One-shot weekly coaching panel |
 | `POST /api/ai/chat` | Conversational turn: `{message, session_id?, week_context?}` |
 | `GET`/`DELETE /api/coach/memory` | Inspect and prune stored facts |
@@ -133,7 +149,9 @@ memory that persists indefinitely needs to be inspectable.
 | `POST /api/history/backfill` | Trigger a full history import |
 | `POST /api/sheet/sync` | Google Sheets sync |
 | `GET`/`POST /api/strava/webhook` | Strava real-time webhook handshake and automatic activity sync |
-| `POST /api/notifications/telegram/next-day` | Send tomorrow's workout brief + Athens weather + coach tip to Telegram |
+| `POST /api/notifications/telegram/next-day` | Send tomorrow's workout brief + Athens weather + Garmin recovery + coach tip to Telegram |
+| `POST /api/notifications/telegram/today` | Send today's workout brief to Telegram |
+| `POST /api/notifications/telegram/webhook` | Receive push webhook updates directly from Telegram Bot API |
 
 ---
 
@@ -175,8 +193,8 @@ a sensible default. See [`.env.example`](.env.example) for the fully documented 
 | `STRAIN_WARN_THRESHOLD` | `1500.0` | Foster strain warning level |
 | `AQUA_JOG_LOAD_FACTOR` | `0.90` | Run-equivalent stimulus per minute of aqua jogging |
 | `BIKE_RUN_LOAD_FACTOR` | `0.55` | Run-equivalent stimulus per minute of cycling |
-| `GEMINI_MODELS` | `gemini-3.6-flash,gemini-2.5-flash` | Models tried in order for the one-shot panel |
-| `COACH_CHAT_MODELS` | `gemini-3.6-flash,gemini-2.5-flash` | Chat models; must support function calling |
+| `GEMINI_MODELS` | `gemini-3.6-flash,gemini-3.7-flash,gemini-3.8-flash,gemini-flash-latest` | Models tried in order for the one-shot panel |
+| `COACH_CHAT_MODELS` | `gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-flash-latest` | Chat models; must support function calling |
 | `COACH_MAX_TOOL_CALLS` | `8` | Ceiling on the tool loop for a single turn |
 | `COACH_SESSION_TTL` | `604800` | Idle conversation lifetime (seconds, 7 days) |
 | `COACH_MAX_HISTORY_MESSAGES` | `24` | Messages replayed as history each turn |
@@ -185,6 +203,12 @@ a sensible default. See [`.env.example`](.env.example) for the fully documented 
 | `COACH_EMBEDDING_MODEL` | `gemini-embedding-001` | Embeddings for the Chroma backend |
 | `COACH_MEMORY_COLLECTION` | `athlete_memory` | ChromaDB collection name |
 | `COACH_AUTO_FACT_LIMIT` | `5` | Max facts one extraction pass may store |
+| `STRAVA_WEBHOOK_VERIFY_TOKEN` | `STRAVA_WEBHOOK_SECRET` | Verification token for Strava webhook handshake |
+| `AUTO_SYNC_SHEET_ON_WEBHOOK` | `False` | Automatically trigger Sheets sync on new Strava webhook event |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | — | Telegram Bot API credentials |
+| `TELEGRAM_DAILY_DISPATCH_TIME` | `20:30` | Daily time (HH:MM) to auto-dispatch next-day training brief |
+| `GSHEETS_MAX_RETRIES` | `3` | Maximum retries with exponential backoff on Sheets API quota errors |
+| `SHOE_ALERT_KM` | `650` | Mileage threshold to warn when running shoe foam degrades |
 | `ATHLETE_PB_HALF_MARATHON_SEC` | `6415` | Verified half PB — 1h 46m 55s |
 | `ATHLETE_PB_10K_SEC` | `3015` | Verified 10K PB — 50m 15s |
 | `ATHLETE_PB_5K_SEC` | `1395` | Verified 5K PB — 23m 15s; run baseline in PB mode |
