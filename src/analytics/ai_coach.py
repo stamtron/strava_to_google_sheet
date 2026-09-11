@@ -5,7 +5,7 @@ Generates automated workout feedback, readiness advice,
 and race predictions using LLMs (Gemini) with robust heuristic fallbacks.
 """
 
-from datetime import date
+from datetime import date, timedelta
 import json
 import math
 import time
@@ -376,6 +376,11 @@ def generate_weekly_coaching_insights(
     days_completed = 7
     days_remaining = 0
 
+    if not week_monday:
+        curr_monday = today - timedelta(days=today.weekday())
+        week_monday = curr_monday.isoformat()
+        week_sunday = (curr_monday + timedelta(days=6)).isoformat()
+
     if week_monday and week_sunday:
         try:
             mon = date.fromisoformat(str(week_monday)[:10])
@@ -416,10 +421,13 @@ def generate_weekly_coaching_insights(
 
     if is_in_progress:
         progress_note = f"""
-IMPORTANT CONTEXT — WEEK IS CURRENTLY IN PROGRESS:
-- Today is {day_name} (Day {days_completed} of 7). There are {days_remaining} days remaining in this week.
-- The training volume, duration, and Relative Effort below reflect PARTIAL-WEEK progress accumulated so far, NOT a completed 7-day week.
-- DO NOT critique the volume as low or assume a training drop. Evaluate the sessions completed to date and advise on balancing the remaining {days_remaining} days.
+CRITICAL TEMPORAL CONTEXT — THIS TRAINING WEEK IS CURRENTLY IN PROGRESS:
+- Today is {day_name} (Day {days_completed} of 7). The training week DOES NOT end until Sunday night!
+- There are {days_remaining} full days remaining in this training microcycle (the weekend is still ahead).
+- The training volume, duration, and Relative Effort below reflect PARTIAL-WEEK progress accumulated up to {day_name}, NOT a finished week.
+- MANDATORY INSTRUCTION: Do NOT say "finishing out the week", "wrapping up the week", "this was a week", or write in past-tense summary.
+- Write in present/forward-looking tense (e.g. "Heading into the weekend with {total_time_h:.1f} hours logged so far...", "As of {day_name}...", "With {days_remaining} days left in the week...").
+- DO NOT critique the volume as low or assume a training drop. Guide the athlete on how to execute their remaining sessions over the next {days_remaining} days.
 """
     else:
         progress_note = "CONTEXT: Completed 7-day training week."
