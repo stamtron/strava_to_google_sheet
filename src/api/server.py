@@ -60,7 +60,7 @@ async def lifespan(app: FastAPI):
         pass
 
 
-app = FastAPI(title="Endurance AI Training API", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="StaminAI Training API", version="2.0.0", lifespan=lifespan)
 
 from src.config import (
     ACTIVITIES_CACHE_FILE,

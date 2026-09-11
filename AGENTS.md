@@ -1,16 +1,14 @@
-# 🤖 AGENTS.md — Strava & Garmin to Google Sheet
+# 🤖 AGENTS.md — StaminAI: Adaptive Endurance & Recovery Platform
 
-This document serves as the primary technical guide for AI agents and developers working on the `strava_to_google_sheet` repository.
+This document serves as the primary technical guide for AI agents and developers working on the **StaminAI** (`strava_to_google_sheet`) repository.
 
 ---
 
 ## 📌 Project Overview
 
-`strava_to_google_sheet` is an automated fitness tracking integration that fetches workout activities from **Strava** and 24/7 health biometrics (Sleep, Resting Heart Rate, HRV) from **Garmin Connect**, formatting and synchronizing them into a structured Greek coaching spreadsheet in **Google Sheets**, while providing a modern **FastAPI + Chart.js** analytics web app with **AI Coaching (Gemini)** and **Acute:Chronic Workload Ratio (ACWR)** tracking.
+**StaminAI** is an automated multi-sport endurance training platform that unifies workout telemetry from **Strava** and 24/7 health biometrics (Sleep, Resting Heart Rate, overnight HRV, Body Battery) from **Garmin Connect**, formatting and synchronizing them into a structured coaching spreadsheet in **Google Sheets**, while providing a modern **FastAPI + Chart.js** analytics web app with **AI Coaching (Gemini)** and **Acute:Chronic Workload Ratio (ACWR)** tracking.
 
-Beyond the sheet sync it also carries a **local SQLite history store** (paginated Strava
-backfill), a **run-durability & cross-training engine**, and a **conversational Gemini
-coach** with function-calling tools, grounded web search, and persistent memory.
+Beyond the sheet sync it carries a **local SQLite history store** (paginated Strava backfill), a **run-durability & cross-training engine**, **over-the-air workout push to Garmin watches/Tacx**, **proactive daily push notifications via Telegram**, and a **conversational Gemini coach** (`coach_agent.py`) with function-calling tools, grounded web search, and persistent memory.
 
 ---
 

@@ -246,7 +246,7 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
 
     if cmd in ("/start", "/help", "help"):
         return (
-            "🤖 *Endurance AI Telegram Assistant*\n\n"
+            "🤖 *StaminAI Telegram Assistant*\n\n"
             "Διαθέσιμες εντολές:\n"
             "• `/today` — Πλάνο προπόνησης, καιρός & αποκατάσταση για σήμερα\n"
             "• `/tomorrow` — Πλάνο προπόνησης & καιρός για αύριο\n"

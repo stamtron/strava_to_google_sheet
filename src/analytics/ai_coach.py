@@ -5,6 +5,7 @@ Generates automated workout feedback, readiness advice,
 and race predictions using LLMs (Gemini) with robust heuristic fallbacks.
 """
 
+from datetime import date
 import json
 import math
 import time
@@ -367,16 +368,44 @@ def generate_weekly_coaching_insights(
     relative_effort = week_summary.get("relative_effort", 0.0)
     elevation_m = week_summary.get("elevation_m", 0.0)
 
+    week_monday = week_summary.get("week_monday")
+    week_sunday = week_summary.get("week_sunday")
+    today = date.today()
+    is_in_progress = False
+    day_name = ""
+    days_completed = 7
+    days_remaining = 0
+
+    if week_monday and week_sunday:
+        try:
+            mon = date.fromisoformat(str(week_monday)[:10])
+            sun = date.fromisoformat(str(week_sunday)[:10])
+            if mon <= today <= sun:
+                is_in_progress = True
+                day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+                day_name = day_names[today.weekday()]
+                days_completed = today.weekday() + 1
+                days_remaining = 7 - days_completed
+        except Exception:
+            pass
+
     sleep_h = garmin_health.get("total_sleep_h") if garmin_health else None
+    avg_sleep_h = garmin_health.get("avg_sleep_h") if garmin_health else None
     rhr = garmin_health.get("avg_rhr") if garmin_health else None
     hrv = garmin_health.get("avg_hrv") if garmin_health else None
 
-    # Determine physiological readiness score
+    # Calculate average nightly sleep for normalized evaluation across full or partial weeks
+    if avg_sleep_h is None and sleep_h is not None:
+        effective_days = days_completed if is_in_progress else 7
+        avg_sleep_h = sleep_h / max(1, effective_days)
+
+    # Determine physiological readiness score based on nightly sleep average rather than raw total
     readiness_score = 80
-    if sleep_h and sleep_h < 45:
-        readiness_score -= 15
-    elif sleep_h and sleep_h > 52:
-        readiness_score += 10
+    if avg_sleep_h is not None:
+        if avg_sleep_h < 6.5:
+            readiness_score -= 15
+        elif avg_sleep_h >= 7.5:
+            readiness_score += 10
 
     if hrv and hrv > 70:
         readiness_score += 10
@@ -385,26 +414,38 @@ def generate_weekly_coaching_insights(
 
     readiness_score = max(30, min(98, readiness_score))
 
+    if is_in_progress:
+        progress_note = f"""
+IMPORTANT CONTEXT — WEEK IS CURRENTLY IN PROGRESS:
+- Today is {day_name} (Day {days_completed} of 7). There are {days_remaining} days remaining in this week.
+- The training volume, duration, and Relative Effort below reflect PARTIAL-WEEK progress accumulated so far, NOT a completed 7-day week.
+- DO NOT critique the volume as low or assume a training drop. Evaluate the sessions completed to date and advise on balancing the remaining {days_remaining} days.
+"""
+    else:
+        progress_note = "CONTEXT: Completed 7-day training week."
+
     if client:
         prompt = f"""
-You are an elite triathlon and endurance coach.
-Analyze the following weekly athlete training and biometrics data:
+You are StaminAI, an elite triathlon and endurance coach.
+Analyze the following athlete training and biometrics data:
+
+{progress_note}
 
 - Running: {run_dist:.1f} km
 - Cycling: {bike_dist:.1f} km
 - Swimming: {swim_dist:.0f} m
-- Total Training Duration: {total_time_h:.1f} hours ({activities_count} sessions)
+- Training Duration So Far: {total_time_h:.1f} hours ({activities_count} sessions)
 - Strava Relative Effort (Suffer Score): {relative_effort:.0f}
 - Total Elevation Gain: {elevation_m:.0f} m
-- Sleep (Garmin Connect): {sleep_h or 'N/A'} hours
+- Sleep: {f'{sleep_h:.1f} total hours ({avg_sleep_h:.1f} h/night average)' if sleep_h and avg_sleep_h else (f'{sleep_h:.1f} hours' if sleep_h else 'N/A')}
 - Resting HR (HRrest): {rhr or 'N/A'} bpm
 - Overnight HRV: {hrv or 'N/A'} ms
 - Athlete Notes: {athlete_notes or 'No additional notes'}
 
 Please return a JSON response with:
-1. "feedback": A comprehensive 2-3 paragraph coaching evaluation and feedback in English.
+1. "feedback": A comprehensive 2-3 paragraph coaching evaluation and feedback in English. {"Explicitly acknowledge that the week is in progress as of " + day_name + ", evaluate the quality of completed work, and provide guidance for the remaining days." if is_in_progress else "Evaluate the completed week across all disciplines and recovery."}
 2. "readiness_evaluation": Assessment of fatigue, relative effort load, and recovery.
-3. "recommendations": A list of 3 specific actionable tips for the upcoming week.
+3. "recommendations": A list of 3 specific actionable tips {"for the remaining workouts this week" if is_in_progress else "for the upcoming week"}.
 4. "readiness_score": Integer from 1-100.
 """
         for model_name in GEMINI_MODELS:
@@ -432,15 +473,22 @@ Please return a JSON response with:
                     break
 
     # Heuristic Coach Fallback
-    feedback_text = (
-        f"Solid training week with a total volume of {total_time_h:.1f} hours across {activities_count} sessions and a Relative Effort of {relative_effort:.0f}. "
-        f"The balance across running ({run_dist:.1f} km), cycling ({bike_dist:.1f} km), and swimming ({swim_dist:.0f} m) "
-        f"demonstrated strong training consistency."
-    )
+    if is_in_progress:
+        feedback_text = (
+            f"Solid mid-week progress so far (as of {day_name}, Day {days_completed} of 7), "
+            f"logging {total_time_h:.1f} hours across {activities_count} sessions with a Relative Effort of {relative_effort:.0f}. "
+            f"You've completed {run_dist:.1f} km running, {bike_dist:.1f} km cycling, and {swim_dist:.0f} m swimming with {days_remaining} days left to complete your scheduled volume."
+        )
+    else:
+        feedback_text = (
+            f"Solid training week with a total volume of {total_time_h:.1f} hours across {activities_count} sessions and a Relative Effort of {relative_effort:.0f}. "
+            f"The balance across running ({run_dist:.1f} km), cycling ({bike_dist:.1f} km), and swimming ({swim_dist:.0f} m) "
+            f"demonstrated strong training consistency."
+        )
     if elevation_m > 0:
         feedback_text += f" Logged {elevation_m:.0f}m of total elevation gain."
-    if sleep_h:
-        feedback_text += f" Total sleep ({sleep_h:.1f}h) and HRV ({hrv or 'N/A'}) indicate " + (
+    if avg_sleep_h:
+        feedback_text += f" Nightly sleep ({avg_sleep_h:.1f}h avg) and HRV ({hrv or 'N/A'}) indicate " + (
             "excellent autonomic nervous system recovery." if (hrv or 60) >= 60 else "elevated fatigue requiring focused recovery."
         )
 

@@ -111,7 +111,7 @@ _MEDICAL_TRIGGERS = (
 )
 
 SYSTEM_INSTRUCTION = """\
-You are the athlete's endurance coach inside their own training dashboard. You \
+You are StaminAI, the athlete's intelligent endurance coach inside their own training dashboard. You \
 coach one specific person: a triathlete who is strong in swimming and cycling \
 and wants to run more, but is impact-sensitive and injury-prone when running \
 volume climbs.
@@ -135,6 +135,10 @@ swap that keeps the aerobic dose while dropping the impact — get_run_durabilit
 returns exactly that plan.
 - Check get_athlete_recovery and preview_next_workout when discussing upcoming sessions or fatigue, \
 adapting intensity if recovery is compromised or poor.
+- When evaluating the current week or when is_in_progress is True, NEVER assume \
+partial-week totals mean the athlete skipped workouts or undertrained. Acknowledge \
+what day of the week it is, evaluate what has been completed so far, and look ahead \
+to the days remaining.
 - Reference get_gear_status for running shoe mileage & replacement alerts, and \
 get_workout_compliance to evaluate planned vs actual workout execution.
 - Use remember_fact when the athlete tells you something durable about \
@@ -266,6 +270,38 @@ def _week_brief(week: dict, acwr: dict | None = None) -> dict:
             "zone": acwr.get("zone"),
             "status": acwr.get("status"),
         }
+
+    today = date.today()
+    try:
+        mon_str = week.get("week_monday", "")
+        sun_str = week.get("week_sunday", "")
+        if mon_str and sun_str:
+            mon = date.fromisoformat(str(mon_str)[:10])
+            sun = date.fromisoformat(str(sun_str)[:10])
+            if mon <= today <= sun:
+                day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+                current_day = day_names[today.weekday()]
+                elapsed = today.weekday() + 1
+                remaining = 7 - elapsed
+                brief["is_in_progress"] = True
+                brief["current_day_of_week"] = current_day
+                brief["days_completed"] = elapsed
+                brief["days_remaining"] = remaining
+                brief["progress_note"] = (
+                    f"IN-PROGRESS WEEK: Today is {current_day} (day {elapsed} of 7). "
+                    f"Volume ({brief['total_time']}, {brief['run_km']}km run, {brief['bike_km']}km bike, {brief['swim_m']}m swim) "
+                    f"and Relative Effort ({brief['total_relative_effort']}) represent partial-week progress so far, NOT a completed week. "
+                    f"Do not assume the athlete undertrained or dropped volume."
+                )
+            elif today > sun:
+                brief["is_in_progress"] = False
+                brief["progress_note"] = "COMPLETED WEEK (all 7 days finished)."
+            else:
+                brief["is_in_progress"] = False
+                brief["progress_note"] = "FUTURE WEEK."
+    except Exception:
+        pass
+
     return brief
 
 

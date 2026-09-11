@@ -187,7 +187,7 @@ def test_whatsapp_deprecated_api_endpoint_routes_to_telegram():
 def test_handle_telegram_command_help():
     from src.integrations.telegram import handle_telegram_command
     res = handle_telegram_command("/help")
-    assert "Endurance AI Telegram Assistant" in res
+    assert "StaminAI Telegram Assistant" in res
     assert "/today" in res
     assert "/sync" in res
     assert "/gear" in res

@@ -1,4 +1,4 @@
-// Endurance AI Dashboard — Frontend JavaScript State & Logic
+// StaminAI Dashboard — Frontend JavaScript State & Logic
 
 let dashboardData = null;
 let currentWeekKey = null;
@@ -1246,6 +1246,8 @@ async function handleGenerateAiFeedback() {
         activities_count: week.activities.length,
         relative_effort: week.total_relative_effort,
         elevation_m: week.total_elevation_m,
+        week_monday: week.week_monday,
+        week_sunday: week.week_sunday,
       },
       garmin_health: garmin,
       athlete_notes: `${athleteNotes} [Fatigue: ${fatigue}/10, Soreness: ${soreness}/10, Mood: ${mood}/10]`,

@@ -1,8 +1,8 @@
-# 🏃 Strava & Garmin to Google Sheet
+# ⚡ StaminAI — Adaptive Endurance & Recovery Platform
 
-Automatically fetch your workout logs from **Strava** and 24/7 health biometrics from **Garmin Connect** (Sleep, Resting HR, HRV), syncing them into your **Google Sheet** coaching log — organized by date, formatted in Greek, with all key metrics.
+> Intelligent multi-sport analytics, biometrics synchronization, and conversational AI coaching for runners, cyclists, and triathletes.
 
-Includes a **FastAPI + Single Page Web App** featuring **Relative Effort (Suffer Score)** tracking, **Acute:Chronic Workload Ratio (ACWR)**, **Multi-Week Progression Charts**, a **Run Durability & Cross-Training engine**, and a **conversational AI Endurance Coach (Gemini)** with tools, web search, and persistent memory.
+**StaminAI** automatically synchronizes your workout telemetry from **Strava** and 24/7 health biometrics from **Garmin Connect** (Sleep, Resting HR, overnight HRV, Body Battery) into structured coaching logs, providing a glassmorphic **FastAPI + Chart.js web dashboard** and a conversational **StaminAI Coach (Gemini)** with sports-science durability tools, weather-aware pacing, grounded web search, and persistent memory.
 
 ---
 
@@ -58,13 +58,13 @@ strava_to_google_sheet/
 
 - ✅ **Strava Workouts & Relative Effort**: OAuth2 authentication with automatic token refresh, activity metrics, and Suffer Score calculation.
 - ✅ **Garmin 24/7 Health Metrics**: Automatically fetches total weekly Sleep hours, weekly average Resting Heart Rate (HRrest), overnight HRV, daily Body Battery (charged/drained), and all-day Stress from Garmin Connect.
-- ✅ **Garmin Structured Workout Sync & Direct Watch Export**: Parses natural Greek coaching sheet training sessions into structured workout steps (warmup, intervals, pace/power targets, recovery, cooldown) using Gemini LLM and schedules them directly onto Garmin Connect for over-the-air sync to Garmin Watches and Tacx.
+- ✅ **Garmin Structured Workout Over-The-Air Push**: Parses training sessions into structured workout steps (warmup, intervals, pace/power targets, recovery, cooldown) using Gemini LLM and pushes them directly onto Garmin Connect and Tacx for over-the-air sync to Garmin Watches.
 - ✅ **Plan vs. Actual Execution Compliance**: Automatically parses coach's prescribed targets from Google Sheets and compares them against actual Strava telemetry to calculate distance/time deltas, pace fidelity, and a 0–100% compliance score.
 - ✅ **Gear & Running Shoe Mileage Wear Tracker**: Aggregates running shoe and bike mileage from Strava activity history and triggers warning alerts before shoe midsole cushioning degrades past injury prevention limits (`SHOE_ALERT_KM`, default 650 km).
 - ✅ **Weather-Adjusted Pacing Calculator**: Computes thermal slowdown penalties for temperatures above 15°C (preventing cardiac drift) and wind penalties above 18 km/h, ensuring target Zone 2 metabolic stimulus is accurately preserved.
 - ✅ **80/20 Polarized Training & Zone Distribution (Z1–Z5)**: Computes 5-zone Karvonen Heart Rate Reserve thresholds and tracks weekly low (Z1-Z2) vs tempo (Z3) vs high (Z4-Z5) intensity distribution, detecting Zone 3 tempo traps.
 - ✅ **Daily Weather Integration (Athens, Greece)**: Real-time historical and 7-day forecast daily weather via Open-Meteo (temperature min/max, apparent temp, rain amount/probability, wind speed, WMO condition emojis).
-- ✅ **Telegram Next-Day Training Dispatcher & Bot**: Reads tomorrow's prescribed workout from Google Sheets, combines it with Athens weather forecast, thermal pace adjustments, and an AI coaching tip, dispatching daily briefs to Telegram via Telegram Bot API with two-way command handling (`/today`, `/tomorrow`, `/sync`, `/stats`, `/gear`, `/coach`).
+- ✅ **Proactive Telegram Push Briefings & Interactive Bot**: Pushes morning and evening workout briefs with weather pace adjustments and recovery metrics to Telegram, paired with a two-way command assistant (`/today`, `/tomorrow`, `/sync`, `/stats`, `/gear`, `/coach`).
 - ✅ **Strava Real-Time Webhook Auto-Sync**: Receives incoming activity creation webhooks from Strava, updates the local SQLite store, and optionally syncs to Google Sheets immediately.
 - ✅ **Google Sheets Sync**: Dynamically supports both **Old Single-Row Layout** (rows 13–66) and **New 7-Row Block Layout** (row 67+), retrying transient quota limits with exponential backoff.
 - ✅ **Appends Below Coach Notes**: Preserves coach training instructions and appends Strava data under `── Strava Data ──`.
@@ -89,7 +89,7 @@ strava_to_google_sheet/
 
 ---
 
-## 🤖 AI Coach & Chat
+## 🤖 StaminAI Coach & Conversational Agent
 
 The dashboard's original AI panel is a single stateless Gemini call and still works
 unchanged (`POST /api/ai/coach`, with heuristic fallbacks when no API key is set).
