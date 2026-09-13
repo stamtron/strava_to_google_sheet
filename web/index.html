@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>StaminAI — Adaptive Endurance & Recovery Platform</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <link rel="stylesheet" href="/static/styles.css?v=4.1">
+  <link rel="stylesheet" href="/static/styles.css?v=4.2">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
@@ -252,6 +252,7 @@ Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
         <div class="glass-panel feedback-editor">
           <div class="section-header" style="margin-bottom: 12px;">
             <h3 style="font-size: 15px;">Athlete Notes & Feeling</h3>
+            <span id="notesSaveStatus" class="notes-save-status" role="status" aria-live="polite"></span>
           </div>
 
           <textarea id="athleteNotesText" class="editor-textarea" placeholder="Write notes, fatigue level, or weekly comments..."></textarea>
@@ -504,6 +505,6 @@ Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
     </div>
   </div>
 
-  <script src="/static/app.js?v=4.2"></script>
+  <script src="/static/app.js?v=4.3"></script>
 </body>
 </html>

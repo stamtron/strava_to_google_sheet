@@ -676,6 +676,25 @@ header {
   padding: 20px;
 }
 
+/* Autosave confirmation. Fades in on save and out again, so it reassures
+   without becoming permanent chrome next to the heading. */
+.notes-save-status {
+  font-size: 11px;
+  color: var(--accent-emerald);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.notes-save-status.visible {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notes-save-status {
+    transition: none;
+  }
+}
+
 .editor-textarea {
   width: 100%;
   height: 90px;

@@ -273,6 +273,8 @@ function setupEventListeners() {
   setupSlider("fatigueSlider", "fatigueVal", "/10");
   setupSlider("sorenessSlider", "sorenessVal", "/10");
   setupSlider("moodSlider", "moodVal", "/10");
+
+  setupNotesAutosave();
 }
 
 function setupSlider(sliderId, labelId, suffix = "") {
@@ -283,6 +285,122 @@ function setupSlider(sliderId, labelId, suffix = "") {
       label.textContent = `${e.target.value}${suffix}`;
     });
   }
+}
+
+/*
+ * Athlete notes & wellness sliders.
+ *
+ * These are only read when generating AI feedback, so until they were persisted
+ * a refresh — or simply switching weeks and back — silently discarded whatever
+ * the athlete had typed. Storage is keyed by week so each week keeps its own
+ * notes, matching how the rest of the dashboard is scoped.
+ */
+const NOTES_DEFAULTS = { notes: "", fatigue: 5, soreness: 3, mood: 8 };
+
+const NOTES_SLIDERS = [
+  { key: "fatigue", sliderId: "fatigueSlider", labelId: "fatigueVal" },
+  { key: "soreness", sliderId: "sorenessSlider", labelId: "sorenessVal" },
+  { key: "mood", sliderId: "moodSlider", labelId: "moodVal" },
+];
+
+let notesSaveTimer = null;
+let notesStatusTimer = null;
+
+function notesStorageKey(weekKey) {
+  return `staminai.notes.${weekKey}`;
+}
+
+function readNotesForWeek(weekKey) {
+  // Private-mode browsers throw on localStorage access, and a hand-edited or
+  // truncated entry would throw on parse. Neither should break the editor.
+  try {
+    const raw = localStorage.getItem(notesStorageKey(weekKey));
+    if (!raw) return { ...NOTES_DEFAULTS };
+    return { ...NOTES_DEFAULTS, ...JSON.parse(raw) };
+  } catch (err) {
+    console.warn("Could not read saved notes:", err);
+    return { ...NOTES_DEFAULTS };
+  }
+}
+
+function collectNotesFromForm() {
+  const textarea = document.getElementById("athleteNotesText");
+  const entry = { notes: textarea ? textarea.value : "" };
+  NOTES_SLIDERS.forEach(({ key, sliderId }) => {
+    const slider = document.getElementById(sliderId);
+    entry[key] = slider ? Number(slider.value) : NOTES_DEFAULTS[key];
+  });
+  return entry;
+}
+
+function loadNotesIntoForm(weekKey) {
+  const entry = readNotesForWeek(weekKey);
+
+  const textarea = document.getElementById("athleteNotesText");
+  if (textarea) textarea.value = entry.notes;
+
+  NOTES_SLIDERS.forEach(({ key, sliderId, labelId }) => {
+    const slider = document.getElementById(sliderId);
+    const label = document.getElementById(labelId);
+    // Setting .value programmatically fires no "input" event, so the label
+    // next to the slider has to be updated alongside it.
+    if (slider) slider.value = entry[key];
+    if (label) label.textContent = `${entry[key]}/10`;
+  });
+}
+
+function saveNotesNow() {
+  if (!currentWeekKey) return;
+  try {
+    localStorage.setItem(
+      notesStorageKey(currentWeekKey),
+      JSON.stringify({ ...collectNotesFromForm(), saved_at: new Date().toISOString() }),
+    );
+    showNotesSaved();
+  } catch (err) {
+    console.warn("Could not save notes:", err);
+  }
+}
+
+function scheduleNotesSave() {
+  // Debounced so typing doesn't hit localStorage on every keystroke.
+  if (!currentWeekKey) return;
+  clearTimeout(notesSaveTimer);
+  notesSaveTimer = setTimeout(saveNotesNow, 400);
+}
+
+function flushNotesSave() {
+  if (notesSaveTimer === null) return;
+  clearTimeout(notesSaveTimer);
+  notesSaveTimer = null;
+  saveNotesNow();
+}
+
+function showNotesSaved() {
+  const status = document.getElementById("notesSaveStatus");
+  if (!status) return;
+  status.textContent = "✓ Saved";
+  status.classList.add("visible");
+  clearTimeout(notesStatusTimer);
+  notesStatusTimer = setTimeout(() => status.classList.remove("visible"), 1800);
+}
+
+function setupNotesAutosave() {
+  const textarea = document.getElementById("athleteNotesText");
+  if (textarea) textarea.addEventListener("input", scheduleNotesSave);
+
+  NOTES_SLIDERS.forEach(({ sliderId }) => {
+    const slider = document.getElementById(sliderId);
+    if (slider) slider.addEventListener("input", scheduleNotesSave);
+  });
+
+  // A tab closed or backgrounded inside the debounce window would otherwise
+  // lose the last few keystrokes. visibilitychange is the reliable signal on
+  // mobile, where beforeunload often never fires.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushNotesSave();
+  });
+  window.addEventListener("pagehide", flushNotesSave);
 }
 
 function populateWeekSelector() {
@@ -312,11 +430,15 @@ function populateWeekSelector() {
 }
 
 function selectWeek(weekKey) {
-  currentWeekKey = weekKey;
   const weekData = dashboardData.weeks[weekKey];
-  const garminData = (dashboardData.garmin || {})[weekKey] || null;
-
   if (!weekData) return;
+
+  // Flush before reassigning currentWeekKey, or pending edits would be written
+  // against the week the athlete just navigated to.
+  if (currentWeekKey && currentWeekKey !== weekKey) flushNotesSave();
+
+  currentWeekKey = weekKey;
+  const garminData = (dashboardData.garmin || {})[weekKey] || null;
 
   // 1. Update Metrics Cards
   renderMetricCards(weekData, garminData);
@@ -326,6 +448,9 @@ function selectWeek(weekKey) {
 
   // 3. Update Charts
   updateCharts(weekData, garminData);
+
+  // 4. Restore this week's saved notes & wellness ratings
+  loadNotesIntoForm(weekKey);
 }
 
 function formatDuration(seconds) {
@@ -1232,10 +1357,11 @@ async function handleGenerateAiFeedback() {
   try {
     const week = dashboardData.weeks[currentWeekKey];
     const garmin = (dashboardData.garmin || {})[currentWeekKey] || null;
-    const athleteNotes = document.getElementById("athleteNotesText").value;
-    const fatigue = document.getElementById("fatigueSlider").value;
-    const soreness = document.getElementById("sorenessSlider").value;
-    const mood = document.getElementById("moodSlider").value;
+
+    // Commit anything still inside the autosave debounce, so the notes sent to
+    // the coach and the notes on disk can't disagree.
+    flushNotesSave();
+    const { notes, fatigue, soreness, mood } = collectNotesFromForm();
 
     const payload = {
       week_summary: {
@@ -1250,7 +1376,7 @@ async function handleGenerateAiFeedback() {
         week_sunday: week.week_sunday,
       },
       garmin_health: garmin,
-      athlete_notes: `${athleteNotes} [Fatigue: ${fatigue}/10, Soreness: ${soreness}/10, Mood: ${mood}/10]`,
+      athlete_notes: `${notes} [Fatigue: ${fatigue}/10, Soreness: ${soreness}/10, Mood: ${mood}/10]`,
     };
 
     const res = await fetch("/api/ai/coach", {
