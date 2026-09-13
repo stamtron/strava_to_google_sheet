@@ -36,6 +36,7 @@ from src.formatting import (
     format_duration_short_el,
     format_pace,
 )
+from src.analytics.metrics import normalize_rpe
 from src.integrations.garmin import get_weekly_health_summaries
 import logging
 
@@ -198,7 +199,11 @@ def format_activity_for_cell(act: dict, detail: dict | None = None) -> str:
             lines.append(f"Θερμοκρασία: {temp:.0f}°C")
         suffer = detail.get("suffer_score")
         if suffer:
-            lines.append(f"Αντιληπτή κόπωση προπόνησης - RPE (1-10): {suffer:.0f}")
+            lines.append(f"Relative Effort: {suffer:.0f}")
+
+    rpe = normalize_rpe(act, detail)
+    if rpe:
+        lines.append(f"Αντιληπτή κόπωση προπόνησης - RPE (1-10): {rpe}")
 
     return "\n".join(lines)
 
@@ -248,6 +253,60 @@ def calculate_weekly_totals(row_activities: list[dict]) -> tuple[float, int, flo
     return run_dist, run_time, bike_dist, bike_time, bike_elev, swim_dist_m, swim_time, strength_time
 
 
+def inspect_week_blocks(col_a_rows: list[list[str]], start_row: int = 13) -> dict[int, dict]:
+    """
+    Parse week blocks from Column A data.
+    Returns a dict mapping week_start_row -> {
+        "layout": "new" | "old",
+        "program_row": int,
+        "feedback_row": int,
+        "summary_row": int,
+    }
+    """
+    col_a_values = [r[0] if r else "" for r in col_a_rows]
+    week_rows = []
+    for idx, text in enumerate(col_a_values):
+        row_num = start_row + idx
+        if parse_date_range(text):
+            week_rows.append(row_num)
+
+    week_rows.sort()
+    blocks = {}
+    for i, r in enumerate(week_rows):
+        next_r = week_rows[i + 1] if i + 1 < len(week_rows) else r + 10
+        block_limit = min(r + 8, next_r)
+
+        feedback_row = None
+        program_row = None
+        summary_row = None
+
+        for row_k in range(r, block_limit):
+            k_idx = row_k - start_row
+            val_k = col_a_values[k_idx].strip().upper() if 0 <= k_idx < len(col_a_values) else ""
+            if ("ΑΝΑΤΡΟΦΟΔΟΤΗΣΗ" in val_k or "FEEDBACK" in val_k) and not feedback_row:
+                feedback_row = row_k
+            elif ("ΠΡΟΓΡΑΜΜΑ" in val_k or "PROGRAM" in val_k) and not program_row:
+                program_row = row_k
+            elif feedback_row and ("ΕΒΔΟΜΑΔΑ" in val_k or "ΣΥΝΟΛΑ" in val_k) and not summary_row:
+                summary_row = row_k
+
+        if feedback_row:
+            blocks[r] = {
+                "layout": "new",
+                "program_row": program_row or (feedback_row - 1),
+                "feedback_row": feedback_row,
+                "summary_row": summary_row or (feedback_row + 1),
+            }
+        else:
+            blocks[r] = {
+                "layout": "old",
+                "program_row": r,
+                "feedback_row": r,
+                "summary_row": r,
+            }
+    return blocks
+
+
 def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
     """Write Strava and Garmin data into Google Sheets."""
     if not activities:
@@ -265,7 +324,7 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
 
     print("\n📊 Syncing to Google Sheet...")
 
-    # Fetch Column A to map week dates
+    # Fetch Column A to map week dates and layout structures
     result = execute_with_retry(
         sheet.values().get(
             spreadsheetId=GOOGLE_SHEET_ID,
@@ -282,6 +341,8 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
         if date_range:
             week_start, week_end = date_range
             week_map[week_start] = row_num
+
+    week_blocks = inspect_week_blocks(col_a, start_row=13)
 
     # Group activities by day
     activities_by_day = {}
@@ -306,6 +367,16 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
             continue
 
         week_start_row = week_map[week_start]
+        block = week_blocks.get(
+            week_start_row,
+            {
+                "layout": "old",
+                "program_row": week_start_row,
+                "feedback_row": week_start_row,
+                "summary_row": week_start_row,
+            },
+        )
+        target_row = block["feedback_row"]
         weekday_idx = target_date.weekday()
         col = col_letters[weekday_idx]
 
@@ -314,42 +385,26 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
             activities_by_row[week_start_row] = []
         activities_by_row[week_start_row].extend(day_activities)
 
-        cell_info.append((target_date, day_activities, week_start_row, col))
+        cell_info.append((target_date, day_activities, week_start_row, target_row, col, block["layout"]))
 
-    # Detect Layouts dynamically
-    layout_check_ranges = [f"'{SHEET_NAME}'!A{r+4}" for r in unique_week_rows]
-    layout_by_row = {}
-    if layout_check_ranges:
-        layout_res = execute_with_retry(
-            sheet.values().batchGet(
-                spreadsheetId=GOOGLE_SHEET_ID,
-                ranges=layout_check_ranges,
-            )
-        )
-
-        for vr, r in zip(layout_res.get("valueRanges", []), unique_week_rows):
-            vals = vr.get("values", [[]])
-            val_a4 = vals[0][0].strip().upper() if vals and vals[0] else ""
-            if "ΑΝΑΤΡΟΦΟΔΟΤΗΣΗ" in val_a4 or "FEEDBACK" in val_a4:
-                layout_by_row[r] = "new"
-                print(f"  🔍 Row {r} detected as NEW block layout")
-            else:
-                layout_by_row[r] = "old"
-                print(f"  🔍 Row {r} detected as OLD single-row layout")
+    for r in sorted(unique_week_rows):
+        block = week_blocks.get(r, {"layout": "old"})
+        if block["layout"] == "new":
+            print(f"  🔍 Row {r} detected as NEW block layout (feedback row: {block['feedback_row']}, summary row: {block['summary_row']})")
+        else:
+            print(f"  🔍 Row {r} detected as OLD single-row layout")
 
     # Read existing cell contents
     read_ranges = []
-    for target_date, day_activities, week_start_row, col in cell_info:
-        layout = layout_by_row[week_start_row]
-        target_row = (week_start_row + 4) if layout == "new" else week_start_row
+    for target_date, day_activities, week_start_row, target_row, col, layout in cell_info:
         read_ranges.append(f"'{SHEET_NAME}'!{col}{target_row}")
 
     for r in unique_week_rows:
-        layout = layout_by_row[r]
-        if layout == "old":
+        block = week_blocks.get(r, {"layout": "old", "summary_row": r})
+        if block["layout"] == "old":
             read_ranges.append(f"'{SHEET_NAME}'!A{r}")
         else:
-            read_ranges.append(f"'{SHEET_NAME}'!B{r+5}")
+            read_ranges.append(f"'{SHEET_NAME}'!B{block['summary_row']}")
 
     existing_values = {}
     if read_ranges:
@@ -375,10 +430,7 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
     SEPARATOR = "\n\n── Strava Data ──\n"
     updates = []
 
-    for target_date, day_activities, week_start_row, col in cell_info:
-        layout = layout_by_row[week_start_row]
-        target_row = (week_start_row + 4) if layout == "new" else week_start_row
-
+    for target_date, day_activities, week_start_row, target_row, col, layout in cell_info:
         formatted = format_activities_for_cell(day_activities, details)
         existing = get_existing_value(col, target_row)
 
@@ -422,7 +474,8 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
 
     # Update weekly totals
     for r in unique_week_rows:
-        layout = layout_by_row[r]
+        block = week_blocks.get(r, {"layout": "old", "summary_row": r})
+        layout = block["layout"]
         row_activities = activities_by_row[r]
         run_dist, run_time, bike_dist, bike_time, bike_elev, swim_dist_m, swim_time, strength_time = calculate_weekly_totals(row_activities)
 
@@ -507,7 +560,7 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
 
         else:
             # layout == "new"
-            target_row = r + 5
+            target_row = block["summary_row"]
             existing_b = get_existing_value("B", target_row)
 
             running_time_val = format_duration_short_el(run_time)
@@ -624,27 +677,24 @@ def get_planned_workout_for_date(target_date: date) -> dict:
         col_letters = ["B", "C", "D", "E", "F", "G", "H"]
         col = col_letters[target_date.weekday()]
 
-        # Check if new block layout or old
-        a4_check = execute_with_retry(
-            sheet.values().get(
-                spreadsheetId=GOOGLE_SHEET_ID,
-                range=f"'{SHEET_NAME}'!A{r+4}",
-            )
-        ).get("values", [[]])
-        val_a4 = a4_check[0][0] if a4_check and a4_check[0] else ""
-        is_new = "ΑΝΑΤΡΟΦΟΔΟΤΗΣΗ" in val_a4 or "FEEDBACK" in val_a4 or r >= 67
+        week_blocks = inspect_week_blocks(col_a, start_row=13)
+        block = week_blocks.get(r, {"layout": "old", "program_row": r})
+        is_new = block["layout"] == "new"
 
         if is_new:
-            # In new block layout, planned workouts can span rows r+1 to r+3
+            prog_row = block["program_row"]
             read_res = execute_with_retry(
                 sheet.values().get(
                     spreadsheetId=GOOGLE_SHEET_ID,
-                    range=f"'{SHEET_NAME}'!{col}{r+1}:{col}{r+3}",
+                    range=f"'{SHEET_NAME}'!{col}{prog_row}",
                 )
             )
-            rows_val = read_res.get("values", [])
-            lines = [row[0].strip() for row in rows_val if row and row[0].strip()]
-            workout_text = "\n".join(lines)
+            vals = read_res.get("values", [[]])
+            raw_text = vals[0][0] if vals and vals[0] else ""
+            if "── Strava Data ──" in raw_text:
+                workout_text = raw_text.split("── Strava Data ──")[0].strip()
+            else:
+                workout_text = raw_text.strip()
         else:
             # In old layout, read row r and strip Strava section if already present
             read_res = execute_with_retry(

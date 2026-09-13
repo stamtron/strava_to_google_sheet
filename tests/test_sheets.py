@@ -6,6 +6,7 @@ from src.integrations.sheets import (
     calculate_weekly_totals,
     format_activity_for_cell,
     format_activities_for_cell,
+    inspect_week_blocks,
     parse_date_range,
 )
 
@@ -129,3 +130,62 @@ def test_multiple_activities_are_separated():
     cell = format_activities_for_cell(acts, {})
     assert "---" in cell
     assert "A" in cell and "B" in cell
+
+
+# inspect_week_blocks
+
+
+def test_inspect_week_blocks_old_layout():
+    col_a = [
+        ["10-16/8/'26"],
+        ["17-23/8/'26"],
+    ]
+    blocks = inspect_week_blocks(col_a, start_row=13)
+    assert blocks[13]["layout"] == "old"
+    assert blocks[13]["feedback_row"] == 13
+    assert blocks[14]["layout"] == "old"
+    assert blocks[14]["feedback_row"] == 14
+
+
+def test_inspect_week_blocks_new_layout_with_blank_row():
+    # Like row 67 and 74 (with blank row after date)
+    col_a = [
+        ["31/8-6/9/2026"],  # row 13
+        [""],               # row 14 (blank)
+        ["ΕΒΔΟΜΑΔΑ"],       # row 15
+        ["ΠΡΟΓΡΑΜΜΑ"],      # row 16
+        ["ΑΝΑΤΡΟΦΟΔΟΤΗΣΗ"], # row 17
+        ["ΕΒΔΟΜΑΔΑ"],       # row 18
+    ]
+    blocks = inspect_week_blocks(col_a, start_row=13)
+    assert blocks[13]["layout"] == "new"
+    assert blocks[13]["program_row"] == 16
+    assert blocks[13]["feedback_row"] == 17
+    assert blocks[13]["summary_row"] == 18
+
+
+def test_inspect_week_blocks_new_layout_without_blank_row():
+    # Like row 80 and 85 (no blank row after date)
+    col_a = [
+        ["7-13/9/2026"],    # row 13
+        ["ΕΒΔΟΜΑΔΑ"],       # row 14
+        ["ΠΡΟΓΡΑΜΜΑ"],      # row 15
+        ["ΑΝΑΤΡΟΦΟΔΟΤΗΣΗ"], # row 16
+        ["ΕΒΔΟΜΑΔΑ"],       # row 17
+        ["14-20/9/2026"],   # row 18
+        ["ΕΒΔΟΜΑΔΑ"],       # row 19
+        ["ΠΡΟΓΡΑΜΜΑ"],      # row 20
+        ["ΑΝΑΤΡΟΦΟΔΟΤΗΣΗ"], # row 21
+        ["ΕΒΔΟΜΑΔΑ"],       # row 22
+    ]
+    blocks = inspect_week_blocks(col_a, start_row=13)
+    assert blocks[13]["layout"] == "new"
+    assert blocks[13]["program_row"] == 15
+    assert blocks[13]["feedback_row"] == 16
+    assert blocks[13]["summary_row"] == 17
+
+    assert blocks[18]["layout"] == "new"
+    assert blocks[18]["program_row"] == 20
+    assert blocks[18]["feedback_row"] == 21
+    assert blocks[18]["summary_row"] == 22
+

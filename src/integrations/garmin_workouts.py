@@ -37,6 +37,7 @@ from src.integrations.garmin import get_garmin_client
 from src.integrations.sheets import (
     execute_with_retry,
     get_sheets_service,
+    inspect_week_blocks,
     parse_date_range,
 )
 
@@ -225,27 +226,12 @@ def extract_week_coach_workouts(week_offset: int = 0) -> dict[str, Any]:
     target_row, week_start, week_end = weeks[target_idx]
 
     # 2. Find the workout row:
-    # In New block layout: Column A within target_row .. target_row+4 has 'ΠΡΟΓΡΑΜΜΑ'.
+    # In New block layout: Column A contains 'ΠΡΟΓΡΑΜΜΑ'.
     # In Old single-row layout: target_row itself contains the workouts.
-    block_check_res = execute_with_retry(
-        sheet.values().get(
-            spreadsheetId=GOOGLE_SHEET_ID,
-            range=f"'{SHEET_NAME}'!A{target_row}:A{target_row + 4}",
-        )
-    )
-    block_col_a = block_check_res.get("values", [])
-
-    workout_row = target_row
-    is_new_layout = False
-
-    for offset, row_val in enumerate(block_col_a):
-        val_str = (row_val[0] if row_val else "").strip().upper()
-        if "ΠΡΟΓΡΑΜΜΑ" in val_str or "PROGRAM" in val_str:
-            workout_row = target_row + offset
-            is_new_layout = True
-            break
-        elif "ΑΝΑΤΡΟΦΟΔΟΤΗΣΗ" in val_str or "FEEDBACK" in val_str:
-            is_new_layout = True
+    week_blocks = inspect_week_blocks(col_a, start_row=13)
+    block = week_blocks.get(target_row, {"layout": "old", "program_row": target_row})
+    is_new_layout = block["layout"] == "new"
+    workout_row = block["program_row"] if is_new_layout else target_row
 
     # 3. Read the workouts across columns B to H (7 days)
     row_data = execute_with_retry(

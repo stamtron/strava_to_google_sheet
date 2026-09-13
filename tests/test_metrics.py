@@ -5,6 +5,7 @@ from src.analytics.metrics import (
     build_progression_history,
     calculate_acwr,
     calculate_relative_effort,
+    normalize_rpe,
     process_activities_into_weeks,
 )
 
@@ -162,3 +163,42 @@ def test_progression_computes_acwr_when_not_supplied():
     weeks = process_activities_into_weeks([_act("2026-08-24", "Run", moving_time=3600)])
     progression = build_progression_history(weeks)
     assert "acwr" in progression[0]
+
+
+# normalize_rpe
+
+
+def test_normalize_rpe_explicit_perceived_exertion():
+    assert normalize_rpe({}, {"perceived_exertion": 8}) == 8
+    assert normalize_rpe({"perceived_exertion": 6}, {}) == 6
+    assert normalize_rpe({}, {"perceived_exertion": 11}) == 10  # clamped to 10
+    assert normalize_rpe({}, {"perceived_exertion": 0}) == 4   # invalid -> fallback
+
+
+def test_normalize_rpe_from_heart_rate():
+    # HR_MAX=185, HR_REST=50
+    # Recovery / light walk (HR 98, ~35% HRR) -> 1-2
+    assert normalize_rpe({"average_heartrate": 98}) in (1, 2)
+    # Weights / recovery (HR 117, ~50% HRR) -> 3
+    assert normalize_rpe({"average_heartrate": 117}) == 3
+    # Easy Z2 ride (HR 131, ~60% HRR) -> 4
+    assert normalize_rpe({"average_heartrate": 131}) == 4
+    # Tempo run (HR 154, ~77% HRR) -> 6 or 7
+    assert normalize_rpe({"average_heartrate": 154}) in (6, 7)
+    # Hard run (HR 164, ~84% HRR) -> 8
+    assert normalize_rpe({"average_heartrate": 164}) == 8
+    # All-out / VO2max (HR 176, ~93% HRR) -> 9 or 10
+    assert normalize_rpe({"average_heartrate": 176}) in (9, 10)
+
+
+def test_normalize_rpe_from_suffer_score():
+    # When HR is absent, suffer score per minute intensity is used
+    # 45m workout with suffer_score=72 -> intensity 1.6 -> 9-10
+    assert normalize_rpe({"moving_time": 2700}, {"suffer_score": 72}) in (9, 10)
+    # 53m workout with suffer_score=11 -> intensity 0.21 -> 2-3
+    assert normalize_rpe({"moving_time": 3180}, {"suffer_score": 11}) in (2, 3)
+
+
+def test_normalize_rpe_fallback_to_moderate():
+    assert normalize_rpe({}, {}) == 4
+

@@ -48,6 +48,69 @@ def calculate_relative_effort(act: dict) -> float:
     return round(moving_time_min * 0.5, 1) if moving_time_min > 0 else 0.0
 
 
+def normalize_rpe(
+    act: dict,
+    detail: dict | None = None,
+    hr_max: int = HR_MAX,
+    hr_rest: int = HR_REST,
+) -> int:
+    """
+    Calculate or normalize Rate of Perceived Exertion (RPE) on a 1-10 Borg CR10 scale.
+
+    Hierarchy:
+    1. Strava's explicit `perceived_exertion` (if athlete entered it on Strava, 1-10).
+    2. Karvonen Heart Rate Reserve (%HRR) mapping if average_heartrate is available.
+    3. Strava suffer_score / moving_time intensity ratio if heart rate is unavailable.
+    4. Default moderate baseline (4) if no metrics exist.
+    """
+    # 1. Explicit perceived exertion from Strava (detail or summary)
+    detail_pe = detail.get("perceived_exertion") if detail else None
+    act_pe = act.get("perceived_exertion")
+    explicit_pe = detail_pe if detail_pe is not None else act_pe
+    if explicit_pe is not None:
+        try:
+            val = float(explicit_pe)
+            if val > 0:
+                return max(1, min(10, round(val)))
+        except (ValueError, TypeError):
+            pass
+
+    # 2. Average Heart Rate via Karvonen %HRR
+    avg_hr = act.get("average_heartrate")
+    if avg_hr and hr_max > hr_rest:
+        hrr_pct = (avg_hr - hr_rest) / max(20.0, float(hr_max - hr_rest))
+        if hrr_pct < 0.40:
+            raw_rpe = 1.0 + (max(0.0, hrr_pct) / 0.40) * 1.0
+        elif hrr_pct < 0.60:
+            raw_rpe = 2.0 + ((hrr_pct - 0.40) / 0.20) * 2.0
+        elif hrr_pct < 0.75:
+            raw_rpe = 4.0 + ((hrr_pct - 0.60) / 0.15) * 2.0
+        elif hrr_pct < 0.85:
+            raw_rpe = 6.0 + ((hrr_pct - 0.75) / 0.10) * 2.0
+        else:
+            raw_rpe = 8.0 + ((hrr_pct - 0.85) / 0.15) * 2.0
+        return max(1, min(10, round(raw_rpe)))
+
+    # 3. Strava Suffer Score per minute intensity
+    suffer = (detail.get("suffer_score") if detail else None) or act.get("suffer_score")
+    moving_sec = act.get("moving_time", 0) or 0
+    if suffer and moving_sec > 0:
+        intensity = float(suffer) / (moving_sec / 60.0)
+        if intensity < 0.25:
+            raw_rpe = 1.0 + (intensity / 0.25) * 2.0
+        elif intensity < 0.50:
+            raw_rpe = 3.0 + ((intensity - 0.25) / 0.25) * 2.0
+        elif intensity < 0.80:
+            raw_rpe = 5.0 + ((intensity - 0.50) / 0.30) * 2.0
+        elif intensity < 1.20:
+            raw_rpe = 7.0 + ((intensity - 0.80) / 0.40) * 2.0
+        else:
+            raw_rpe = 9.0 + min(1.0, (intensity - 1.20) / 0.80) * 1.0
+        return max(1, min(10, round(raw_rpe)))
+
+    return 4
+
+
 def sport_group(sport: str) -> str:
     """
     Map a Strava sport type to its analytics group.
