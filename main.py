@@ -168,7 +168,20 @@ def main():
         action="store_true",
         help="Preview actions without sending external notifications or writing data",
     )
+    parser.add_argument(
+        "--auth-sheets",
+        action="store_true",
+        help="Interactively authenticate or re-authorize Google Sheets and save token to gsheets_token.json",
+    )
     args = parser.parse_args()
+
+    # Google Sheets Authentication CLI
+    if args.auth_sheets:
+        from src.integrations.sheets import get_sheets_service
+        print("🔐 Authenticating with Google Sheets...")
+        get_sheets_service(interactive=True)
+        print("✅ Google Sheets authentication successful! Token saved to gsheets_token.json.")
+        return 0
 
     # Garmin Workout Sync & Preview CLI
     if args.preview_workouts or args.sync_workouts:
