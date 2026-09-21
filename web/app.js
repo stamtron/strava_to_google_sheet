@@ -10,6 +10,21 @@ let effortProgressionChart = null;
 let volumeProgressionChart = null;
 let elevationProgressionChart = null;
 let acwrProgressionChart = null;
+let currentProgressionData = [];
+
+function getProgressionTooltipTitle(items) {
+  if (!items || !items.length) return "";
+  const idx = items[0].dataIndex;
+  const item = currentProgressionData[idx];
+  if (item && item.week_monday && item.week_sunday) {
+    const m = new Date(item.week_monday + "T00:00:00");
+    const s = new Date(item.week_sunday + "T00:00:00");
+    const mStr = `${m.getDate()}/${m.getMonth() + 1}`;
+    const sStr = `${s.getDate()}/${s.getMonth() + 1}`;
+    return `Week: Mon ${mStr} – Sun ${sStr}`;
+  }
+  return items[0].label;
+}
 
 const DAY_NAMES_EN = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const DAY_SHORT_EN = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
@@ -847,6 +862,7 @@ function initProgressionCharts() {
       },
       plugins: {
         legend: { labels: { color: "#94a3b8", font: { family: "Inter", size: 11 } } },
+        tooltip: { callbacks: { title: getProgressionTooltipTitle } },
       },
     },
   });
@@ -872,6 +888,7 @@ function initProgressionCharts() {
       },
       plugins: {
         legend: { labels: { color: "#94a3b8", font: { family: "Inter", size: 11 } } },
+        tooltip: { callbacks: { title: getProgressionTooltipTitle } },
       },
     },
   });
@@ -902,6 +919,7 @@ function initProgressionCharts() {
       },
       plugins: {
         legend: { labels: { color: "#94a3b8", font: { family: "Inter", size: 11 } } },
+        tooltip: { callbacks: { title: getProgressionTooltipTitle } },
       },
     },
   });
@@ -937,6 +955,7 @@ function initProgressionCharts() {
       },
       plugins: {
         legend: { labels: { color: "#94a3b8", font: { family: "Inter", size: 11 } } },
+        tooltip: { callbacks: { title: getProgressionTooltipTitle } },
       },
     },
   });
@@ -965,6 +984,7 @@ function updateCharts(week, garmin) {
 
 function updateProgressionCharts(progression) {
   if (!progression || progression.length === 0) return;
+  currentProgressionData = progression;
 
   const labels = progression.map(p => p.label);
   const efforts = progression.map(p => p.relative_effort);

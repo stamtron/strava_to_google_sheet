@@ -155,7 +155,7 @@ def test_progression_reuses_a_supplied_acwr_map():
     sentinel = {"2026-08-24": {"acwr_ratio": 4.2, "zone": "spike"}}
     progression = build_progression_history(weeks, acwr_map=sentinel)
     assert progression[0]["acwr"]["acwr_ratio"] == 4.2
-    assert progression[0]["label"] == "24/8"
+    assert progression[0]["label"] == "30/8"
     assert progression[0]["total_hours"] == 1.0
 
 

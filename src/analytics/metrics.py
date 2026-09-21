@@ -316,8 +316,8 @@ def build_progression_history(weeks_dict: dict, acwr_map: dict | None = None) ->
     progression = []
     for w_key in sorted_keys:
         w = weeks_dict[w_key]
-        m_dt = datetime.fromisoformat(w["week_monday"])
-        label = f"{m_dt.day}/{m_dt.month}"
+        s_dt = datetime.fromisoformat(w["week_sunday"])
+        label = f"{s_dt.day}/{s_dt.month}"
 
         progression.append({
             "week_key": w_key,
