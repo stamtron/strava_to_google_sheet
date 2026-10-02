@@ -189,3 +189,25 @@ def test_inspect_week_blocks_new_layout_without_blank_row():
     assert blocks[18]["feedback_row"] == 21
     assert blocks[18]["summary_row"] == 22
 
+
+def test_inspect_week_blocks_3row_layout():
+    col_a = [
+        ["28/9-4/10/2026\n\nIRONMAN 70.3 GREECE"],  # row 13
+        ["Άθλημα • επιλογή"],                      # row 14
+        ["Σύνολα εβδομάδας\nΤρέξιμο __ χλμ"],       # row 15
+        ["5-11/10/2026"],                          # row 16
+        ["Άθλημα • επιλογή"],                      # row 17
+        ["Σύνολα εβδομάδας"],                      # row 18
+    ]
+    blocks = inspect_week_blocks(col_a, start_row=13)
+    assert blocks[13]["layout"] == "new"
+    assert blocks[13]["program_row"] == 13
+    assert blocks[13]["feedback_row"] == 15
+    assert blocks[13]["summary_row"] == 15
+
+    assert blocks[16]["layout"] == "new"
+    assert blocks[16]["program_row"] == 16
+    assert blocks[16]["feedback_row"] == 18
+    assert blocks[16]["summary_row"] == 18
+
+

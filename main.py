@@ -20,7 +20,7 @@ from src.integrations.strava import (
 )
 from src.integrations.sheets import write_to_sheet
 from src.integrations.strava_backfill import backfill_all
-from src.storage.activity_store import init_db
+from src.storage.activity_store import init_db, upsert_activities, upsert_details
 
 
 def group_activities_by_date(activities: list[dict]) -> dict[str, list[dict]]:
@@ -300,6 +300,15 @@ def main():
             progress=True,
         )
         print(" done!")
+
+        try:
+            conn = init_db()
+            upsert_activities(conn, activities)
+            if details:
+                upsert_details(conn, details)
+            conn.close()
+        except Exception:
+            pass
     except StravaAuthRequired as e:
         print(f"\n❌ Strava authorization failed: {e}")
         return 1

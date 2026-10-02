@@ -253,6 +253,18 @@ def calculate_weekly_totals(row_activities: list[dict]) -> tuple[float, int, flo
     return run_dist, run_time, bike_dist, bike_time, bike_elev, swim_dist_m, swim_time, strength_time
 
 
+def _strip_greek_accents(text: str) -> str:
+    """Remove monotonic Greek accents and convert to uppercase for robust matching."""
+    accents = {
+        "ά": "α", "έ": "ε", "ή": "η", "ί": "ι", "ό": "ο", "ύ": "υ", "ώ": "ω",
+        "Ά": "Α", "Έ": "Ε", "Ή": "Η", "Ί": "Ι", "Ό": "Ο", "Ύ": "Υ", "Ώ": "Ω",
+        "ϊ": "ι", "ϋ": "υ", "ΐ": "ι", "ΰ": "υ",
+    }
+    for k, v in accents.items():
+        text = text.replace(k, v)
+    return text
+
+
 def inspect_week_blocks(col_a_rows: list[list[str]], start_row: int = 13) -> dict[int, dict]:
     """
     Parse week blocks from Column A data.
@@ -282,7 +294,7 @@ def inspect_week_blocks(col_a_rows: list[list[str]], start_row: int = 13) -> dic
 
         for row_k in range(r, block_limit):
             k_idx = row_k - start_row
-            val_k = col_a_values[k_idx].strip().upper() if 0 <= k_idx < len(col_a_values) else ""
+            val_k = _strip_greek_accents(col_a_values[k_idx].strip()).upper() if 0 <= k_idx < len(col_a_values) else ""
             if ("ΑΝΑΤΡΟΦΟΔΟΤΗΣΗ" in val_k or "FEEDBACK" in val_k) and not feedback_row:
                 feedback_row = row_k
             elif ("ΠΡΟΓΡΑΜΜΑ" in val_k or "PROGRAM" in val_k) and not program_row:
@@ -298,12 +310,34 @@ def inspect_week_blocks(col_a_rows: list[list[str]], start_row: int = 13) -> dic
                 "summary_row": summary_row or (feedback_row + 1),
             }
         else:
-            blocks[r] = {
-                "layout": "old",
-                "program_row": r,
-                "feedback_row": r,
-                "summary_row": r,
-            }
+            # Check for 3-row layout where row r is program/date,
+            # row r+1 is sport selection (e.g. 'Άθλημα • επιλογή'),
+            # and row r+2 is feedback & totals (e.g. 'Σύνολα εβδομάδας')
+            totals_row = None
+            has_sport_choice = False
+            for row_k in range(r + 1, block_limit):
+                k_idx = row_k - start_row
+                val_k = _strip_greek_accents(col_a_values[k_idx].strip()).upper() if 0 <= k_idx < len(col_a_values) else ""
+                if "ΑΘΛΗΜΑ" in val_k or "ΕΠΙΛΟΓΗ" in val_k:
+                    has_sport_choice = True
+                elif "ΣΥΝΟΛΑ" in val_k:
+                    totals_row = row_k
+
+            if totals_row or has_sport_choice:
+                fb_row = totals_row if totals_row else (r + 2)
+                blocks[r] = {
+                    "layout": "new",
+                    "program_row": r,
+                    "feedback_row": fb_row,
+                    "summary_row": fb_row,
+                }
+            else:
+                blocks[r] = {
+                    "layout": "old",
+                    "program_row": r,
+                    "feedback_row": r,
+                    "summary_row": r,
+                }
     return blocks
 
 
@@ -404,6 +438,7 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
         if block["layout"] == "old":
             read_ranges.append(f"'{SHEET_NAME}'!A{r}")
         else:
+            read_ranges.append(f"'{SHEET_NAME}'!A{block['summary_row']}")
             read_ranges.append(f"'{SHEET_NAME}'!B{block['summary_row']}")
 
     existing_values = {}
@@ -446,16 +481,21 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
             new_value = formatted
             status = "📝 "
 
-        updates.append(
-            {
-                "range": f"'{SHEET_NAME}'!{col}{target_row}",
-                "values": [[new_value]],
-            }
-        )
-        print(
-            f"  {status} {target_date.strftime('%a %Y-%m-%d')} → cell {col}{target_row} "
-            f"({len(day_activities)} activities, layout: {layout})"
-        )
+        if new_value.strip() != existing.strip():
+            updates.append(
+                {
+                    "range": f"'{SHEET_NAME}'!{col}{target_row}",
+                    "values": [[new_value]],
+                }
+            )
+            print(
+                f"  {status} {target_date.strftime('%a %Y-%m-%d')} → cell {col}{target_row} "
+                f"({len(day_activities)} activities, layout: {layout})"
+            )
+        else:
+            print(
+                f"  ✓ {target_date.strftime('%a %Y-%m-%d')} cell {col}{target_row} already up to date"
+            )
 
     # Resolve each row's week span, then fetch all Garmin weeks in one pass so
     # already-cached weeks cost no API calls.
@@ -561,64 +601,82 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
         else:
             # layout == "new"
             target_row = block["summary_row"]
+            existing_a = get_existing_value("A", target_row)
             existing_b = get_existing_value("B", target_row)
+
+            # Determine whether summary template is in Column A or Column B
+            if existing_a and ("Τρέξιμο" in existing_a or "Σύνολα" in existing_a):
+                summary_col = "A"
+                existing_summary = existing_a
+            elif existing_b and ("Τρέξιμο" in existing_b or "Σύνολα" in existing_b):
+                summary_col = "B"
+                existing_summary = existing_b
+            else:
+                summary_col = "A"
+                existing_summary = existing_a
 
             running_time_val = format_duration_short_el(run_time)
             cycling_time_val = format_duration_short_el(bike_time)
             swimming_time_val = format_duration_short_el(swim_time)
 
-            has_template = existing_b and "Τρέξιμο" in existing_b and "Ποδηλασία" in existing_b and "Κολύμβηση" in existing_b
+            has_template = (
+                existing_summary
+                and "Τρέξιμο" in existing_summary
+                and "Ποδηλασία" in existing_summary
+                and "Κολύμβηση" in existing_summary
+            )
 
             if not has_template:
-                new_b = (
+                new_summary = (
+                    f"Σύνολα εβδομάδας\n"
                     f"Τρέξιμο {run_dist:.2f} χλμ / {running_time_val} • Ποδηλασία {bike_dist:.2f} χλμ / {cycling_time_val} • Κολύμβηση {swim_dist_m:.0f} μ / {swimming_time_val}\n"
                     f"Κόπωση __/10 • Ύπνος {sleep_val or '__h'} • HRrest {rhr_val or '__'} • HRV {hrv_val or '__'} • Μυϊκή ενόχληση __/10 • Διάθεση __/10\n"
                     f"Σχόλιο εβδομάδας:"
                 )
             else:
-                new_b = existing_b
-                new_b = re.sub(
+                new_summary = existing_summary
+                new_summary = re.sub(
                     r"(Τρέξιμο\s+)([^/]+?)(\s*χλμ\s*/\s*)([^•\n]+?)(\s*)(?=•|\n|$)",
                     rf"\g<1>{run_dist:.2f}\g<3>{running_time_val}\g<5>",
-                    new_b
+                    new_summary,
                 )
-                new_b = re.sub(
+                new_summary = re.sub(
                     r"(Ποδηλασία\s+)([^/]+?)(\s*χλμ\s*/\s*)([^•\n]+?)(\s*)(?=•|\n|$)",
                     rf"\g<1>{bike_dist:.2f}\g<3>{cycling_time_val}\g<5>",
-                    new_b
+                    new_summary,
                 )
-                new_b = re.sub(
+                new_summary = re.sub(
                     r"(Κολύμβηση\s+)([^/]+?)(\s*μ\s*/\s*)([^•\n]+?)(\s*)(?=•|\n|$)",
                     rf"\g<1>{swim_dist_m:.0f}\g<3>{swimming_time_val}\g<5>",
-                    new_b
+                    new_summary,
                 )
                 if sleep_val:
-                    new_b = re.sub(
+                    new_summary = re.sub(
                         r"(Ύπνος\s+)([^•\n]+?)(\s*)(?=•|\n|$)",
                         rf"\g<1>{sleep_val}\g<3>",
-                        new_b
+                        new_summary,
                     )
                 if rhr_val:
-                    new_b = re.sub(
+                    new_summary = re.sub(
                         r"(HRrest\s+)([^•\n]+?)(\s*)(?=•|\n|$)",
                         rf"\g<1>{rhr_val}\g<3>",
-                        new_b
+                        new_summary,
                     )
                 if hrv_val:
-                    new_b = re.sub(
+                    new_summary = re.sub(
                         r"(HRV\s+)([^•\n]+?)(\s*)(?=•|\n|$)",
                         rf"\g<1>{hrv_val}\g<3>",
-                        new_b
+                        new_summary,
                     )
 
-            if new_b != existing_b:
+            if new_summary != existing_summary:
                 updates.append(
                     {
-                        "range": f"'{SHEET_NAME}'!B{target_row}",
-                        "values": [[new_b]],
+                        "range": f"'{SHEET_NAME}'!{summary_col}{target_row}",
+                        "values": [[new_summary]],
                     }
                 )
-                print(f"  📝 Column B (Row {target_row}) totals updated (NEW format)")
+                print(f"  📝 Column {summary_col} (Row {target_row}) totals updated (NEW format)")
 
     if updates:
         body = {"valueInputOption": "RAW", "data": updates}
