@@ -69,6 +69,7 @@ strava_to_google_sheet/
 │   ├── test_chat_store.py        # Session persistence, TTL purge, keyword recall
 │   ├── test_coach_agent.py       # Tool functions & chat loop against a fake client
 │   └── test_coach_memory.py      # Memory interface with a fake embedding function
+├── docs/                         # Modular documentation (setup, config, analytics, coach, api, sheets)
 ├── main.py                       # Root CLI entry point (incl. --backfill)
 ├── server.py                     # Root Web server entry point
 ├── pyproject.toml                # Project configuration (deps, pytest)
