@@ -41,7 +41,7 @@ strava_to_google_sheet/
 │   └── app.js                    # Chart.js charts, chat drawer & interaction logic
 ├── main.py                       # Root CLI entry point (incl. --backfill)
 ├── server.py                     # Root Web server entry point
-├── tests/                        # pytest suite (offline, 320+ tests)
+├── tests/                        # pytest suite (offline, 348+ tests)
 ├── pyproject.toml                # Project dependencies and config
 ├── README.md                     # User documentation
 ├── AGENTS.md                     # AI Agent Technical Manual
@@ -135,6 +135,7 @@ memory that persists indefinitely needs to be inspectable.
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/dashboard` | Weekly metrics, progression history, ACWR, weather, HR zones & Polarized 80/20 balance |
+| `GET /api/activities` | Query recent Strava activities (with sport filtering & limits) |
 | `GET /api/weather` | Daily historical and 7-day forecast weather (Athens, Greece) |
 | `GET /api/durability` | Run durability assessment & cross-training suggestions |
 | `GET /api/compliance` | Planned workout vs. Strava execution matching & score |
@@ -152,6 +153,7 @@ memory that persists indefinitely needs to be inspectable.
 | `POST /api/notifications/telegram/next-day` | Send tomorrow's workout brief + Athens weather + Garmin recovery + coach tip to Telegram |
 | `POST /api/notifications/telegram/today` | Send today's workout brief to Telegram |
 | `POST /api/notifications/telegram/webhook` | Receive push webhook updates directly from Telegram Bot API |
+| `GET /api/health` | Health status and database/cache reachability |
 
 ---
 
@@ -193,6 +195,9 @@ a sensible default. See [`.env.example`](.env.example) for the fully documented 
 | `STRAIN_WARN_THRESHOLD` | `1500.0` | Foster strain warning level |
 | `AQUA_JOG_LOAD_FACTOR` | `0.90` | Run-equivalent stimulus per minute of aqua jogging |
 | `BIKE_RUN_LOAD_FACTOR` | `0.55` | Run-equivalent stimulus per minute of cycling |
+| `CROSS_TRAINING_AQUA_SHARE` / `CROSS_TRAINING_BIKE_SHARE` | `0.40` / `0.60` | Aqua jogging vs cycling volume share in run substitutions |
+| `BRIEF_RAIN_THRESHOLD_MM` | `1.0` | Minimum rain in mm to trigger weather brief rain alerts |
+| `BRIEF_HEAT_THRESHOLD_C` | `22.0` | Minimum temperature in °C to trigger weather brief heat warnings |
 | `GEMINI_MODELS` | `gemini-3.6-flash,gemini-3.7-flash,gemini-3.8-flash,gemini-flash-latest` | Models tried in order for the one-shot panel |
 | `COACH_CHAT_MODELS` | `gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-flash-latest` | Chat models; must support function calling |
 | `COACH_MAX_TOOL_CALLS` | `8` | Ceiling on the tool loop for a single turn |
@@ -259,11 +264,13 @@ uv run python main.py --sheet             # Sync Strava + Garmin to Google Sheet
 uv run python main.py --sheet --count 50  # Fetch last 50 activities
 uv run python main.py --backfill          # Import the FULL Strava history into local SQLite (run once)
 uv run python main.py --backfill --no-resume  # Restart full import from page 1
+uv run python main.py --telegram-next-day # Dispatch tomorrow's training brief to Telegram
+uv run python main.py --telegram-today    # Dispatch today's training brief to Telegram
 
 # 5. Launch Web Dashboard Server
 uv run python server.py                   # Open http://127.0.0.1:8000 in your browser
 
-# 6. Run the test suite (100% offline, 275+ tests)
+# 6. Run the test suite (100% offline, 348+ tests)
 uv run pytest
 ```
 
