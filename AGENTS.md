@@ -45,7 +45,7 @@ strava_to_google_sheet/
 │   ├── index.html                # Dashboard + floating AI Coach chat drawer + Garmin modal
 │   ├── styles.css                # Custom glassmorphic design system
 │   └── app.js                    # Chart.js charts, chat drawer & interaction logic
-├── tests/                        # pytest suite (offline, 320+ tests)
+├── tests/                        # pytest suite (offline, 348+ tests)
 │   ├── conftest.py               # Shared synthetic-activity fixtures & tmp_path DB
 │   ├── test_formatting.py        # Unit conversions & sport corrections
 │   ├── test_metrics.py           # Relative effort, weekly rollups, ACWR
@@ -89,8 +89,9 @@ strava_to_google_sheet/
    - All tunables are env-overridable through `_env_int` / `_env_float` / `_env_list` / `_env_bool`
      helpers that fall back to the default on malformed input. Anything a reviewer
      would call a magic number (HR max/rest, the swim divisor, the indoor-bike
-     speed, ACWR window sizes, cache TTLs, Gemini model names, Telegram tokens, shoe wear limits)
-     lives here, not inline at the call site. See [`.env.example`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/.env.example)
+     speed, ACWR window sizes, cache TTLs, Gemini model names, Telegram tokens, shoe wear limits,
+     cross-training volume shares, risk-based run retention multipliers, weather brief thresholds,
+     and webhook security tokens) lives here, not inline at the call site. See [`.env.example`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/.env.example)
      for the documented list.
    - Owns the local-state paths too: `HISTORY_DB_FILE` (`.training_history.db`, the
      activity **and** chat store), `COACH_MEMORY_DIR` (`.coach_memory/`), and
@@ -270,11 +271,12 @@ strava_to_google_sheet/
       to Garmin watches and the Tacx Training app.
 
 15. **[`src/integrations/telegram.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/integrations/telegram.py)**
-    - Telegram Bot API integration delivering training alerts and daily workout briefs.
-    - `dispatch_next_day_workout` / `dispatch_today_workout`: reads coach prescriptions
-      from Google Sheets, enriches them with Open-Meteo Athens weather, computes
-      thermal/wind pace adjustments, pairs with daily Garmin recovery biometrics and an AI coach tip,
-      and formats a clean Markdown brief.
+    - Telegram Bot API integration delivering training alerts, interactive bot commands, and daily workout briefs.
+    - `build_daily_brief`: centralized daily brief compiler shared across Telegram dispatch, REST preview endpoints, and the CLI. Reads coach prescriptions from Google Sheets, enriches them with Open-Meteo Athens weather, computes thermal/wind pace adjustments, pairs with daily Garmin recovery biometrics and an AI coach tip, and formats a clean Markdown brief.
+    - `dispatch_next_day_workout` / `dispatch_today_workout`: sends the formatted brief via Telegram Markdown messaging.
+    - Resilient background dispatch scheduler tracks `last_daily_brief_date` in SQLite `sync_state` and uses a `>= target_time` comparison, ensuring dispatches are not skipped if the server boots or restarts slightly past the scheduled dispatch window.
+    - `get_telegram_webhook_info()` checks Telegram's server configuration on startup: if an active webhook URL is set, background long-polling is automatically disabled to eliminate 409 Conflict errors.
+    - Inbound webhooks enforce strict constant-time verification against `TELEGRAM_WEBHOOK_SECRET` via the `X-Telegram-Bot-Api-Secret-Token` header with fail-closed security.
     - Includes an interactive command parser (`/today`, `/tomorrow`, `/recovery`, `/compliance`, `/sync`,
       `/stats`, `/gear`, `/coach`) for direct two-way interactions with the athlete.
 
@@ -319,6 +321,9 @@ strava_to_google_sheet/
       - AI Coach & Chat: `POST /api/ai/coach`, `POST /api/ai/chat`,
         `GET /api/coach/memory`, `DELETE /api/coach/memory/{fact_id}`, `POST /api/coach/memory/extract`
       - Web SPA & Static: `GET /`, `GET /favicon.ico`
+    - Non-blocking webhook ingestion: `POST /api/strava/webhook` processes activity detail fetching,
+      database upsertion, and optional Google Sheets sync via FastAPI `BackgroundTasks`, returning
+      HTTP 200 immediately to meet Strava's 2-second timeout window.
     - Reads summaries from the SQLite store first and falls back to Strava for the
       freshness window. The `.activities_cache.json` hot cache stays in front of it —
       it protects both the DB and Strava from every dashboard poll — gated by
@@ -373,6 +378,10 @@ uv run python main.py --sheet --count 30
 # Resumable and idempotent; --no-resume restarts from page 1.
 uv run python main.py --backfill
 uv run python main.py --backfill --no-resume
+
+# Dispatch Telegram daily workout briefs via CLI
+uv run python main.py --telegram-next-day
+uv run python main.py --telegram-today
 
 # Run Web Dashboard Server
 uv run python server.py
