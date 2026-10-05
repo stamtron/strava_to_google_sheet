@@ -228,6 +228,7 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
     Process incoming commands from Telegram and return reply markdown.
     Validates sender against TELEGRAM_CHAT_ID.
     """
+    from src.config import TELEGRAM_CHAT_ID
     from src.integrations.sheets import get_planned_workout_for_date
     from src.integrations.weather import get_weather_for_date
     from src.integrations.garmin import get_daily_recovery_metrics, assess_workout_readiness
@@ -236,8 +237,13 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
     if not clean_text:
         return "👋 Στείλε /help για να δεις τις διαθέσιμες εντολές."
 
-    # Security check: only authorized athlete chat ID
-    if TELEGRAM_CHAT_ID and chat_id and str(chat_id).strip() != TELEGRAM_CHAT_ID.strip():
+    configured_chat_id = (TELEGRAM_CHAT_ID or "").strip()
+    if not configured_chat_id:
+        logger.warning("Unauthorized access attempt: TELEGRAM_CHAT_ID is unset.")
+        return "⛔ Δεν έχεις δικαίωμα πρόσβασης σε αυτό το bot."
+
+    # When chat_id is provided, verify it strictly matches configured_chat_id
+    if chat_id is not None and (not str(chat_id).strip() or str(chat_id).strip() != configured_chat_id):
         logger.warning("Unauthorized access attempt from Telegram chat_id %s", chat_id)
         return "⛔ Δεν έχεις δικαίωμα πρόσβασης σε αυτό το bot."
 
@@ -508,6 +514,23 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
         return f"⚠️ Ο AI Coach δεν είναι διαθέσιμος αυτή τη στιγμή: `{e}`"
 
 
+def get_telegram_webhook_info() -> dict | None:
+    """Query Telegram Bot API for current webhook status."""
+    token = (TELEGRAM_BOT_TOKEN or "").strip()
+    if not token:
+        return None
+    url = f"https://api.telegram.org/bot{token}/getWebhookInfo"
+    try:
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("ok"):
+                return data.get("result")
+    except Exception as e:
+        logger.warning("Could not check Telegram webhook info: %s", e)
+    return None
+
+
 def poll_telegram_updates(offset: int = 0, timeout: int = 20) -> tuple[int, list[dict]]:
     """Fetch updates from Telegram Bot API with long-polling."""
     token = (TELEGRAM_BOT_TOKEN or "").strip()
@@ -527,8 +550,14 @@ def poll_telegram_updates(offset: int = 0, timeout: int = 20) -> tuple[int, list
                 for u in updates:
                     next_offset = max(next_offset, u.get("update_id", 0) + 1)
                 return next_offset, updates
+        elif resp.status_code == 409:
+            logger.warning(
+                "Telegram polling conflict (HTTP 409): a webhook is active or another bot instance is polling."
+            )
+        else:
+            logger.warning("Telegram polling returned HTTP %d: %s", resp.status_code, resp.text[:120])
     except Exception as e:
-        logger.debug("Telegram polling transient error: %s", e)
+        logger.warning("Telegram polling transient error: %s", e)
 
     return offset, []
 
@@ -551,46 +580,109 @@ def process_incoming_update(update: dict) -> None:
         send_telegram_message(reply, chat_id=chat_id)
 
 
+def build_daily_brief(
+    target_date: date,
+    custom_tip: str | None = None,
+) -> tuple[str, dict]:
+    """
+    Assemble tomorrow's or today's planned workout brief, weather forecast,
+    Garmin recovery biometrics, and coaching tip into formatted Markdown.
+
+    Returns (brief_text, metadata_dict).
+    """
+    from src.config import (
+        BRIEF_HEAT_THRESHOLD_C,
+        BRIEF_RAIN_THRESHOLD_MM,
+        DEFAULT_COACH_TIP,
+        DEFAULT_HEAT_TIP,
+        DEFAULT_RAIN_TIP,
+    )
+    from src.integrations.garmin import assess_workout_readiness, get_daily_recovery_metrics
+    from src.integrations.sheets import get_planned_workout_for_date
+    from src.integrations.weather import get_weather_for_date
+
+    workout_info = get_planned_workout_for_date(target_date)
+    weather_info = get_weather_for_date(target_date)
+    recovery_info = get_daily_recovery_metrics(target_date)
+    readiness_info = assess_workout_readiness(recovery_info, workout_text=workout_info.get("workout_text", ""))
+
+    tip = custom_tip
+    if not tip:
+        precip = (weather_info.get("precipitation_mm") or 0.0) if weather_info else 0.0
+        t_max = (weather_info.get("temp_max_c") or 0.0) if weather_info else 0.0
+        if precip > BRIEF_RAIN_THRESHOLD_MM:
+            tip = DEFAULT_RAIN_TIP
+        elif t_max > BRIEF_HEAT_THRESHOLD_C:
+            tip = DEFAULT_HEAT_TIP
+        else:
+            tip = DEFAULT_COACH_TIP
+
+    brief_text = format_next_day_brief(
+        target_date=target_date,
+        workout_text=workout_info.get("workout_text", ""),
+        weather_info=weather_info,
+        coach_tip=tip,
+        lookup_error=workout_info.get("reason"),
+        recovery_info=recovery_info,
+        readiness_info=readiness_info,
+    )
+
+    meta = {
+        "workout_info": workout_info,
+        "weather_info": weather_info,
+        "recovery_info": recovery_info,
+        "readiness_info": readiness_info,
+        "coach_tip": tip,
+    }
+    return brief_text, meta
+
+
 def run_daily_dispatch_check() -> bool:
     """
-    Check if the current Athens time matches TELEGRAM_DAILY_DISPATCH_TIME,
+    Check if the current Athens time has reached TELEGRAM_DAILY_DISPATCH_TIME,
     and if so, automatically send tomorrow's workout briefing once per day.
+    Persists last-dispatched date in sync_state so reloads or transient delays
+    do not skip the brief or duplicate it.
     """
     global _LAST_DISPATCHED_DATE
+    from src.config import TELEGRAM_DAILY_DISPATCH_TIME
+    from src.storage.activity_store import get_sync_state, init_db, set_sync_state
 
     now_dt = datetime.now()
     today_str = now_dt.strftime("%Y-%m-%d")
     current_hhmm = now_dt.strftime("%H:%M")
 
     target_time = (TELEGRAM_DAILY_DISPATCH_TIME or "20:30").strip()
-    if current_hhmm == target_time and _LAST_DISPATCHED_DATE != today_str:
+
+    conn = None
+    last_sent = _LAST_DISPATCHED_DATE
+    try:
+        conn = init_db()
+        persisted = get_sync_state(conn, "telegram_last_dispatched_date")
+        if persisted:
+            last_sent = persisted
+    except Exception as e:
+        logger.warning("Could not read telegram_last_dispatched_date from store: %s", e)
+
+    if current_hhmm >= target_time and last_sent != today_str:
         logger.info("Executing daily automated Telegram dispatch for tomorrow's workout...")
-        from src.integrations.sheets import get_planned_workout_for_date
-        from src.integrations.weather import get_weather_for_date
-        from src.integrations.garmin import get_daily_recovery_metrics, assess_workout_readiness
-
         target_date = date.today() + timedelta(days=1)
-        w_info = get_planned_workout_for_date(target_date)
-        weath = get_weather_for_date(target_date)
-        rec = get_daily_recovery_metrics(target_date)
-        readiness = assess_workout_readiness(rec, workout_text=w_info.get("workout_text", ""))
-        tip = "Keep easy aerobic pace in Zone 2 for optimal recovery and mitochondrial adaptation."
-
-        brief = format_next_day_brief(
-            target_date=target_date,
-            workout_text=w_info.get("workout_text", ""),
-            weather_info=weath,
-            coach_tip=tip,
-            lookup_error=w_info.get("reason"),
-            recovery_info=rec,
-            readiness_info=readiness,
-        )
+        brief, _ = build_daily_brief(target_date)
         res = send_telegram_message(brief)
         if res.get("success"):
             _LAST_DISPATCHED_DATE = today_str
+            if conn:
+                try:
+                    set_sync_state(conn, "telegram_last_dispatched_date", today_str)
+                except Exception as e:
+                    logger.warning("Could not persist telegram_last_dispatched_date: %s", e)
             logger.info("Daily Telegram dispatch sent successfully for %s", target_date)
+            if conn:
+                conn.close()
             return True
         else:
             logger.warning("Daily Telegram dispatch delivery failed: %s", res.get("detail"))
 
+    if conn:
+        conn.close()
     return False

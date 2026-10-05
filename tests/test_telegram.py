@@ -172,16 +172,34 @@ def test_telegram_api_endpoint_dry_run():
     assert data["provider"] == "dry-run"
 
 
-def test_whatsapp_deprecated_api_endpoint_routes_to_telegram():
+def test_telegram_webhook_secret_token_validation(monkeypatch):
     from fastapi.testclient import TestClient
     from src.api.server import app
 
+    monkeypatch.setattr("src.config.TELEGRAM_WEBHOOK_SECRET", "super_secret_token_123")
     client = TestClient(app)
-    resp = client.post("/api/notifications/whatsapp/next-day", json={"dry_run": True})
+
+    # 1. Missing secret token header -> 403
+    resp = client.post("/api/notifications/telegram/webhook", json={"update_id": 1})
+    assert resp.status_code == 403
+    assert "Invalid webhook secret token" in resp.json()["detail"]
+
+    # 2. Wrong secret token header -> 403
+    resp = client.post(
+        "/api/notifications/telegram/webhook",
+        json={"update_id": 1},
+        headers={"X-Telegram-Bot-Api-Secret-Token": "wrong_secret"},
+    )
+    assert resp.status_code == 403
+
+    # 3. Valid secret token header -> 200
+    resp = client.post(
+        "/api/notifications/telegram/webhook",
+        json={"update_id": 1},
+        headers={"X-Telegram-Bot-Api-Secret-Token": "super_secret_token_123"},
+    )
     assert resp.status_code == 200
-    data = resp.json()
-    assert data["success"] is True
-    assert "preview" in data
+    assert resp.json() == {"ok": True}
 
 
 def test_handle_telegram_command_help():
@@ -191,6 +209,13 @@ def test_handle_telegram_command_help():
     assert "/today" in res
     assert "/sync" in res
     assert "/gear" in res
+
+
+def test_handle_telegram_command_unconfigured_chat_id(monkeypatch):
+    from src.integrations.telegram import handle_telegram_command
+    monkeypatch.setattr("src.integrations.telegram.TELEGRAM_CHAT_ID", "")
+    res = handle_telegram_command("/today", chat_id="12345")
+    assert "Δεν έχεις δικαίωμα πρόσβασης" in res or "Δεν έχει ρυθμιστεί" in res
 
 
 def test_handle_telegram_command_unauthorized(monkeypatch):
@@ -299,11 +324,80 @@ def test_telegram_webhook_endpoint():
             "message_id": 1,
             "chat": {"id": 999},
             "text": "/help",
-        }
+        },
     }
     resp = client.post("/api/notifications/telegram/webhook", json=payload)
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
+
+
+def test_build_daily_brief_and_metadata(monkeypatch):
+    from datetime import date
+    from src.integrations.telegram import build_daily_brief
+    import src.integrations.sheets as sheets_mod
+    import src.integrations.weather as weather_mod
+    import src.integrations.garmin as garmin_mod
+
+    monkeypatch.setattr(
+        sheets_mod,
+        "get_planned_workout_for_date",
+        lambda d: {"workout_text": "Easy Run 8km", "reason": None},
+    )
+    monkeypatch.setattr(
+        weather_mod,
+        "get_weather_for_date",
+        lambda d: {"temp_max_c": 22.0, "temp_min_c": 16.0, "precipitation_mm": 0.0},
+    )
+    monkeypatch.setattr(
+        garmin_mod,
+        "get_daily_recovery_metrics",
+        lambda d: {"available": False},
+    )
+
+    brief, meta = build_daily_brief(date(2026, 10, 6))
+    assert "ΠΡΟΠΟΝΗΣΗ ΗΜΕΡΑΣ" in brief
+    assert "Easy Run 8km" in brief
+    assert meta["workout_info"]["workout_text"] == "Easy Run 8km"
+    assert "Zone 2" in meta["coach_tip"]
+
+
+def test_run_daily_dispatch_check_persists(monkeypatch, tmp_path):
+    from datetime import date, datetime
+    import src.integrations.telegram as tel_mod
+    from src.storage.activity_store import init_db, get_sync_state
+
+    db_path = str(tmp_path / "test_history.db")
+    conn = init_db(db_path)
+    conn.close()
+
+    monkeypatch.setattr("src.storage.activity_store.HISTORY_DB_FILE", db_path)
+    monkeypatch.setattr("src.config.HISTORY_DB_FILE", db_path)
+    monkeypatch.setattr(tel_mod, "_LAST_DISPATCHED_DATE", None)
+    monkeypatch.setattr(tel_mod, "send_telegram_message", lambda brief: {"success": True})
+    monkeypatch.setattr(tel_mod, "build_daily_brief", lambda d: ("Brief text", {}))
+
+    # Mock time so it is past dispatch time e.g. 21:00 >= 20:30
+    fake_now = datetime(2026, 10, 6, 21, 0, 0)
+    class FakeDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fake_now
+
+    monkeypatch.setattr(tel_mod, "datetime", FakeDateTime)
+
+    # First run should send and persist
+    sent = tel_mod.run_daily_dispatch_check()
+    assert sent is True
+
+    conn2 = init_db(db_path)
+    persisted = get_sync_state(conn2, "telegram_last_dispatched_date")
+    conn2.close()
+    assert persisted == "2026-10-06"
+
+    # Second run on same day should not duplicate
+    sent_again = tel_mod.run_daily_dispatch_check()
+    assert sent_again is False
+
 
 
 

@@ -7,8 +7,11 @@ and race predictions using LLMs (Gemini) with robust heuristic fallbacks.
 
 from datetime import date, timedelta
 import json
+import logging
 import math
 import time
+
+logger = logging.getLogger(__name__)
 
 from src.config import (
     ATHLETE_PB_10K_SEC,
@@ -47,7 +50,7 @@ def _get_gemini_client():
         from google import genai
         return genai.Client(api_key=GEMINI_API_KEY)
     except Exception as e:
-        print(f"⚠️  Gemini client initialization failed: {e}")
+        logger.warning("Gemini client initialization failed: %s", e)
         return None
 
 
@@ -477,7 +480,7 @@ Please return a JSON response with:
                     if ("503" in err_msg or "UNAVAILABLE" in err_msg or "429" in err_msg) and attempt == 0:
                         time.sleep(1.5)
                         continue
-                    print(f"⚠️  Gemini call with {model_name} failed: {e}")
+                    logger.warning("Gemini call with %s failed: %s", model_name, e)
                     break
 
     # Heuristic Coach Fallback

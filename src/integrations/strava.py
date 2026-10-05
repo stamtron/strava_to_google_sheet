@@ -3,9 +3,12 @@ Strava API Client and OAuth2 Authentication.
 """
 
 import json
+import logging
 import os
 import time
 import webbrowser
+
+logger = logging.getLogger(__name__)
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -88,7 +91,7 @@ def _request(method: str, url: str, **kwargs) -> requests.Response:
         # Capped: a 15-minute window reset must not hang a request thread.
         delay = min(delay, 30.0)
         if attempt < STRAVA_MAX_RETRIES - 1:
-            print(f"  ⏳ Strava rate limit hit, retrying in {delay:.0f}s...")
+            logger.warning("Strava rate limit hit, retrying in %.0fs...", delay)
             time.sleep(delay)
 
     usage = last_response.headers.get("X-RateLimit-Usage", "unknown") if last_response else "unknown"
@@ -258,14 +261,12 @@ def fetch_details_for_activities(
         try:
             details[key] = fetch_activity_detail(access_token, act_id)
         except StravaRateLimitError:
-            if progress:
-                print("\n  ⚠️  Stopped fetching details early: Strava rate limit reached.")
+            logger.warning("Stopped fetching details early: Strava rate limit reached.")
             break
         except StravaNetworkError as e:
             # Details are supplementary; keep what we have rather than losing the
             # activities we already fetched successfully.
-            if progress:
-                print(f"\n  ⚠️  Stopped fetching details early: {e}")
+            logger.warning("Stopped fetching details early: %s", e)
             break
         if progress:
             print(".", end="", flush=True)

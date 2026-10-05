@@ -3,10 +3,13 @@ Garmin Connect API Client and Health Biometrics.
 """
 
 import json
+import logging
 import os
 import time
 from datetime import date, timedelta
 from garminconnect import Garmin
+
+logger = logging.getLogger(__name__)
 from src.config import (
     GARMIN_CACHE_FILE,
     GARMIN_CACHE_TTL,
@@ -44,7 +47,7 @@ def get_garmin_client(force_new: bool = False) -> Garmin | None:
         _client = client
         return client
     except Exception as e:
-        print(f"  ⚠️  Garmin Connect login failed: {e}")
+        logger.error("Garmin Connect login failed: %s", e)
         return None
 
 
@@ -90,15 +93,15 @@ def get_weekly_health_summary(start_date: date, end_date: date, client: Garmin =
                     total_sleep_seconds += day_total_sleep
                     total_nap_seconds += nap_sec
                     valid_sleep_days += 1
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Garmin sleep fetch failed for %s: %s", date_str, e)
 
         # 2. Resting Heart Rate & User Summary
         user_summary = None
         try:
             user_summary = client.get_user_summary(date_str)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Garmin user summary fetch failed for %s: %s", date_str, e)
 
         try:
             rhr_data = client.get_rhr_day(date_str)
@@ -115,8 +118,8 @@ def get_weekly_health_summary(start_date: date, end_date: date, client: Garmin =
 
             if rhr_val and float(rhr_val) > 0:
                 rhr_list.append(float(rhr_val))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Garmin RHR fetch failed for %s: %s", date_str, e)
 
         # 3. HRV Data
         try:
@@ -125,8 +128,8 @@ def get_weekly_health_summary(start_date: date, end_date: date, client: Garmin =
                 last_night_avg = hrv_data["hrvSummary"].get("lastNightAvg")
                 if last_night_avg and last_night_avg > 0:
                     hrv_list.append(last_night_avg)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Garmin HRV fetch failed for %s: %s", date_str, e)
 
         # 4. Stress Data
         try:
@@ -138,8 +141,8 @@ def get_weekly_health_summary(start_date: date, end_date: date, client: Garmin =
                 stress_avg = user_summary.get("averageStressLevel")
             if stress_avg and float(stress_avg) > 0:
                 stress_list.append(float(stress_avg))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Garmin stress fetch failed for %s: %s", date_str, e)
 
         # 5. Body Battery Data
         try:
@@ -159,8 +162,8 @@ def get_weekly_health_summary(start_date: date, end_date: date, client: Garmin =
                     body_battery_charged.append(float(ch))
                 if dr is not None:
                     body_battery_drained.append(float(dr))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Garmin body battery fetch failed for %s: %s", date_str, e)
 
         # 6. Training Readiness
         try:
@@ -169,8 +172,8 @@ def get_weekly_health_summary(start_date: date, end_date: date, client: Garmin =
                 readiness_list.append(float(readiness_data["score"]))
             elif user_summary and "trainingReadinessScore" in user_summary:
                 readiness_list.append(float(user_summary["trainingReadinessScore"]))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Garmin training readiness fetch failed for %s: %s", date_str, e)
 
         curr += timedelta(days=1)
 
@@ -217,7 +220,7 @@ def _save_garmin_cache(cache: dict) -> None:
         with open(GARMIN_CACHE_FILE, "w") as f:
             json.dump(cache, f)
     except OSError as e:
-        print(f"  ⚠️  Failed to write Garmin cache: {e}")
+        logger.warning("Failed to write Garmin cache: %s", e)
 
 
 def _cache_entry_is_fresh(entry: dict, week_sunday: date, today: date) -> bool:
@@ -275,7 +278,7 @@ def get_weekly_health_summaries(
         try:
             summary = get_weekly_health_summary(start, end, client)
         except Exception as e:
-            print(f"  ⚠️  Garmin fetch failed for week {week_key}: {e}")
+            logger.warning("Garmin fetch failed for week %s: %s", week_key, e)
             continue
         cache[week_key] = {"summary": summary, "fetched_at": time.time()}
         _save_garmin_cache(cache)
@@ -353,15 +356,15 @@ def get_daily_recovery_metrics(target_date: date, client: Garmin | None = None) 
             overall = scores.get("overall") or {}
             if isinstance(overall, dict) and overall.get("value"):
                 res["sleep_score"] = int(overall["value"])
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Garmin daily sleep fetch failed for %s: %s", date_str, e)
 
     # 2. Resting Heart Rate & User Summary
     user_summary = None
     try:
         user_summary = client.get_user_summary(date_str)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Garmin daily user summary fetch failed for %s: %s", date_str, e)
 
     try:
         rhr_data = client.get_rhr_day(date_str)
@@ -378,8 +381,8 @@ def get_daily_recovery_metrics(target_date: date, client: Garmin | None = None) 
         if rhr_val and float(rhr_val) > 0:
             res["resting_hr"] = int(round(float(rhr_val)))
             has_data = True
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Garmin daily RHR fetch failed for %s: %s", date_str, e)
 
     # 3. Overnight HRV
     try:
@@ -393,8 +396,8 @@ def get_daily_recovery_metrics(target_date: date, client: Garmin | None = None) 
                 has_data = True
             if status:
                 res["hrv_status"] = str(status).lower()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Garmin daily HRV fetch failed for %s: %s", date_str, e)
 
     # 4. Stress Data
     try:
@@ -407,8 +410,8 @@ def get_daily_recovery_metrics(target_date: date, client: Garmin | None = None) 
         if stress_val and float(stress_val) > 0:
             res["avg_stress"] = int(round(float(stress_val)))
             has_data = True
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Garmin daily stress fetch failed for %s: %s", date_str, e)
 
     # 5. Body Battery
     try:
@@ -423,7 +426,7 @@ def get_daily_recovery_metrics(target_date: date, client: Garmin | None = None) 
             if dr is not None:
                 res["body_battery_drained"] = int(dr)
                 has_data = True
-            
+
             # Most recent battery level in the day
             values = entry.get("bodyBatteryValuesArray") or []
             if values and len(values) > 0:
@@ -437,8 +440,8 @@ def get_daily_recovery_metrics(target_date: date, client: Garmin | None = None) 
             if dr is not None:
                 res["body_battery_drained"] = int(dr)
                 has_data = True
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Garmin daily body battery fetch failed for %s: %s", date_str, e)
 
     if not has_data:
         return res

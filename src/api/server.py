@@ -14,7 +14,7 @@ import os
 import time
 from datetime import date, datetime, timedelta
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,27 +28,40 @@ async def lifespan(app: FastAPI):
     """Lifecycle manager running background Telegram bot poller and auto-dispatcher."""
     async def telegram_worker():
         from src.integrations.telegram import (
+            get_telegram_webhook_info,
             poll_telegram_updates,
             process_incoming_update,
             run_daily_dispatch_check,
         )
 
         offset = 0
-        server_logger.info("Starting Telegram bot background poller and daily scheduler...")
+        server_logger.info("Starting Telegram bot background worker and daily scheduler...")
+
+        webhook_info = await asyncio.to_thread(get_telegram_webhook_info)
+        webhook_active = bool(webhook_info and webhook_info.get("url"))
+        if webhook_active:
+            server_logger.info(
+                "Telegram webhook is active (%s); worker will run daily scheduler only (no getUpdates).",
+                webhook_info.get("url"),
+            )
+
         while True:
             try:
                 # 1. Check if it is time to dispatch daily workout brief
                 await asyncio.to_thread(run_daily_dispatch_check)
 
-                # 2. Poll for incoming athlete commands from Telegram
-                offset, updates = await asyncio.to_thread(poll_telegram_updates, offset=offset, timeout=10)
-                for u in updates:
-                    await asyncio.to_thread(process_incoming_update, u)
-                await asyncio.sleep(0.5)
+                # 2. Poll for incoming athlete commands from Telegram only if no webhook is set
+                if not webhook_active:
+                    offset, updates = await asyncio.to_thread(poll_telegram_updates, offset=offset, timeout=10)
+                    for u in updates:
+                        await asyncio.to_thread(process_incoming_update, u)
+                    await asyncio.sleep(0.5)
+                else:
+                    await asyncio.sleep(30.0)
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                server_logger.debug("Telegram worker error: %s", e)
+                server_logger.warning("Telegram worker error: %s", e)
                 await asyncio.sleep(5)
 
     task = asyncio.create_task(telegram_worker())
@@ -193,7 +206,7 @@ def _save_cache(activities: list[dict], details: dict, count: int) -> None:
                 f,
             )
     except OSError as e:
-        print(f"⚠️  Failed to write cache: {e}")
+        server_logger.warning("Failed to write cache: %s", e)
 
 
 def _cache_satisfies(cache: dict, count: int) -> bool:
@@ -223,13 +236,13 @@ def _read_history(count: int) -> tuple[list[dict], dict]:
     try:
         conn = init_db()
     except Exception as e:
-        print(f"⚠️  History store unavailable: {e}")
+        server_logger.warning("History store unavailable: %s", e)
         return [], {}
     try:
         acts = store_get_activities(conn, limit=count)
         return acts, get_details(conn, [a.get("id") for a in acts])
     except Exception as e:
-        print(f"⚠️  History store read failed: {e}")
+        server_logger.warning("History store read failed: %s", e)
         return [], {}
     finally:
         conn.close()
@@ -240,14 +253,14 @@ def _write_history(activities: list[dict], details: dict | None = None) -> None:
     try:
         conn = init_db()
     except Exception as e:
-        print(f"⚠️  History store unavailable: {e}")
+        server_logger.warning("History store unavailable: %s", e)
         return
     try:
         upsert_activities(conn, activities)
         if details:
             upsert_details(conn, details)
     except Exception as e:
-        print(f"⚠️  History store write failed: {e}")
+        server_logger.warning("History store write failed: %s", e)
     finally:
         conn.close()
 
@@ -268,11 +281,11 @@ def _get_summaries(count: int) -> tuple[list[dict], dict]:
 
     def _fallback(reason: str, status: int, exc: Exception):
         if cache["activities"]:
-            print(f"⚠️  {reason}, serving from cache...")
+            server_logger.info("%s, serving from cache...", reason)
             return cache["activities"][:count], cache["details"]
         stored, stored_details = _read_history(count)
         if stored:
-            print(f"⚠️  {reason}, serving from local history...")
+            server_logger.info("%s, serving from local history...", reason)
             return stored, stored_details
         raise HTTPException(status_code=status, detail=str(exc)) from exc
 
@@ -353,13 +366,13 @@ def get_dashboard_data(count: int = Query(200, ge=1, le=500)):
     try:
         garmin_summaries = get_weekly_health_summaries(week_ranges, max_fetch=1)
     except Exception as e:
-        print(f"⚠️  Garmin unavailable: {e}")
+        server_logger.warning("Garmin unavailable: %s", e)
         garmin_summaries = {}
 
     try:
         weather_outlook = get_weather_outlook(past_days=2, forecast_days=7)
     except Exception as e:
-        print(f"⚠️  Weather fetch failed: {e}")
+        server_logger.warning("Weather fetch failed: %s", e)
         weather_outlook = []
 
     return {
@@ -390,30 +403,45 @@ def strava_webhook_challenge(
     raise HTTPException(status_code=403, detail="Invalid verify token.")
 
 
+def _process_strava_webhook_activity(object_id: int) -> None:
+    """Fetch activity details and optionally sync to sheets in a background worker."""
+    try:
+        token = get_access_token(interactive=False)
+        detail = fetch_activity_detail(int(object_id), token)
+        if detail:
+            _write_history([detail], {int(object_id): detail})
+            cache = _load_cache()
+            cache["details"][str(object_id)] = detail
+            _save_cache(cache["activities"], cache["details"], cache["count"])
+
+            if AUTO_SYNC_SHEET_ON_WEBHOOK:
+                summaries, details = _get_summaries(30)
+                write_to_sheet(summaries, details=details)
+    except Exception as e:
+        server_logger.warning("Webhook activity processing failed for %s: %s", object_id, e)
+
+
 @app.post("/api/strava/webhook")
-async def strava_webhook_event(event: dict):
+async def strava_webhook_event(
+    event: dict,
+    background_tasks: BackgroundTasks,
+    secret: str | None = Query(None),
+):
     """
     Handle real-time activity events pushed by Strava.
+    Returns status: ok immediately; processes details via BackgroundTasks without blocking.
     """
+    from src.config import STRAVA_WEBHOOK_SECRET_PARAM
+
+    if STRAVA_WEBHOOK_SECRET_PARAM and secret != STRAVA_WEBHOOK_SECRET_PARAM:
+        raise HTTPException(status_code=403, detail="Invalid webhook secret.")
+
     object_type = event.get("object_type")
     aspect_type = event.get("aspect_type")
     object_id = event.get("object_id")
 
     if object_type == "activity" and aspect_type in ("create", "update") and object_id:
-        try:
-            token = get_access_token(interactive=False)
-            detail = fetch_activity_detail(int(object_id), token)
-            if detail:
-                _write_history([detail], {int(object_id): detail})
-                cache = _load_cache()
-                cache["details"][str(object_id)] = detail
-                _save_cache(cache["activities"], cache["details"], cache["count"])
-
-                if AUTO_SYNC_SHEET_ON_WEBHOOK:
-                    summaries, details = _get_summaries(30)
-                    write_to_sheet(summaries, details=details)
-        except Exception as e:
-            print(f"⚠️  Webhook activity processing failed: {e}")
+        background_tasks.add_task(_process_strava_webhook_activity, int(object_id))
 
     return {"status": "ok"}
 
@@ -422,10 +450,6 @@ class TelegramNextDayRequest(BaseModel):
     target_date: str | None = None  # YYYY-MM-DD, defaults to tomorrow
     custom_tip: str | None = None
     dry_run: bool = False
-
-
-# Backward compatibility alias
-WhatsAppNextDayRequest = TelegramNextDayRequest
 
 
 @app.post("/api/notifications/telegram/next-day")
@@ -442,42 +466,19 @@ def send_telegram_next_day_workout_notification(req: TelegramNextDayRequest = Te
     else:
         t_date = date.today() + timedelta(days=1)
 
-    from src.integrations.garmin import get_daily_recovery_metrics, assess_workout_readiness
+    from src.integrations.telegram import build_daily_brief, send_telegram_message
 
-    workout_info = get_planned_workout_for_date(t_date)
-    weather_info = get_weather_for_date(t_date)
-    recovery_info = get_daily_recovery_metrics(t_date)
-    readiness_info = assess_workout_readiness(recovery_info, workout_text=workout_info.get("workout_text", ""))
-
-    # Optional AI tip
-    tip = req.custom_tip
-    if not tip:
-        if weather_info and (weather_info.get("precipitation_mm") or 0) > 2.0:
-            tip = "Rain expected; check tire pressure for wet roads or consider indoor trainer."
-        elif weather_info and (weather_info.get("temp_max_c") or 0) > 32:
-            tip = "High heat expected; hydrate well and start early morning."
-        else:
-            tip = "Keep easy aerobic pace in Zone 2 for optimal mitochondrial development."
-
-    brief_text = format_next_day_brief(
-        target_date=t_date,
-        workout_text=workout_info.get("workout_text", ""),
-        weather_info=weather_info,
-        coach_tip=tip,
-        lookup_error=workout_info.get("reason"),
-        recovery_info=recovery_info,
-        readiness_info=readiness_info,
-    )
+    brief_text, meta = build_daily_brief(t_date, custom_tip=req.custom_tip)
 
     if req.dry_run:
         return {
             "success": True,
             "target_date": t_date.isoformat(),
             "preview": brief_text,
-            "workout_info": workout_info,
-            "weather_info": weather_info,
-            "recovery_info": recovery_info,
-            "readiness_info": readiness_info,
+            "workout_info": meta["workout_info"],
+            "weather_info": meta["weather_info"],
+            "recovery_info": meta["recovery_info"],
+            "readiness_info": meta["readiness_info"],
             "provider": "dry-run",
         }
 
@@ -487,18 +488,28 @@ def send_telegram_next_day_workout_notification(req: TelegramNextDayRequest = Te
         "target_date": t_date.isoformat(),
         "preview": brief_text,
         "dispatch": dispatch_res,
-        "workout_info": workout_info,
-        "recovery_info": recovery_info,
-        "readiness_info": readiness_info,
+        "workout_info": meta["workout_info"],
+        "weather_info": meta["weather_info"],
+        "recovery_info": meta["recovery_info"],
+        "readiness_info": meta["readiness_info"],
     }
 
 
 @app.post("/api/notifications/telegram/webhook")
-async def telegram_webhook_handler(request: Request):
+async def telegram_webhook_handler(
+    request: Request,
+    x_telegram_bot_api_secret_token: str | None = Header(None, alias="X-Telegram-Bot-Api-Secret-Token"),
+):
     """
     Receive webhook updates directly from Telegram Bot API without polling.
     Allows instant processing of athlete commands (/today, /tomorrow, /recovery, /coach, etc.).
     """
+    from src.config import TELEGRAM_WEBHOOK_SECRET
+    if TELEGRAM_WEBHOOK_SECRET:
+        if not x_telegram_bot_api_secret_token or x_telegram_bot_api_secret_token != TELEGRAM_WEBHOOK_SECRET:
+            server_logger.warning("Rejected Telegram webhook: invalid secret token header.")
+            raise HTTPException(status_code=403, detail="Invalid webhook secret token.")
+
     from src.integrations.telegram import process_incoming_update
     try:
         update_data = await request.json()
@@ -518,12 +529,6 @@ def send_telegram_today_workout_notification(req: TelegramNextDayRequest = Teleg
     """Dispatch today's planned workout brief + weather + coach tip to athlete's Telegram."""
     if not req.target_date:
         req.target_date = date.today().isoformat()
-    return send_telegram_next_day_workout_notification(req)
-
-
-@app.post("/api/notifications/whatsapp/next-day", deprecated=True)
-def send_next_day_workout_notification_deprecated(req: TelegramNextDayRequest = TelegramNextDayRequest()):
-    """Deprecated endpoint: forwarded to Telegram dispatcher."""
     return send_telegram_next_day_workout_notification(req)
 
 

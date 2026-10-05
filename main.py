@@ -138,11 +138,6 @@ def main():
         help="Specific date (YYYY-MM-DD) to send briefing for",
     )
     parser.add_argument(
-        "--whatsapp-next-day",
-        action="store_true",
-        help="[Deprecated] Use --telegram-next-day instead",
-    )
-    parser.add_argument(
         "--telegram-bot",
         action="store_true",
         help="Run the interactive two-way Telegram bot polling worker",
@@ -230,14 +225,9 @@ def main():
             return 0
 
     # Telegram Workout Dispatcher
-    if args.telegram_today or args.telegram_next_day or args.whatsapp_next_day or (args.date and not args.sheet):
-        if args.whatsapp_next_day:
-            print("  ℹ️  Note: WhatsApp is deprecated, routing to Telegram dispatcher.")
-
+    if args.telegram_today or args.telegram_next_day or (args.date and not args.sheet):
         from datetime import date, timedelta
-        from src.integrations.sheets import get_planned_workout_for_date
-        from src.integrations.weather import get_weather_for_date
-        from src.integrations.telegram import format_next_day_brief, send_telegram_message
+        from src.integrations.telegram import build_daily_brief, send_telegram_message
 
         if args.date:
             target_date = date.fromisoformat(args.date)
@@ -249,28 +239,10 @@ def main():
         label = "Today's" if target_date == date.today() else "Next-Day"
         print(f"✈️ Preparing {label} Workout Brief for {target_date}...")
 
-        workout_info = get_planned_workout_for_date(target_date)
-        weather_info = get_weather_for_date(target_date)
-
-        # `reason` is set only when the plan could not be determined; a genuine
-        # rest day comes back empty with no reason.
-        lookup_error = workout_info.get("reason")
+        brief, meta = build_daily_brief(target_date)
+        lookup_error = meta["workout_info"].get("reason")
         if lookup_error:
             print(f"  ⚠️  Could not read the planned workout: {lookup_error}")
-
-        tip = "Keep easy aerobic pace in Zone 2 for optimal recovery and mitochondrial adaptation."
-        if weather_info and (weather_info.get("precipitation_mm") or 0) > 2.0:
-            tip = "Rain forecast; check tire pressure for wet roads or consider indoor trainer."
-        elif weather_info and (weather_info.get("temp_max_c") or 0) > 32:
-            tip = "High heat expected; hydrate well and start early morning."
-
-        brief = format_next_day_brief(
-            target_date=target_date,
-            workout_text=workout_info.get("workout_text", ""),
-            weather_info=weather_info,
-            coach_tip=tip,
-            lookup_error=lookup_error,
-        )
 
         if args.dry_run:
             print("\n📋 [Telegram Next-Day Preview (Dry Run)]")

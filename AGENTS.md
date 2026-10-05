@@ -306,7 +306,7 @@ strava_to_google_sheet/
       without cardiovascular overstress.
 
 20. **[`src/api/server.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/api/server.py)**
-    - FastAPI backend exposing 22 REST endpoints:
+    - FastAPI backend exposing 24 REST endpoints:
       - Health & Data: `GET /api/health`, `GET /api/activities`, `GET /api/dashboard`,
         `GET /api/history/status`, `POST /api/history/backfill`, `POST /api/sheet/sync`
       - Weather & Pace: `GET /api/weather`
@@ -318,7 +318,7 @@ strava_to_google_sheet/
         `POST /api/strava/webhook` (real-time activity ingestion & optional sheet sync)
       - AI Coach & Chat: `POST /api/ai/coach`, `POST /api/ai/chat`,
         `GET /api/coach/memory`, `DELETE /api/coach/memory/{fact_id}`, `POST /api/coach/memory/extract`
-      - Web SPA: `GET /`
+      - Web SPA & Static: `GET /`, `GET /favicon.ico`
     - Reads summaries from the SQLite store first and falls back to Strava for the
       freshness window. The `.activities_cache.json` hot cache stays in front of it —
       it protects both the DB and Strava from every dashboard poll — gated by
@@ -336,6 +336,12 @@ strava_to_google_sheet/
   `ALLOWED_ORIGINS` stays localhost-only with credentials off — a wildcard origin
   would let any page the browser visits read this athlete's training and biometric
   data. Do not expose it to the LAN.
+- **Webhook tunnel exposure.** If exposing webhooks to the public internet via
+  tunnels (Cloudflare Tunnel, ngrok, tailscale funnel), **forward only** the specific
+  webhook paths (`/api/strava/webhook` and `/api/notifications/telegram/webhook`) to
+  prevent exposing the unauthenticated dashboard endpoints to the WAN. Protect
+  the routes using `TELEGRAM_WEBHOOK_SECRET` (`X-Telegram-Bot-Api-Secret-Token` header)
+  and `STRAVA_WEBHOOK_SECRET_PARAM`.
 - **Secrets stay unread and ungitted:** `.env`, `token.json`, `credentials.json`,
   `gsheets_token.json`, `.garmin_tokens/`. Never echo their contents into logs,
   transcripts, or the memory store.

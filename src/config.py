@@ -148,6 +148,14 @@ STRAIN_WARN_THRESHOLD = _env_float("STRAIN_WARN_THRESHOLD", 1500.0)
 # deliver the same aerobic dose.
 AQUA_JOG_LOAD_FACTOR = _env_float("AQUA_JOG_LOAD_FACTOR", 0.90)
 BIKE_RUN_LOAD_FACTOR = _env_float("BIKE_RUN_LOAD_FACTOR", 0.55)
+CROSS_TRAINING_AQUA_SHARE = _env_float("CROSS_TRAINING_AQUA_SHARE", 0.60)
+RUN_RETENTION_BY_RISK = {
+    "low": _env_float("RUN_RETENTION_LOW", 1.0),
+    "moderate": _env_float("RUN_RETENTION_MODERATE", 0.8),
+    "high": _env_float("RUN_RETENTION_HIGH", 0.6),
+    "unknown": _env_float("RUN_RETENTION_UNKNOWN", 0.9),
+}
+
 
 # Gemini models tried in order for AI coaching. Google retires model IDs on a
 # rolling basis, so the list is a fallback chain and the newest generation goes first.
@@ -207,12 +215,30 @@ ATHLETE_RACE_BIKE_SPEED_KMH = _env_float("ATHLETE_RACE_BIKE_SPEED_KMH", 32.5)
 
 # Strava Webhook Real-Time Sync
 STRAVA_WEBHOOK_VERIFY_TOKEN = os.getenv("STRAVA_WEBHOOK_VERIFY_TOKEN", "STRAVA_WEBHOOK_SECRET").strip()
+STRAVA_WEBHOOK_SECRET_PARAM = os.getenv("STRAVA_WEBHOOK_SECRET_PARAM", "").strip()
 AUTO_SYNC_SHEET_ON_WEBHOOK = _env_bool("AUTO_SYNC_SHEET_ON_WEBHOOK", False)
 
 # Telegram Notifications & Next-Day Workout Dispatcher
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 TELEGRAM_DAILY_DISPATCH_TIME = os.getenv("TELEGRAM_DAILY_DISPATCH_TIME", "20:30").strip()
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
+
+# Daily Brief Weather & Tip Thresholds
+BRIEF_RAIN_THRESHOLD_MM = _env_float("BRIEF_RAIN_THRESHOLD_MM", 2.0)
+BRIEF_HEAT_THRESHOLD_C = _env_float("BRIEF_HEAT_THRESHOLD_C", 32.0)
+DEFAULT_COACH_TIP = os.getenv(
+    "DEFAULT_COACH_TIP",
+    "Keep easy aerobic pace in Zone 2 for optimal recovery and mitochondrial adaptation.",
+).strip()
+DEFAULT_RAIN_TIP = os.getenv(
+    "DEFAULT_RAIN_TIP",
+    "Rain expected; check tire pressure for wet roads or consider indoor trainer.",
+).strip()
+DEFAULT_HEAT_TIP = os.getenv(
+    "DEFAULT_HEAT_TIP",
+    "High heat expected; hydrate well and start early morning.",
+).strip()
 
 # Google Sheets API resilience
 GSHEETS_MAX_RETRIES = _env_int("GSHEETS_MAX_RETRIES", 3)

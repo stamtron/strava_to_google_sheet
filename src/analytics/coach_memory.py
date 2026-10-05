@@ -18,8 +18,11 @@ otherwise need. `GeminiEmbeddingFunction` is a thin wrapper so tests can pass a
 deterministic stand-in and never reach the network either.
 """
 
+import logging
 import time
 import uuid
+
+logger = logging.getLogger(__name__)
 
 from chromadb.api.types import EmbeddingFunction
 
@@ -278,7 +281,7 @@ def get_memory(conn=None):
         try:
             return ChromaMemory()
         except MemoryUnavailable as e:
-            print(f"⚠️  Falling back to keyword memory: {e}")
+            logger.warning("Falling back to keyword memory: %s", e)
     if conn is None:
         return None
     return SqliteMemory(conn)

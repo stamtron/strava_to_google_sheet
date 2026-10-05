@@ -1,0 +1,54 @@
+StaminAI — improvement backlog (review of 2026-10-03, commit 4432efe)
+Suggested order: fix 1-4 first (they fail silently), add tests for each.
+
+LIKELY BUGS
+[x] 1. Strava webhook blocks the event loop — src/api/server.py (strava_webhook_event)
+       async def calls blocking fetch_activity_detail + write_to_sheet inline, freezing
+       dashboard/chat/Telegram worker during a sheet sync. Strava wants a reply in <2s
+       and retries otherwise.
+       Fix: return {"status": "ok"} immediately; do the work via BackgroundTasks /
+       asyncio.to_thread.
+
+[x] 2. Daily Telegram brief can be silently skipped — src/integrations/telegram.py
+       (run_daily_dispatch_check)
+       Fires only when current_hhmm == target_time exactly; a busy worker (/coach
+       Gemini call, slow Garmin login) misses the minute -> no brief that day.
+       _LAST_DISPATCHED_DATE is in-memory, lost on uvicorn reload.
+       Fix: compare >= target_time, persist last-sent date in sync_state.
+
+[x] 3. Background poller vs webhook conflict — src/api/server.py (lifespan telegram_worker)
+       getUpdates returns 409 when a webhook is set, or when main.py --telegram-bot
+       runs alongside the server. Errors logged at debug only, so invisible.
+       Fix: poll only when no webhook configured; log at warning.
+
+SECURITY
+[x] 4. Telegram auth fails open — src/integrations/telegram.py (handle_telegram_command)
+       If TELEGRAM_CHAT_ID is unset (or chat_id empty) the check is skipped, so any
+       chat can run /recovery, /coach, etc. and read biometrics.
+       Fix: reject when unset. Also validate X-Telegram-Bot-Api-Secret-Token header
+       on /api/notifications/telegram/webhook (setWebhook secret_token).
+
+[x] 5. Webhooks vs "localhost only" invariant
+       Strava/Telegram webhooks need public exposure (tunnel), which exposes the
+       whole unauthenticated API.
+       Fix: shared secret on webhook routes and/or document forwarding only those paths.
+
+AGENTS.md INVARIANT VIOLATIONS
+[x] 6. Magic literals outside config.py:
+       - durability.py: aqua/bike split `shortfall * 0.6`
+       - durability.py: _RUN_RETENTION_BY_RISK table
+       - server.py next-day handler: tip thresholds 2.0 mm rain, 32 °C
+       - telegram.py: duplicated tip text and "20:30" fallback (config already has it)
+[x] 7. Duplicated brief-building logic: run_daily_dispatch_check copies the
+       /api/notifications/telegram/next-day handler. Extract one shared function.
+[x] 8. AGENTS.md says 22 endpoints; there are 25 (incl. deprecated WhatsApp alias
+       and /favicon.ico). Update the doc.
+
+SMALLER CLEANUPS
+[x] - ~40 print() calls in src/ mixed with logging -> use logger.
+[x] - ~30 broad `except Exception:` (mostly garmin.py, telegram.py), many swallow
+      errors with no trace -> narrow or at least log.
+[x] - Consider removing deprecated /api/notifications/whatsapp/next-day and the
+      WhatsAppNextDayRequest alias.
+
+Baseline after improvements: 348 tests passing (100%), node --check web/app.js clean.

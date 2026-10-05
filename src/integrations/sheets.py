@@ -6,10 +6,13 @@ dynamically detects Old vs New weekly layouts,
 and writes formatted Strava & Garmin training data.
 """
 
+import logging
 import os
 import re
 import time
 from datetime import date, datetime, timedelta
+
+logger = logging.getLogger(__name__)
 
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
@@ -344,7 +347,7 @@ def inspect_week_blocks(col_a_rows: list[list[str]], start_row: int = 13) -> dic
 def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
     """Write Strava and Garmin data into Google Sheets."""
     if not activities:
-        print("No activities to write.")
+        logger.info("No activities to write.")
         return
 
     if not GOOGLE_SHEET_ID:
@@ -356,7 +359,7 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
     service = get_sheets_service()
     sheet = service.spreadsheets()
 
-    print("\n📊 Syncing to Google Sheet...")
+    logger.info("Syncing to Google Sheet...")
 
     # Fetch Column A to map week dates and layout structures
     result = execute_with_retry(
@@ -397,7 +400,7 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
     for target_date, day_activities in activities_by_day.items():
         week_start = _get_week_start(target_date)
         if week_start not in week_map:
-            print(f"  ⚠️  No matching week row for date {target_date} (week start: {week_start})")
+            logger.warning("No matching week row for date %s (week start: %s)", target_date, week_start)
             continue
 
         week_start_row = week_map[week_start]
@@ -424,9 +427,9 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
     for r in sorted(unique_week_rows):
         block = week_blocks.get(r, {"layout": "old"})
         if block["layout"] == "new":
-            print(f"  🔍 Row {r} detected as NEW block layout (feedback row: {block['feedback_row']}, summary row: {block['summary_row']})")
+            logger.info("Row %d detected as NEW block layout (feedback row: %s, summary row: %s)", r, block["feedback_row"], block["summary_row"])
         else:
-            print(f"  🔍 Row {r} detected as OLD single-row layout")
+            logger.info("Row %d detected as OLD single-row layout", r)
 
     # Read existing cell contents
     read_ranges = []
@@ -488,13 +491,21 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
                     "values": [[new_value]],
                 }
             )
-            print(
-                f"  {status} {target_date.strftime('%a %Y-%m-%d')} → cell {col}{target_row} "
-                f"({len(day_activities)} activities, layout: {layout})"
+            logger.info(
+                "%s %s → cell %s%s (%d activities, layout: %s)",
+                status,
+                target_date.strftime("%a %Y-%m-%d"),
+                col,
+                target_row,
+                len(day_activities),
+                layout,
             )
         else:
-            print(
-                f"  ✓ {target_date.strftime('%a %Y-%m-%d')} cell {col}{target_row} already up to date"
+            logger.info(
+                "✓ %s cell %s%s already up to date",
+                target_date.strftime("%a %Y-%m-%d"),
+                col,
+                target_row,
             )
 
     # Resolve each row's week span, then fetch all Garmin weeks in one pass so
@@ -527,7 +538,7 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
         hrv_val = f"{health_summary['avg_hrv']}" if health_summary and health_summary.get("avg_hrv") else None
 
         if health_summary:
-            print(f"  😴 Garmin Health ({week_monday} → {week_sunday}): Sleep={sleep_val or 'N/A'}, HRrest={rhr_val or 'N/A'}, HRV={hrv_val or 'N/A'}")
+            logger.info("Garmin Health (%s → %s): Sleep=%s, HRrest=%s, HRV=%s", week_monday, week_sunday, sleep_val or "N/A", rhr_val or "N/A", hrv_val or "N/A")
 
         # Format strings
         running_str = f" {run_dist:.2f} χλμ / {format_duration_short_el(run_time)}" if run_time > 0 else " 0.00 χλμ / 0λ"
@@ -596,7 +607,7 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
                         "values": [[new_a]],
                     }
                 )
-                print(f"  📝 Column A (Row {r}) totals updated (OLD format)")
+                logger.info("Column A (Row %d) totals updated (OLD format)", r)
 
         else:
             # layout == "new"
@@ -676,7 +687,7 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
                         "values": [[new_summary]],
                     }
                 )
-                print(f"  📝 Column {summary_col} (Row {target_row}) totals updated (NEW format)")
+                logger.info("Column %s (Row %d) totals updated (NEW format)", summary_col, target_row)
 
     if updates:
         body = {"valueInputOption": "RAW", "data": updates}
@@ -684,9 +695,9 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
             sheet.values().batchUpdate(spreadsheetId=GOOGLE_SHEET_ID, body=body)
         )
         updated_count = result.get("totalUpdatedCells", len(updates))
-        print(f"\n✅ Updated {updated_count} cells in Google Sheets!")
+        logger.info("Updated %d cells in Google Sheets!", updated_count)
     else:
-        print("\n✅ All cells are already up to date!")
+        logger.info("All cells are already up to date!")
 
 
 def get_planned_workout_for_date(target_date: date) -> dict:

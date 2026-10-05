@@ -10,7 +10,10 @@ Throttling and retries are handled inside `strava._request` (429 with
 `Retry-After`); nothing here re-implements them.
 """
 
+import logging
 import time
+
+logger = logging.getLogger(__name__)
 
 from src.config import (
     STRAVA_BACKFILL_MAX_PAGES,
@@ -83,7 +86,7 @@ def backfill_all(
         pages_fetched += 1
         stored += upsert_activities(conn, batch)
         if progress:
-            print(f"  page {page}: {len(batch)} activities")
+            logger.info("page %d: %d activities", page, len(batch))
 
         # Advance the cursor only after the page is committed, so a crash
         # between the fetch and the write re-fetches rather than skips.

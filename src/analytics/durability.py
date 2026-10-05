@@ -21,10 +21,12 @@ from datetime import datetime, timedelta
 from src.config import (
     AQUA_JOG_LOAD_FACTOR,
     BIKE_RUN_LOAD_FACTOR,
+    CROSS_TRAINING_AQUA_SHARE,
     MONOTONY_WARN_THRESHOLD,
     RUN_LONG_RUN_MAX_SHARE,
     RUN_MIN_REST_DAYS,
     RUN_RAMP_SAFE_PCT,
+    RUN_RETENTION_BY_RISK,
     STRAIN_WARN_THRESHOLD,
 )
 from src.analytics.metrics import calculate_relative_effort, sport_group
@@ -463,7 +465,7 @@ def sport_strength_profile(activities: list[dict]) -> dict:
 # How much of a target run stimulus to actually run, by durability risk. The
 # remainder is bought impact-free rather than skipped, so aerobic fitness keeps
 # climbing while the tissue that hurts gets a lighter week.
-_RUN_RETENTION_BY_RISK = {"low": 1.0, "moderate": 0.8, "high": 0.6, "unknown": 0.9}
+_RUN_RETENTION_BY_RISK = RUN_RETENTION_BY_RISK
 
 
 def suggest_cross_training(
@@ -503,7 +505,7 @@ def suggest_cross_training(
 
     # Aqua jogging takes the larger share: it is the closest neuromuscular match
     # to running, so it protects run-specific fitness the bike cannot.
-    aqua_load = round(shortfall * 0.6, 1)
+    aqua_load = round(shortfall * CROSS_TRAINING_AQUA_SHARE, 1)
     bike_load = round(shortfall - aqua_load, 1)
 
     substitutions = [

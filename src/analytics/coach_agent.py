@@ -30,8 +30,11 @@ Design notes:
 """
 
 import json
+import logging
 import time
 from datetime import date, timedelta
+
+logger = logging.getLogger(__name__)
 
 from src.config import (
     ATHLETE_PB_10K_SEC,
@@ -190,12 +193,12 @@ def default_activity_provider(limit: int = COACH_ACTIVITY_WINDOW) -> list[dict]:
     try:
         conn = init_db()
     except Exception as e:  # noqa: BLE001 - a tool must degrade, not explode
-        print(f"⚠️  Coach history store unavailable: {e}")
+        logger.warning("Coach history store unavailable: %s", e)
         return []
     try:
         return store_get_activities(conn, limit=limit)
     except Exception as e:  # noqa: BLE001
-        print(f"⚠️  Coach history read failed: {e}")
+        logger.warning("Coach history read failed: %s", e)
         return []
     finally:
         conn.close()
@@ -888,7 +891,7 @@ def _default_memory(conn):
 
         return ChromaMemory()
     except Exception as e:  # noqa: BLE001 - keyword recall still answers the turn
-        print(f"⚠️  Vector memory unavailable ({e}); using keyword memory.")
+        logger.info("Vector memory unavailable (%s); using keyword memory.", e)
         return SqliteMemory(conn)
 
 
@@ -932,7 +935,7 @@ def chat(
         try:
             recalled = memory.recall(message, k=COACH_MEMORY_TOP_K)
         except Exception as e:  # noqa: BLE001 - memory is an enhancement
-            print(f"⚠️  Coach memory recall failed: {e}")
+            logger.warning("Coach memory recall failed: %s", e)
             recalled = []
 
         tools, tools_used, sources = build_tools(
@@ -966,7 +969,7 @@ def chat(
                         time.sleep(1.5)
                         continue
                     failures.append(f"{model_name}: {e}")
-                    print(f"⚠️  Coach chat with {model_name} failed: {e}")
+                    logger.warning("Coach chat with %s failed: %s", model_name, e)
                     break
             if succeeded:
                 break
@@ -1081,14 +1084,14 @@ def extract_session_facts(
                 model_used = model_name
                 break
             except Exception as e:  # noqa: BLE001 - try the next model, then give up
-                print(f"⚠️  Fact extraction with {model_name} failed: {e}")
+                logger.warning("Fact extraction with %s failed: %s", model_name, e)
 
         # Compared on normalized words so a reworded restatement of a fact already
         # on file doesn't accumulate as a near-duplicate every conversation.
         try:
             known = {_fact_key(f["fact"]) for f in memory.all_facts()}
         except Exception as e:  # noqa: BLE001
-            print(f"⚠️  Coach memory read failed during extraction: {e}")
+            logger.warning("Coach memory read failed during extraction: %s", e)
             known = set()
 
         stored, skipped = [], []
@@ -1111,7 +1114,7 @@ def extract_session_facts(
                 )
                 known.add(key)
             except Exception as e:  # noqa: BLE001
-                print(f"⚠️  Could not store extracted fact: {e}")
+                logger.warning("Could not store extracted fact: %s", e)
                 skipped.append(text)
 
         return {

@@ -204,9 +204,11 @@ a sensible default. See [`.env.example`](.env.example) for the fully documented 
 | `COACH_MEMORY_COLLECTION` | `athlete_memory` | ChromaDB collection name |
 | `COACH_AUTO_FACT_LIMIT` | `5` | Max facts one extraction pass may store |
 | `STRAVA_WEBHOOK_VERIFY_TOKEN` | `STRAVA_WEBHOOK_SECRET` | Verification token for Strava webhook handshake |
+| `STRAVA_WEBHOOK_SECRET_PARAM` | — | Optional secret query param to protect POST `/api/strava/webhook` when tunneled |
 | `AUTO_SYNC_SHEET_ON_WEBHOOK` | `False` | Automatically trigger Sheets sync on new Strava webhook event |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | — | Telegram Bot API credentials |
 | `TELEGRAM_DAILY_DISPATCH_TIME` | `20:30` | Daily time (HH:MM) to auto-dispatch next-day training brief |
+| `TELEGRAM_WEBHOOK_SECRET` | — | Secret token validated against `X-Telegram-Bot-Api-Secret-Token` header |
 | `GSHEETS_MAX_RETRIES` | `3` | Maximum retries with exponential backoff on Sheets API quota errors |
 | `SHOE_ALERT_KM` | `650` | Mileage threshold to warn when running shoe foam degrades |
 | `ATHLETE_PB_HALF_MARATHON_SEC` | `6415` | Verified half PB — 1h 46m 55s |
