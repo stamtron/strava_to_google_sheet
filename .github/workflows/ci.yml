@@ -18,6 +18,8 @@ jobs:
     env:
       # Ensure CI fetches dependencies directly from public PyPI
       UV_DEFAULT_INDEX: "https://pypi.org/simple"
+      TELEGRAM_CHAT_ID: "12345678"
+      TELEGRAM_BOT_TOKEN: "dummy_bot_token"
 
     steps:
       - name: Checkout repository

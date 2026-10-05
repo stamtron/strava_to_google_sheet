@@ -9,6 +9,12 @@ import pytest
 from src.integrations.telegram import format_next_day_brief, send_telegram_message
 
 
+@pytest.fixture(autouse=True)
+def default_telegram_config(monkeypatch):
+    monkeypatch.setattr("src.config.TELEGRAM_CHAT_ID", "12345678")
+    monkeypatch.setattr("src.integrations.telegram.TELEGRAM_CHAT_ID", "12345678")
+
+
 def test_format_next_day_brief_with_weather_and_tip():
     t_date = date(2026, 9, 1)  # Tuesday
     workout = "🚴 1h30m Zone 2 Ride + 4x30s cadence drills"
@@ -213,6 +219,7 @@ def test_handle_telegram_command_help():
 
 def test_handle_telegram_command_unconfigured_chat_id(monkeypatch):
     from src.integrations.telegram import handle_telegram_command
+    monkeypatch.setattr("src.config.TELEGRAM_CHAT_ID", "")
     monkeypatch.setattr("src.integrations.telegram.TELEGRAM_CHAT_ID", "")
     res = handle_telegram_command("/today", chat_id="12345")
     assert "Δεν έχεις δικαίωμα πρόσβασης" in res or "Δεν έχει ρυθμιστεί" in res
@@ -220,6 +227,7 @@ def test_handle_telegram_command_unconfigured_chat_id(monkeypatch):
 
 def test_handle_telegram_command_unauthorized(monkeypatch):
     from src.integrations.telegram import handle_telegram_command
+    monkeypatch.setattr("src.config.TELEGRAM_CHAT_ID", "12345")
     monkeypatch.setattr("src.integrations.telegram.TELEGRAM_CHAT_ID", "12345")
     res = handle_telegram_command("/today", chat_id="99999")
     assert "Δεν έχεις δικαίωμα πρόσβασης" in res
