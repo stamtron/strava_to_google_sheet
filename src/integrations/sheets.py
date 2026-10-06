@@ -9,7 +9,9 @@ and writes formatted Strava & Garmin training data.
 import logging
 import os
 import re
+import sys
 import time
+import webbrowser
 from datetime import date, datetime, timedelta
 
 logger = logging.getLogger(__name__)
@@ -131,14 +133,28 @@ def get_sheets_service(interactive: bool = True):
 
         if not creds:
             if not interactive:
-                raise PermissionError("Google Sheets requires interactive authentication (token expired or missing).")
+                raise PermissionError(
+                    "Google Sheets token expired or missing. Run 'uv run main.py --auth-sheets' to re-authenticate."
+                )
             if not os.path.exists(CREDENTIALS_FILE):
                 raise FileNotFoundError(
                     f"Credentials file not found at '{CREDENTIALS_FILE}'.\n"
                     "Download it from Google Cloud Console as 'credentials.json'."
                 )
             flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, GSHEETS_SCOPES)
-            creds = flow.run_local_server(port=0)
+            browser = None
+            if sys.platform == "darwin" and os.path.exists("/usr/bin/open"):
+                try:
+                    webbrowser.register("mac_open", None, webbrowser.GenericBrowser("/usr/bin/open"))
+                    browser = "mac_open"
+                except Exception:
+                    browser = None
+            creds = flow.run_local_server(
+                port=0,
+                browser=browser,
+                prompt="consent",
+                access_type="offline",
+            )
 
         with open(GSHEETS_TOKEN_FILE, "w") as token:
             token.write(creds.to_json())
