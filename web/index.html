@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>StaminAI — Adaptive Endurance & Recovery Platform</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <link rel="stylesheet" href="/static/styles.css?v=4.4">
+  <link rel="stylesheet" href="/static/styles.css?v=4.6">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
@@ -413,9 +413,9 @@ Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
         <div class="ai-header">
           <div style="display: flex; align-items: center; gap: 8px;">
             <h3 style="font-size: 16px;">🏁 Race-Day Taper & Nutrition Strategy</h3>
-            <span id="targetRaceBadge" class="bio-badge">Target: Full Ironman (140.6)</span>
+            <span id="targetRaceBadge" class="bio-badge">Target: Ironman 70.3</span>
           </div>
-          <span id="raceCountdownBadge" class="acwr-badge badge-optimal">October 25, 2026</span>
+          <span id="raceCountdownBadge" class="acwr-badge badge-optimal">25/10/2026</span>
         </div>
         <div class="taper-grid">
           <div class="taper-col">
@@ -458,10 +458,121 @@ Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
         </div>
       </div>
 
+      <!-- Training Indexes Explanations & Reference Guide -->
+      <div class="glass-panel index-guide-card" style="margin-bottom: 24px; padding: 22px;">
+        <div class="section-header" style="margin-bottom: 16px; flex-wrap: wrap; gap: 10px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="font-size: 20px;">📘</span>
+            <div>
+              <h3 style="font-size: 16px; margin: 0; font-weight: 700; color: #fff;">Training Indexes & Methodology Reference</h3>
+              <p class="brand-subtitle" style="margin: 0;">Sports science metrics, moving averages, and clinical thresholds explained</p>
+            </div>
+          </div>
+          <button id="toggleIndexGuideBtn" class="bio-badge" style="cursor: pointer; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border);" title="Collapse or expand the reference guide">
+            ℹ️ Toggle Guide
+          </button>
+        </div>
+
+        <div id="indexGuideGrid" class="index-guide-grid">
+          <!-- 1. Fitness (CTL) -->
+          <div class="index-guide-item">
+            <div class="index-guide-header">
+              <span class="index-guide-pill" style="background: rgba(0, 242, 254, 0.15); color: #00f2fe; border: 1px solid rgba(0, 242, 254, 0.3);">
+                🏋️ Fitness (CTL)
+              </span>
+              <span class="index-guide-window">42-Day EWMA</span>
+            </div>
+            <p class="index-guide-desc"><strong>Chronic Training Load:</strong> Quantifies cumulative aerobic engine and stamina built over the past 6 weeks. Builds slowly with consistent workouts and decays gradually during rest periods.</p>
+            <div class="index-guide-target">
+              <span class="index-guide-target-label">Target:</span>
+              <span class="index-guide-target-val" style="color: #00f2fe;">Progressive, steady upward accumulation across macrocycles</span>
+            </div>
+          </div>
+
+          <!-- 2. Fatigue (ATL) -->
+          <div class="index-guide-item">
+            <div class="index-guide-header">
+              <span class="index-guide-pill" style="background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3);">
+                ⚡ Fatigue (ATL)
+              </span>
+              <span class="index-guide-window">7-Day EWMA</span>
+            </div>
+            <p class="index-guide-desc"><strong>Acute Training Load:</strong> Measures short-term physical exhaustion and cardiovascular strain from the past 7 days. Spikes rapidly following intense or high-volume sessions and dissipates with recovery.</p>
+            <div class="index-guide-target">
+              <span class="index-guide-target-label">Dynamics:</span>
+              <span class="index-guide-target-val" style="color: #f59e0b;">Spikes during overload blocks; must drop ahead of key races</span>
+            </div>
+          </div>
+
+          <!-- 3. Form (TSB) -->
+          <div class="index-guide-item">
+            <div class="index-guide-header">
+              <span class="index-guide-pill" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3);">
+                🎯 Form (TSB)
+              </span>
+              <span class="index-guide-window">TSB = CTL − ATL</span>
+            </div>
+            <p class="index-guide-desc"><strong>Training Stress Balance:</strong> Indicates daily freshness and race readiness. Represents whether the body is recovering (+), maintaining (neutral), or absorbing high training fatigue (-).</p>
+            <div class="index-guide-target">
+              <span class="index-guide-target-label">Ranges:</span>
+              <span class="index-guide-target-val" style="color: #10b981;"><strong>+10 to +25:</strong> Race Fresh • <strong>-10 to +10:</strong> Neutral • <strong>-10 to -30:</strong> Productive Overload • <strong>&lt; -30:</strong> High Risk</span>
+            </div>
+          </div>
+
+          <!-- 4. 7-Day CTL Ramp Rate -->
+          <div class="index-guide-item">
+            <div class="index-guide-header">
+              <span class="index-guide-pill" style="background: rgba(79, 172, 254, 0.15); color: #4facfe; border: 1px solid rgba(79, 172, 254, 0.3);">
+                📈 7d Ramp Rate
+              </span>
+              <span class="index-guide-window">Δ CTL / Week</span>
+            </div>
+            <p class="index-guide-desc"><strong>Fitness Growth Slope:</strong> Measures the rate at which Chronic Training Load is increasing week-over-week. Ensures training increases remain within physiologically adaptable limits.</p>
+            <div class="index-guide-target">
+              <span class="index-guide-target-label">Safe Zone:</span>
+              <span class="index-guide-target-val" style="color: #4facfe;"><strong>+3 to +7 /wk:</strong> Sustainable growth • <strong>&gt; +8 /wk:</strong> Overuse injury risk</span>
+            </div>
+          </div>
+
+          <!-- 5. ACWR (Acute:Chronic Workload Ratio) -->
+          <div class="index-guide-item">
+            <div class="index-guide-header">
+              <span class="index-guide-pill" style="background: rgba(178, 36, 239, 0.15); color: #b224ef; border: 1px solid rgba(178, 36, 239, 0.3);">
+                ⚖️ ACWR Index
+              </span>
+              <span class="index-guide-window">Acute ÷ Chronic</span>
+            </div>
+            <p class="index-guide-desc"><strong>Workload Balance:</strong> Compares current week load against the preceding 4-week chronic average. Sports-science benchmark (Gabbett) for preventing training spikes and soft-tissue injury.</p>
+            <div class="index-guide-target">
+              <span class="index-guide-target-label">Sweet Spot:</span>
+              <span class="index-guide-target-val" style="color: #b224ef;"><strong>0.8 – 1.3:</strong> Optimal adaptation • <strong>1.3 – 1.5:</strong> High load • <strong>&gt; 1.5:</strong> Danger Spike</span>
+            </div>
+          </div>
+
+          <!-- 6. Relative Effort & TRIMP -->
+          <div class="index-guide-item">
+            <div class="index-guide-header">
+              <span class="index-guide-pill" style="background: rgba(255, 0, 128, 0.15); color: #ff0080; border: 1px solid rgba(255, 0, 128, 0.3);">
+                🔥 Relative Effort
+              </span>
+              <span class="index-guide-window">Karvonen HRR TRIMP</span>
+            </div>
+            <p class="index-guide-desc"><strong>Multi-Sport Exertion:</strong> Heart-rate weighted cardiovascular stress score (Strava Suffer Score / Banister TRIMP). Unifies swim, bike, and run training into a single commensurable physiological load.</p>
+            <div class="index-guide-target">
+              <span class="index-guide-target-label">Usage:</span>
+              <span class="index-guide-target-val" style="color: #ff0080;">Aggregated daily to feed ATL/CTL calculations and ACWR workload ratios</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="progression-grid">
         <!-- Relative Effort & Hours Trend -->
         <div class="glass-panel progression-chart-card">
-          <h3>Relative Effort & Training Hours Trend</h3>
+          <div class="chart-header-block">
+            <h3>Relative Effort & Training Hours Trend</h3>
+            <p class="chart-subtitle-desc">Cardiovascular load (TRIMP) alongside total weekly duration.</p>
+          </div>
           <div class="chart-wrapper">
             <canvas id="effortProgressionChart"></canvas>
           </div>
@@ -469,7 +580,10 @@ Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
 
         <!-- Discipline Mileage Stacked Trend -->
         <div class="glass-panel progression-chart-card">
-          <h3>Distance by Sport Trend (Run / Bike / Swim)</h3>
+          <div class="chart-header-block">
+            <h3>Distance by Sport Trend (Run / Bike / Swim)</h3>
+            <p class="chart-subtitle-desc">Weekly mileage distribution across running, cycling, and swimming disciplines.</p>
+          </div>
           <div class="chart-wrapper">
             <canvas id="volumeProgressionChart"></canvas>
           </div>
@@ -479,7 +593,10 @@ Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
       <div class="progression-grid">
         <!-- Elevation Climbed Progression -->
         <div class="glass-panel progression-chart-card">
-          <h3>Total Elevation Gain (⛰️ in meters)</h3>
+          <div class="chart-header-block">
+            <h3>Total Elevation Gain (⛰️ in meters)</h3>
+            <p class="chart-subtitle-desc">Cumulative vertical climbing stress contributing to muscular fatigue.</p>
+          </div>
           <div class="chart-wrapper">
             <canvas id="elevationProgressionChart"></canvas>
           </div>
@@ -487,7 +604,10 @@ Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
 
         <!-- ACWR / Workload Balance -->
         <div class="glass-panel progression-chart-card">
-          <h3>Acute:Chronic Workload Ratio (ACWR - Overtraining Index)</h3>
+          <div class="chart-header-block">
+            <h3>Acute:Chronic Workload Ratio (ACWR - Overtraining Index)</h3>
+            <p class="chart-subtitle-desc">Workload safety index. Values between 0.8–1.3 represent the optimal injury-free sweet spot.</p>
+          </div>
           <div class="chart-wrapper">
             <canvas id="acwrProgressionChart"></canvas>
           </div>
@@ -569,6 +689,6 @@ Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
     </div>
   </div>
 
-  <script src="/static/app.js?v=4.4"></script>
+  <script src="/static/app.js?v=4.6"></script>
 </body>
 </html>

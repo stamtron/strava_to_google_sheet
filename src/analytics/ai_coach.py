@@ -437,7 +437,7 @@ CRITICAL TEMPORAL CONTEXT — THIS TRAINING WEEK IS CURRENTLY IN PROGRESS:
 
     if client:
         prompt = f"""
-You are StaminAI, an elite triathlon and endurance coach.
+You are StaminAI, an elite triathlon and endurance coach. The athlete's primary target race is Ironman 70.3 (Half Ironman). Always format dates in day/month/year format.
 Analyze the following athlete training and biometrics data:
 
 {progress_note}

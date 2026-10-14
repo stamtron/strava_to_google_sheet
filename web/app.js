@@ -13,15 +13,32 @@ let elevationProgressionChart = null;
 let acwrProgressionChart = null;
 let currentProgressionData = [];
 
+function formatDateDMY(d) {
+  if (!d) return "";
+  const dateObj = typeof d === "string" ? new Date(d.includes("T") ? d : d + "T00:00:00") : d;
+  if (isNaN(dateObj.getTime())) return String(d);
+  const day = String(dateObj.getDate()).padStart(2, "0");
+  const month = String(dateObj.getMonth() + 1).padStart(2, "0");
+  const year = dateObj.getFullYear();
+  return `${day}/${month}/${year}`;
+}
+
+function formatDateDM(d) {
+  if (!d) return "";
+  const dateObj = typeof d === "string" ? new Date(d.includes("T") ? d : d + "T00:00:00") : d;
+  if (isNaN(dateObj.getTime())) return String(d);
+  const day = String(dateObj.getDate()).padStart(2, "0");
+  const month = String(dateObj.getMonth() + 1).padStart(2, "0");
+  return `${day}/${month}`;
+}
+
 function getProgressionTooltipTitle(items) {
   if (!items || !items.length) return "";
   const idx = items[0].dataIndex;
   const item = currentProgressionData[idx];
   if (item && item.week_monday && item.week_sunday) {
-    const m = new Date(item.week_monday + "T00:00:00");
-    const s = new Date(item.week_sunday + "T00:00:00");
-    const mStr = `${m.getDate()}/${m.getMonth() + 1}`;
-    const sStr = `${s.getDate()}/${s.getMonth() + 1}`;
+    const mStr = formatDateDMY(item.week_monday);
+    const sStr = formatDateDMY(item.week_sunday);
     return `Week: Mon ${mStr} – Sun ${sStr}`;
   }
   return items[0].label;
@@ -295,6 +312,16 @@ function setupEventListeners() {
   if (tabProjections) tabProjections.addEventListener("click", () => switchTab("projections"));
   if (tabProgression) tabProgression.addEventListener("click", () => switchTab("progression"));
 
+  const toggleGuideBtn = document.getElementById("toggleIndexGuideBtn");
+  const guideGrid = document.getElementById("indexGuideGrid");
+  if (toggleGuideBtn && guideGrid) {
+    toggleGuideBtn.addEventListener("click", () => {
+      const isHidden = guideGrid.style.display === "none";
+      guideGrid.style.display = isHidden ? "grid" : "none";
+      toggleGuideBtn.textContent = isHidden ? "ℹ️ Toggle Guide" : "ℹ️ Show Guide";
+    });
+  }
+
   // Sliders
   setupSlider("fatigueSlider", "fatigueVal", "/10");
   setupSlider("sorenessSlider", "sorenessVal", "/10");
@@ -441,16 +468,16 @@ function populateWeekSelector() {
     const opt = document.createElement("option");
     opt.value = key;
 
-    // 18-week countdown to Ironman on October 25, 2026 (starts Monday June 22, 2026)
+    // 18-week countdown to Ironman 70.3 on 25/10/2026 (starts Monday 22/06/2026)
     let countdownLabel = "";
     if (w.week_monday >= "2026-06-22" && w.week_monday <= "2026-10-25") {
       const msDiff = new Date(w.week_monday + "T00:00:00") - new Date("2026-06-22T00:00:00");
       const weekNum = Math.round(msDiff / (7 * 86400000)) + 1;
       const weeksOut = 18 - weekNum + 1;
-      countdownLabel = ` [IM W${weekNum} • ${weeksOut}w to go]`;
+      countdownLabel = ` [IM 70.3 W${weekNum} • ${weeksOut}w to go]`;
     }
 
-    opt.textContent = `${mDate.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${sDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}${countdownLabel} ${idx === 0 ? "(Current)" : ""}`;
+    opt.textContent = `${formatDateDMY(mDate)} – ${formatDateDMY(sDate)}${countdownLabel} ${idx === 0 ? "(Current)" : ""}`;
     selector.appendChild(opt);
   });
 }
@@ -639,7 +666,7 @@ function renderCalendar(week) {
   const sDate = new Date(sYear, sMonth - 1, sDay);
 
   const dateRangeEl = document.getElementById("calendarDateRange");
-  dateRangeEl.textContent = `${mDate.toLocaleDateString("en-US", { month: "long", day: "numeric" })} – ${sDate.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}`;
+  dateRangeEl.textContent = `${formatDateDMY(mDate)} – ${formatDateDMY(sDate)}`;
 
   const todayStr = getLocalDateString();
 
@@ -671,7 +698,7 @@ function renderCalendar(week) {
     const col = document.createElement("div");
     col.className = `day-column ${isToday ? "today" : ""}`;
     col.dataset.date = dateStr;
-    col.setAttribute("title", `Click to evaluate workout execution for ${dateStr}`);
+    col.setAttribute("title", `Click to evaluate workout execution for ${formatDateDMY(dateStr)}`);
     col.addEventListener("click", () => {
       const picker = document.getElementById("complianceDatePicker");
       if (picker) picker.value = dateStr;
@@ -706,7 +733,7 @@ function renderCalendar(week) {
     header.innerHTML = `
       <div class="day-header-meta">
         <span class="day-name">${DAY_SHORT_EN[i]}</span>
-        <span class="day-date">${dayDate.getMonth() + 1}/${dayDate.getDate()}</span>
+        <span class="day-date">${formatDateDM(dayDate)}</span>
         ${isToday ? `<span class="day-today-tag">TODAY</span>` : ""}
       </div>
       ${weatherHtml}
@@ -1164,7 +1191,7 @@ function updatePerformanceChart(perfData) {
   }
 
   if (performanceChart && series.length > 0) {
-    performanceChart.data.labels = series.map((s) => s.date);
+    performanceChart.data.labels = series.map((s) => formatDateDMY(s.date));
     performanceChart.data.datasets[0].data = series.map((s) => s.ctl);
     performanceChart.data.datasets[1].data = series.map((s) => s.atl);
     performanceChart.data.datasets[2].data = series.map((s) => s.tsb);
@@ -1336,7 +1363,7 @@ function renderWeatherOutlook(weatherList) {
     const isToday = day.date === todayStr;
     const d = new Date(day.date + "T00:00:00");
     const dayName = isToday ? "Today" : d.toLocaleDateString("en-US", { weekday: "short" });
-    const dateFormatted = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    const dateFormatted = formatDateDMY(d);
 
     const maxTemp = day.temp_max_c !== null ? `${Math.round(day.temp_max_c)}°` : "--";
     const minTemp = day.temp_min_c !== null ? `${Math.round(day.temp_min_c)}°` : "--";
@@ -1381,7 +1408,7 @@ function handleCopyReport() {
   const acwr = week.acwr || {};
 
   const reportText = 
-`⚡ Weekly Training Report (${mDate.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${sDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })})
+`⚡ Weekly Training Report (${formatDateDMY(mDate)} – ${formatDateDMY(sDate)})
 ──────────────────────────────
 ⏱️ Total Time: ${formatDuration(week.total_time_sec)} (${week.activities.length} workouts)
 🔥 Relative Effort: ${Math.round(week.total_relative_effort || 0)} (ACWR: ${acwr.acwr_ratio || "—"})
@@ -1523,7 +1550,7 @@ async function loadCompliance(targetDate) {
     checkBtn.innerHTML = "<span>⏳ Checking...</span>";
   }
 
-  contentEl.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 16px;">Loading workout compliance for ${dateToFetch}...</div>`;
+  contentEl.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 16px;">Loading workout compliance for ${formatDateDMY(dateToFetch)}...</div>`;
 
   try {
     const res = await fetch(`/api/compliance?target_date=${encodeURIComponent(dateToFetch)}`);
@@ -1589,7 +1616,7 @@ async function loadCompliance(targetDate) {
         <div class="compliance-box">
           <div class="compliance-box-title">
             <span>📋 Prescribed Plan (Coach)</span>
-            <span style="font-size: 11px; color: var(--text-muted);">${dateToFetch}</span>
+            <span style="font-size: 11px; color: var(--text-muted);">${formatDateDMY(dateToFetch)}</span>
           </div>
           <div class="compliance-box-body">${plannedRaw}</div>
         </div>
@@ -1814,7 +1841,7 @@ function renderRampHistory(history) {
     cell.style.borderBottomColor = style.color;
     cell.title = `${week.run_km} km (was ${week.prev_run_km === null ? "n/a" : week.prev_run_km + " km"})`;
     cell.innerHTML = `
-      <div class="durability-ramp-week-date">${date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
+      <div class="durability-ramp-week-date" title="${formatDateDMY(date)}">${formatDateDM(date)}</div>
       <div class="durability-ramp-week-pct" style="color: ${style.color}">${pct}</div>
     `;
     host.appendChild(cell);

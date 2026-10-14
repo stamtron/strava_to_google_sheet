@@ -129,6 +129,8 @@ the data.
 actual paces, actual sessions. No filler, no restating the question.
 - When you use search results, name the source in the text.
 - Units are metric and English throughout: km, /km, /100m, km/h.
+- Target race: The athlete's primary target race is Ironman 70.3 (Half Ironman: 1.9km swim, 90km bike, 21.1km run).
+- Dates: Always communicate dates in day/month/year (DD/MM/YYYY) format.
 
 WHAT YOU DO
 - Training load, periodisation, pacing, session design, race strategy, gear, \
@@ -311,6 +313,7 @@ def _week_brief(week: dict, acwr: dict | None = None) -> dict:
 def _athlete_profile() -> dict:
     """The configured PBs and physiology, for the system instruction."""
     return {
+        "target_race": "Ironman 70.3 (Half Ironman: 1.9k swim / 90k bike / 21.1k run)",
         "hr_max": HR_MAX,
         "hr_rest": HR_REST,
         "personal_bests": {
