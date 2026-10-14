@@ -246,3 +246,14 @@ GSHEETS_MAX_RETRIES = _env_int("GSHEETS_MAX_RETRIES", 3)
 # Gear & shoe alerts
 SHOE_ALERT_KM = _env_int("SHOE_ALERT_KM", 650)
 
+# Fitness & Fatigue (Banister Impulse-Response EWMA) Model
+CTL_DAYS = _env_int("CTL_DAYS", 42)  # Chronic Training Load (Fitness) time constant
+ATL_DAYS = _env_int("ATL_DAYS", 7)   # Acute Training Load (Fatigue) time constant
+TSB_OPTIMAL_MIN = _env_float("TSB_OPTIMAL_MIN", -30.0)
+TSB_OPTIMAL_MAX = _env_float("TSB_OPTIMAL_MAX", -10.0)
+TSB_FRESH_MIN = _env_float("TSB_FRESH_MIN", 10.0)
+TSB_FRESH_MAX = _env_float("TSB_FRESH_MAX", 25.0)
+
+# Weekly Telegram Dispatch Time (e.g. Sunday evening 21:00)
+TELEGRAM_WEEKLY_DISPATCH_TIME = os.getenv("TELEGRAM_WEEKLY_DISPATCH_TIME", "21:00").strip()
+

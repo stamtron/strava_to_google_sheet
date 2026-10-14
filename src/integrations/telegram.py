@@ -257,6 +257,8 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
             "• `/today` — Πλάνο προπόνησης, καιρός & αποκατάσταση για σήμερα\n"
             "• `/tomorrow` — Πλάνο προπόνησης & καιρός για αύριο\n"
             "• `/recovery` — Βιομετρικά Garmin (Ύπνος, HRV, Body Battery) & ετοιμότητα\n"
+            "• `/form` (ή `/tsb`) — Κατάσταση Φόρμας (CTL Fitness, ATL Fatigue, TSB Form)\n"
+            "• `/weekly` — Εβδομαδιαία ανασκόπηση όγκου, ACWR, φόρμας & εξοπλισμού\n"
             "• `/compliance [YYYY-MM-DD]` — Αξιολόγηση εκτέλεσης προπόνησης vs πλάνο\n"
             "• `/sync` — Συγχρονισμός Strava & Garmin στο Google Sheets\n"
             "• `/stats` — Εβδομαδιαίος όγκος προπόνησης & δείκτης ACWR\n"
@@ -337,6 +339,82 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
             return "\n".join(lines)
         except Exception as e:
             return f"❌ Σφάλμα ανάκτησης αποκατάστασης: `{e}`"
+
+    if cmd in ("/form", "/tsb", "form", "tsb", "/fitness", "fitness"):
+        try:
+            import json
+            import os
+            from src.config import ACTIVITIES_CACHE_FILE
+            from src.storage.activity_store import get_activities, init_db
+            from src.analytics.metrics import calculate_fitness_fatigue
+
+            conn = init_db()
+            acts = get_activities(conn, limit=250)
+            conn.close()
+
+            if not acts and os.path.exists(ACTIVITIES_CACHE_FILE):
+                try:
+                    with open(ACTIVITIES_CACHE_FILE) as f:
+                        acts = json.load(f).get("activities", [])
+                except Exception:
+                    acts = []
+
+            if not acts:
+                return "ℹ️ Δεν βρέθηκαν δραστηριότητες για τον υπολογισμό Fitness/Fatigue/Form."
+
+            perf = calculate_fitness_fatigue(acts)
+            cur = perf.get("current", {})
+
+            ctl = cur.get("ctl", 0.0)
+            atl = cur.get("atl", 0.0)
+            tsb = cur.get("tsb", 0.0)
+            status = cur.get("status", "neutral")
+            label = cur.get("status_label", "Neutral")
+            ramp = cur.get("ctl_ramp_7d", 0.0)
+
+            # Visual indicator for TSB
+            if tsb >= 10.0:
+                tsb_icon = "🟢"
+            elif tsb >= -10.0:
+                tsb_icon = "🔵"
+            elif tsb >= -30.0:
+                tsb_icon = "🟡"
+            else:
+                tsb_icon = "🔴"
+
+            ramp_str = f"+{ramp:.1f}" if ramp > 0 else f"{ramp:.1f}"
+
+            lines = [
+                "📈 *Κατάσταση Φόρμας & Προπονητικής Επιβάρυνσης (Banister EWMA)*",
+                "━━━━━━━━━━━━━━━━━━━━",
+                f"• 🏋️‍♂️ *Fitness (CTL 42d):* `{ctl:.1f}` ({ramp_str} τις τελευταίες 7ημ)",
+                f"• ⚡ *Fatigue (ATL 7d):* `{atl:.1f}`",
+                f"• {tsb_icon} *Form (TSB = CTL - ATL):* `{tsb:+.1f}`",
+                f"• 🏷️ *Κατάσταση:* *{label}*",
+                "━━━━━━━━━━━━━━━━━━━━",
+            ]
+
+            if status == "fresh":
+                lines.append("💡 *Ερμηνεία:* Εξαιρετική φρεσκάδα και αγωνιστική ετοιμότητα. Ιδανικό παράθυρο για αγώνα, τεστ ή γρήγορο tempo!")
+            elif status == "optimal":
+                lines.append("💡 *Ερμηνεία:* Βέλτιστη προπονητική υπερφόρτωση (Optimal Overload). Χτίζεις αερόβια αντοχή χωρίς υπερβολική κόπωση.")
+            elif status == "high_fatigue":
+                lines.append("⚠️ *Ερμηνεία:* Υψηλή συσσωρευμένη κόπωση (High Fatigue). Απαραίτητη η αποφόρτιση ή χαλαρή αερόβια Z1/Z2 για αποφυγή υπερκόπωσης.")
+            elif status == "transition":
+                lines.append("💡 *Ερμηνεία:* Πολύ υψηλή φρεσκάδα / απώλεια φυσικής κατάστασης. Ώρα για σταδιακή επαναφορά του όγκου.")
+            else:
+                lines.append("💡 *Ερμηνεία:* Ισορροπημένη κατάσταση συντήρησης.")
+
+            return "\n".join(lines)
+        except Exception as e:
+            return f"❌ Σφάλμα υπολογισμού φόρμας: `{e}`"
+
+    if cmd in ("/weekly", "weekly", "/week", "week"):
+        try:
+            summary_text, _ = build_weekly_summary()
+            return summary_text
+        except Exception as e:
+            return f"❌ Σφάλμα δημιουργίας εβδομαδιαίας ανασκόπησης: `{e}`"
 
     if cmd in ("/compliance", "compliance", "/execution"):
         try:
@@ -637,15 +715,146 @@ def build_daily_brief(
     return brief_text, meta
 
 
+def build_weekly_summary(week_key: str | None = None) -> tuple[str, dict]:
+    """
+    Generate an executive weekly training summary including:
+    - Total volume by sport (run, bike, swim, strength)
+    - ACWR and load status
+    - Banister Fitness (CTL), Fatigue (ATL), and Form (TSB)
+    - Weekly Garmin biometrics (sleep, HRV, RHR) and baseline comparison
+    - Gear alert warnings (shoes approaching retirement)
+    """
+    import json
+    import os
+    from src.config import ACTIVITIES_CACHE_FILE
+    from src.storage.activity_store import get_activities, get_details, init_db
+    from src.analytics.metrics import (
+        calculate_acwr,
+        calculate_fitness_fatigue,
+        process_activities_into_weeks,
+    )
+    from src.integrations.garmin import _load_garmin_cache, compute_biometric_baselines
+    from src.analytics.gear import extract_gear_summary
+
+    conn = init_db()
+    acts = get_activities(conn, limit=250)
+    details = get_details(conn)
+    conn.close()
+
+    if not acts and os.path.exists(ACTIVITIES_CACHE_FILE):
+        try:
+            with open(ACTIVITIES_CACHE_FILE) as f:
+                c = json.load(f)
+                acts = c.get("activities", [])
+                details = c.get("details", {})
+        except Exception:
+            pass
+
+    weeks = process_activities_into_weeks(acts)
+    sorted_keys = sorted(weeks.keys())
+    if not sorted_keys:
+        return "ℹ️ Δεν βρέθηκαν δραστηριότητες για τη σύνταξη της εβδομαδιαίας αναφοράς.", {}
+
+    target_key = week_key if week_key and week_key in weeks else sorted_keys[-1]
+    week = weeks[target_key]
+    acwr_map = calculate_acwr(sorted_keys, weeks)
+    acwr = acwr_map.get(target_key, {})
+
+    perf = calculate_fitness_fatigue(acts)
+    cur_perf = perf.get("current", {})
+
+    garmin_cache = _load_garmin_cache()
+    garmin_entry = garmin_cache.get(target_key, {})
+    garmin_week = garmin_entry.get("summary") if isinstance(garmin_entry, dict) else None
+    baselines = compute_biometric_baselines()
+
+    gear_list = extract_gear_summary(acts, details=details)
+    alerts = [g for g in gear_list if g.get("alert") or g.get("status") in ("warning", "retire")]
+
+    # Date formatting
+    m_dt = datetime.fromisoformat(week["week_monday"]).date()
+    s_dt = datetime.fromisoformat(week["week_sunday"]).date()
+    date_label = f"{m_dt.strftime('%d/%m')} – {s_dt.strftime('%d/%m/%Y')}"
+
+    total_h = week["total_time_sec"] / 3600.0
+    run_km = week["run_dist_km"]
+    bike_km = week["bike_dist_km"]
+    swim_m = week["swim_dist_m"]
+    strength_s = week["strength_time_sec"]
+    effort = round(week["total_relative_effort"])
+    act_count = len(week["activities"])
+
+    ratio = acwr.get("acwr_ratio")
+    acwr_str = f"{ratio:.2f}" if ratio is not None else "N/A"
+    acwr_zone = str(acwr.get("status", "Unknown")).split("(")[0].strip()
+
+    tsb = cur_perf.get("tsb", 0.0)
+    ctl = cur_perf.get("ctl", 0.0)
+    atl = cur_perf.get("atl", 0.0)
+    form_status = cur_perf.get("status_label", "Neutral")
+
+    lines = [
+        "📊 *ΕΒΔΟΜΑΔΙΑΙΑ ΑΝΑΣΚΟΠΗΣΗ STAMINAI*",
+        f"🗓️ *Εβδομάδα:* {date_label}",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "⏱️ *Προπονητικός Όγκος:*",
+        f"• Συνολικός Χρόνος: *{total_h:.1f} ώρες* ({act_count} προπονήσεις)",
+        f"• 🔥 Relative Effort: *{effort}*",
+        f"• 🏃 Τρέξιμο: *{run_km:.1f} km*",
+        f"• 🚴 Ποδηλασία: *{bike_km:.1f} km*" + (f" (+{round(week['total_elevation_m'])}m)" if week['total_elevation_m'] > 0 else ""),
+        f"• 🏊 Κολύμβηση: *{swim_m:.0f} m*",
+    ]
+    if strength_s > 0:
+        lines.append(f"• 🏋️ Ενδυνάμωση: *{strength_s / 3600.0:.1f} ώρες*")
+
+    lines.append("\n📈 *Φόρμα & Επιβάρυνση (Banister & ACWR):*")
+    lines.append(f"• ⚡ ACWR Ratio: *{acwr_str}* ({acwr_zone})")
+    lines.append(f"• 🏋️ Fitness (CTL): *{ctl:.1f}* | ⚡ Fatigue (ATL): *{atl:.1f}*")
+    lines.append(f"• 🎯 Form (TSB): *{tsb:+.1f}* — _{form_status}_")
+
+    if garmin_week:
+        lines.append("\n🔋 *Βιομετρικά Garmin (Μέσοι Όροι):*")
+        if garmin_week.get("total_sleep_h"):
+            nap = f" (+{garmin_week['total_nap_h']:.1f}h naps)" if garmin_week.get("total_nap_h") else ""
+            lines.append(f"• 😴 Ύπνος: *{garmin_week['total_sleep_h']:.1f} ώρες*{nap}")
+        if garmin_week.get("avg_hrv"):
+            hrv_val = garmin_week["avg_hrv"]
+            b_hrv = baselines.get("hrv", {})
+            b_range = f" (Βάση: {b_hrv['normal_range'][0]:.0f}-{b_hrv['normal_range'][1]:.0f}ms)" if b_hrv.get("normal_range") else ""
+            lines.append(f"• 💓 HRV: *{hrv_val} ms*{b_range}")
+        if garmin_week.get("avg_rhr"):
+            lines.append(f"• 🫀 Resting HR: *{garmin_week['avg_rhr']} bpm*")
+
+    if alerts:
+        lines.append("\n👟 *Ειδοποιήσεις Εξοπλισμού:*")
+        for g in alerts:
+            lines.append(f"• ⚠️ *{g['name']}:* {g['total_km']:.0f}km / {g['threshold_km']:.0f}km (απομένουν {g['remaining_km']:.0f}km)")
+
+    lines.append("\n━━━━━━━━━━━━━━━━━━━━")
+    lines.append("🚀 Έτοιμοι για τη νέα προπονητική εβδομάδα!")
+
+    text = "\n".join(lines)
+    meta = {
+        "week_key": target_key,
+        "total_hours": round(total_h, 1),
+        "relative_effort": effort,
+        "ctl": ctl,
+        "atl": atl,
+        "tsb": tsb,
+        "acwr": ratio,
+    }
+    return text, meta
+
+
 def run_daily_dispatch_check() -> bool:
     """
     Check if the current Athens time has reached TELEGRAM_DAILY_DISPATCH_TIME,
     and if so, automatically send tomorrow's workout briefing once per day.
-    Persists last-dispatched date in sync_state so reloads or transient delays
-    do not skip the brief or duplicate it.
+    On Sunday evenings after TELEGRAM_WEEKLY_DISPATCH_TIME, also dispatches
+    the executive weekly recap.
     """
     global _LAST_DISPATCHED_DATE
-    from src.config import TELEGRAM_DAILY_DISPATCH_TIME
+    from src.config import TELEGRAM_DAILY_DISPATCH_TIME, TELEGRAM_WEEKLY_DISPATCH_TIME
     from src.storage.activity_store import get_sync_state, init_db, set_sync_state
 
     now_dt = datetime.now()
@@ -653,17 +862,23 @@ def run_daily_dispatch_check() -> bool:
     current_hhmm = now_dt.strftime("%H:%M")
 
     target_time = (TELEGRAM_DAILY_DISPATCH_TIME or "20:30").strip()
+    weekly_target_time = (TELEGRAM_WEEKLY_DISPATCH_TIME or "21:00").strip()
 
     conn = None
     last_sent = _LAST_DISPATCHED_DATE
+    last_weekly_sent = None
     try:
         conn = init_db()
         persisted = get_sync_state(conn, "telegram_last_dispatched_date")
         if persisted:
             last_sent = persisted
+        last_weekly_sent = get_sync_state(conn, "telegram_last_weekly_dispatched_date")
     except Exception as e:
-        logger.warning("Could not read telegram_last_dispatched_date from store: %s", e)
+        logger.warning("Could not read dispatch sync state from store: %s", e)
 
+    dispatched_any = False
+
+    # 1. Daily Next-Day Workout Briefing
     if current_hhmm >= target_time and last_sent != today_str:
         logger.info("Executing daily automated Telegram dispatch for tomorrow's workout...")
         target_date = date.today() + timedelta(days=1)
@@ -677,12 +892,26 @@ def run_daily_dispatch_check() -> bool:
                 except Exception as e:
                     logger.warning("Could not persist telegram_last_dispatched_date: %s", e)
             logger.info("Daily Telegram dispatch sent successfully for %s", target_date)
-            if conn:
-                conn.close()
-            return True
+            dispatched_any = True
         else:
             logger.warning("Daily Telegram dispatch delivery failed: %s", res.get("detail"))
 
+    # 2. Sunday Evening Weekly Summary Briefing (weekday 6 == Sunday)
+    if now_dt.weekday() == 6 and current_hhmm >= weekly_target_time and last_weekly_sent != today_str:
+        logger.info("Executing weekly Sunday automated Telegram summary dispatch...")
+        weekly_brief, _ = build_weekly_summary()
+        w_res = send_telegram_message(weekly_brief)
+        if w_res.get("success"):
+            if conn:
+                try:
+                    set_sync_state(conn, "telegram_last_weekly_dispatched_date", today_str)
+                except Exception as e:
+                    logger.warning("Could not persist telegram_last_weekly_dispatched_date: %s", e)
+            logger.info("Weekly Sunday Telegram summary sent successfully.")
+            dispatched_any = True
+        else:
+            logger.warning("Weekly Sunday Telegram dispatch delivery failed: %s", w_res.get("detail"))
+
     if conn:
         conn.close()
-    return False
+    return dispatched_any

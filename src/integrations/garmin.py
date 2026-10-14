@@ -288,6 +288,90 @@ def get_weekly_health_summaries(
     return results
 
 
+def compute_biometric_baselines(
+    weekly_summaries: dict[str, dict] | None = None,
+    min_weeks: int = 3,
+) -> dict:
+    """
+    Compute athlete baseline normal ranges for HRV and Resting Heart Rate (RHR)
+    using multi-week historical summaries (mean ± 0.75 * standard deviation).
+    """
+    import math
+
+    if weekly_summaries is None:
+        cached = _load_garmin_cache()
+        weekly_summaries = {
+            k: v["summary"] for k, v in cached.items() if isinstance(v, dict) and v.get("summary")
+        }
+
+    hrv_values = []
+    rhr_values = []
+
+    # Sort weeks chronologically
+    for _, summary in sorted(weekly_summaries.items()):
+        if not summary:
+            continue
+        hrv = summary.get("avg_hrv")
+        if hrv and hrv > 0:
+            hrv_values.append(float(hrv))
+        rhr = summary.get("avg_rhr")
+        if rhr and rhr > 0:
+            rhr_values.append(float(rhr))
+
+    def _calc_band(values: list[float], factor: float = 0.75) -> dict:
+        if len(values) < min_weeks:
+            return {
+                "baseline_mean": round(sum(values) / len(values), 1) if values else None,
+                "baseline_std": None,
+                "normal_range": None,
+                "weeks_used": len(values),
+            }
+        mean = sum(values) / len(values)
+        variance = sum((x - mean) ** 2 for x in values) / (len(values) - 1)
+        std = math.sqrt(variance)
+        # Minimum sensible std floor to avoid zero-width bands on identical readings
+        std = max(std, 2.0)
+        low = round(max(10.0, mean - factor * std), 1)
+        high = round(mean + factor * std, 1)
+        return {
+            "baseline_mean": round(mean, 1),
+            "baseline_std": round(std, 1),
+            "normal_range": [low, high],
+            "weeks_used": len(values),
+        }
+
+    return {
+        "hrv": _calc_band(hrv_values),
+        "rhr": _calc_band(rhr_values),
+    }
+
+
+def evaluate_biometric_status(val: float | None, band: dict, metric_type: str = "hrv") -> tuple[str, str]:
+    """
+    Evaluate a metric reading against its baseline band.
+    Returns (status_key, human_readable_description).
+    status_key is 'optimal' | 'low' | 'elevated' | 'unknown'.
+    """
+    if val is None or not band or not band.get("normal_range"):
+        return "unknown", "Baseline calculating (insufficient history)"
+
+    low, high = band["normal_range"]
+    if metric_type == "hrv":
+        if val < low:
+            return "low", f"HRV {val:.0f}ms below baseline ({low:.0f}-{high:.0f}ms): fatigue or stress detected"
+        elif val > high:
+            return "elevated", f"HRV {val:.0f}ms above baseline ({low:.0f}-{high:.0f}ms): high parasympathetic recovery"
+        else:
+            return "optimal", f"HRV {val:.0f}ms within normal baseline ({low:.0f}-{high:.0f}ms)"
+    else:  # rhr
+        if val > high:
+            return "elevated", f"RHR {val:.0f} bpm above baseline ({low:.0f}-{high:.0f} bpm): elevated cardiovascular load"
+        elif val < low:
+            return "low", f"RHR {val:.0f} bpm below baseline ({low:.0f}-{high:.0f} bpm): optimal resting state"
+        else:
+            return "optimal", f"RHR {val:.0f} bpm within normal baseline ({low:.0f}-{high:.0f} bpm)"
+
+
 def get_daily_recovery_metrics(target_date: date, client: Garmin | None = None) -> dict:
     """
     Fetch comprehensive daily recovery biometrics for a specific date from Garmin Connect.
@@ -464,21 +548,29 @@ def get_daily_recovery_metrics(target_date: date, client: Garmin | None = None) 
         elif sleep_h >= 7.5:
             score += 10
 
+    # HRV & RHR Baselines comparison
+    baselines = compute_biometric_baselines()
+    hrv_eval = evaluate_biometric_status(res.get("hrv_last_night"), baselines.get("hrv", {}), "hrv")
+    rhr_eval = evaluate_biometric_status(res.get("resting_hr"), baselines.get("rhr", {}), "rhr")
+    res["baselines"] = baselines
+    res["hrv_baseline_eval"] = {"status": hrv_eval[0], "description": hrv_eval[1]}
+    res["rhr_baseline_eval"] = {"status": rhr_eval[0], "description": rhr_eval[1]}
+
     # HRV impact
     hrv_stat = res.get("hrv_status", "").lower()
-    if hrv_stat in ("poor", "low", "unbalanced"):
+    if hrv_stat in ("poor", "low", "unbalanced") or hrv_eval[0] == "low":
         score -= 25
         flags.append("depressed_hrv")
-    elif hrv_stat in ("balanced", "good"):
+    elif hrv_stat in ("balanced", "good") or hrv_eval[0] == "optimal":
         score += 10
 
     # RHR impact
     rhr = res.get("resting_hr")
     if rhr is not None:
-        if rhr > 60:
+        if rhr > 60 or rhr_eval[0] == "elevated":
             score -= 15
             flags.append("elevated_rhr")
-        elif rhr <= 50:
+        elif rhr <= 50 or rhr_eval[0] == "low":
             score += 5
 
     # Body battery impact

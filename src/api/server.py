@@ -95,7 +95,11 @@ from src.integrations.strava import (
     fetch_details_for_activities,
     get_access_token,
 )
-from src.integrations.garmin import _load_garmin_cache, get_weekly_health_summaries
+from src.integrations.garmin import (
+    _load_garmin_cache,
+    compute_biometric_baselines,
+    get_weekly_health_summaries,
+)
 from src.integrations.sheets import get_planned_workout_for_date, write_to_sheet
 from src.integrations.strava_backfill import backfill_all
 from src.integrations.telegram import format_next_day_brief, send_telegram_message
@@ -111,6 +115,7 @@ from src.storage.activity_store import (
 from src.analytics.metrics import (
     build_progression_history,
     calculate_acwr,
+    calculate_fitness_fatigue,
     calculate_hr_zones,
     calculate_polarized_distribution,
     process_activities_into_weeks,
@@ -373,11 +378,19 @@ def get_dashboard_data(count: int = Query(200, ge=1, le=500)):
         weather_outlook = get_weather_outlook(past_days=2, forecast_days=7)
     except Exception as e:
         server_logger.warning("Weather fetch failed: %s", e)
-        weather_outlook = []
+    try:
+        biometric_baselines = compute_biometric_baselines(garmin_summaries)
+    except Exception as e:
+        server_logger.warning("Baselines computation failed: %s", e)
+        biometric_baselines = {}
+
+    performance = calculate_fitness_fatigue(summaries)
 
     return {
         "weeks": weeks,
         "garmin": garmin_summaries,
+        "baselines": biometric_baselines,
+        "performance": performance,
         "weather": weather_outlook,
         "hr_zones": calculate_hr_zones(hr_max=HR_MAX, hr_rest=HR_REST),
         "predictions": predict_race_performances(summaries),
@@ -386,6 +399,16 @@ def get_dashboard_data(count: int = Query(200, ge=1, le=500)):
         "progression": build_progression_history(weeks, acwr_map=acwr_map),
         "activities_total": len(summaries),
     }
+
+
+@app.get("/api/performance")
+def get_performance_model(
+    count: int = Query(200, ge=1, le=500),
+    days: int = Query(90, ge=14, le=365),
+):
+    """Daily Fitness (CTL), Fatigue (ATL), and Form (TSB) impulse-response series."""
+    summaries, _ = _get_summaries(count)
+    return calculate_fitness_fatigue(summaries, display_days=days)
 
 
 @app.get("/api/strava/webhook")
@@ -530,6 +553,21 @@ def send_telegram_today_workout_notification(req: TelegramNextDayRequest = Teleg
     if not req.target_date:
         req.target_date = date.today().isoformat()
     return send_telegram_next_day_workout_notification(req)
+
+
+@app.post("/api/notifications/telegram/weekly")
+def send_telegram_weekly_summary_notification():
+    """Dispatch executive weekly summary to athlete's Telegram."""
+    from src.integrations.telegram import build_weekly_summary, send_telegram_message
+
+    brief, meta = build_weekly_summary()
+    res = send_telegram_message(brief)
+    return {
+        "success": res.get("success", False),
+        "preview": brief,
+        "dispatch": res,
+        "meta": meta,
+    }
 
 
 @app.get("/api/weather")
@@ -790,6 +828,9 @@ def get_gear_tracker():
             conn.close()
 
     from src.analytics.gear import extract_gear_summary
+    return {"gear": extract_gear_summary(activities, details=details)}
+
+
 @app.get("/api/workouts/preview")
 def preview_workouts_endpoint(week_offset: int = 0):
     """Preview running and cycling workouts parsed from Google Sheets for Garmin & Tacx with recovery readiness."""

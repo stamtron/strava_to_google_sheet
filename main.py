@@ -132,6 +132,11 @@ def main():
         help="Read tomorrow's planned workout from Google Sheets, add Athens weather & tip, and send to Telegram",
     )
     parser.add_argument(
+        "--telegram-weekly",
+        action="store_true",
+        help="Compile and send executive weekly training summary, form & gear alerts to Telegram",
+    )
+    parser.add_argument(
         "--date",
         type=str,
         default=None,
@@ -223,6 +228,22 @@ def main():
         except KeyboardInterrupt:
             print("\n👋 Telegram bot stopped.")
             return 0
+
+    # Telegram Weekly Summary Dispatcher
+    if args.telegram_weekly:
+        from src.integrations.telegram import build_weekly_summary, send_telegram_message
+
+        print("📊 Preparing Executive Weekly Training Summary...")
+        summary, meta = build_weekly_summary()
+
+        if args.dry_run:
+            print("\n📋 [Telegram Weekly Summary Preview (Dry Run)]")
+            print(summary)
+            return 0
+
+        res = send_telegram_message(summary)
+        print(f"  Result: {res.get('detail')}")
+        return 0 if res.get("success") else 1
 
     # Telegram Workout Dispatcher
     if args.telegram_today or args.telegram_next_day or (args.date and not args.sheet):

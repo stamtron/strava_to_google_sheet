@@ -186,3 +186,48 @@ def test_assess_workout_readiness_clears_rest_and_optimal():
     assert readiness["needs_modulation"] is False
     assert "Βέλτιστη Ετοιμότητα" in readiness["modulation_advice"]
 
+
+def test_compute_biometric_baselines_and_evaluate():
+    from src.integrations.garmin import compute_biometric_baselines, evaluate_biometric_status
+
+    # Insufficient history (< 3 weeks)
+    short_history = {
+        "2026-W38": {"avg_hrv": 60, "avg_rhr": 50},
+        "2026-W39": {"avg_hrv": 62, "avg_rhr": 48},
+    }
+    base = compute_biometric_baselines(short_history, min_weeks=3)
+    assert base["hrv"]["weeks_used"] == 2
+    assert base["hrv"]["normal_range"] is None
+
+    stat, _ = evaluate_biometric_status(55, base["hrv"], "hrv")
+    assert stat == "unknown"
+
+    # 4 weeks of history: Mean HRV = 60, Mean RHR = 50
+    history = {
+        "2026-W36": {"avg_hrv": 60, "avg_rhr": 50},
+        "2026-W37": {"avg_hrv": 58, "avg_rhr": 52},
+        "2026-W38": {"avg_hrv": 62, "avg_rhr": 48},
+        "2026-W39": {"avg_hrv": 60, "avg_rhr": 50},
+    }
+
+    baselines = compute_biometric_baselines(history, min_weeks=3)
+    assert baselines["hrv"]["weeks_used"] == 4
+    assert pytest.approx(baselines["hrv"]["baseline_mean"], 0.1) == 60.0
+    assert pytest.approx(baselines["rhr"]["baseline_mean"], 0.1) == 50.0
+    assert baselines["hrv"]["normal_range"][0] < 60.0
+    assert baselines["hrv"]["normal_range"][1] > 60.0
+
+    # Normal day (within normal_range)
+    hrv_stat, _ = evaluate_biometric_status(60, baselines["hrv"], "hrv")
+    rhr_stat, _ = evaluate_biometric_status(50, baselines["rhr"], "rhr")
+    assert hrv_stat == "optimal"
+    assert rhr_stat == "optimal"
+
+    # Suppressed HRV & Elevated RHR
+    low_hrv, _ = evaluate_biometric_status(45, baselines["hrv"], "hrv")
+    high_rhr, _ = evaluate_biometric_status(60, baselines["rhr"], "rhr")
+    assert low_hrv == "low"
+    assert high_rhr == "elevated"
+
+
+

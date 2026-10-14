@@ -246,6 +246,23 @@ def test_telegram_today_api_endpoint_dry_run():
     assert data["provider"] == "dry-run"
 
 
+def test_telegram_weekly_endpoint(monkeypatch):
+    from fastapi.testclient import TestClient
+    from src.api.server import app
+
+    monkeypatch.setattr("src.integrations.telegram.build_weekly_summary", lambda week_key=None: ("Weekly Report Preview", {"week_key": "2026-W41"}))
+    monkeypatch.setattr("src.integrations.telegram.send_telegram_message", lambda text: {"success": True, "provider": "dry-run"})
+
+    client = TestClient(app)
+    resp = client.post("/api/notifications/telegram/weekly")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    assert "preview" in data
+    assert "Weekly Report Preview" in data["preview"]
+
+
+
 def test_format_next_day_brief_with_recovery():
     t_date = date(2026, 9, 1)
     workout = "🏃 8x400m @ 3:55"
@@ -405,6 +422,32 @@ def test_run_daily_dispatch_check_persists(monkeypatch, tmp_path):
     # Second run on same day should not duplicate
     sent_again = tel_mod.run_daily_dispatch_check()
     assert sent_again is False
+
+
+def test_build_weekly_summary(monkeypatch):
+    from src.integrations.telegram import build_weekly_summary
+
+    monkeypatch.setattr("src.storage.activity_store.get_activities", lambda conn, limit=250: [
+        {
+            "id": 1,
+            "sport_type": "Run",
+            "distance": 10000.0,
+            "moving_time": 3000,
+            "suffer_score": 50,
+            "start_date_local": "2026-10-10T08:00:00Z",
+            "gear_id": "shoe_1",
+        }
+    ])
+    monkeypatch.setattr("src.storage.activity_store.get_details", lambda conn: {
+        "1": {"gear": {"name": "Pegasus 40"}}
+    })
+
+    brief, meta = build_weekly_summary()
+    assert "ΕΒΔΟΜΑΔΙΑΙΑ ΑΝΑΣΚΟΠΗΣΗ" in brief
+    assert "10.0 km" in brief
+    assert meta is not None
+
+
 
 
 

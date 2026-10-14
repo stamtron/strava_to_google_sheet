@@ -4,9 +4,11 @@ from src.config import ACWR_CHRONIC_WEEKS, HR_MAX, HR_REST
 from src.analytics.metrics import (
     build_progression_history,
     calculate_acwr,
+    calculate_fitness_fatigue,
     calculate_relative_effort,
     normalize_rpe,
     process_activities_into_weeks,
+    _classify_tsb,
 )
 
 
@@ -201,4 +203,91 @@ def test_normalize_rpe_from_suffer_score():
 
 def test_normalize_rpe_fallback_to_moderate():
     assert normalize_rpe({}, {}) == 4
+
+
+# Banister EWMA Fitness, Fatigue & Form (CTL / ATL / TSB)
+
+
+def test_classify_tsb_bands():
+    # Transition / Untrained: > 25
+    status, label = _classify_tsb(30.0)
+    assert status == "transition"
+    assert "Transition" in label
+
+    # Race Ready / Fresh: 10 <= TSB <= 25
+    status, label = _classify_tsb(25.0)
+    assert status == "fresh"
+    assert "Fresh" in label
+
+    status, label = _classify_tsb(10.0)
+    assert status == "fresh"
+
+    # Neutral / Maintenance: -10 <= TSB < 10
+    status, label = _classify_tsb(0.0)
+    assert status == "neutral"
+    assert "Neutral" in label
+
+    status, label = _classify_tsb(-10.0)
+    assert status == "neutral"
+
+    # Optimal Training / Overload: -30 <= TSB < -10
+    status, label = _classify_tsb(-15.0)
+    assert status == "optimal"
+    assert "Optimal" in label
+
+    status, label = _classify_tsb(-30.0)
+    assert status == "optimal"
+
+    # High Fatigue / Overreaching Risk: < -30
+    status, label = _classify_tsb(-35.0)
+    assert status == "high_fatigue"
+    assert "High Fatigue" in label
+
+
+
+def test_calculate_fitness_fatigue_empty():
+    res = calculate_fitness_fatigue([], display_days=14)
+    assert "current" in res
+    assert "series" in res
+    assert len(res["series"]) == 15  # 14 days + today
+    assert res["current"]["ctl"] == 0.0
+    assert res["current"]["atl"] == 0.0
+    assert res["current"]["tsb"] == 0.0
+    assert res["current"]["status"] == "neutral"
+
+
+def test_calculate_fitness_fatigue_simulation():
+    from datetime import date, timedelta
+    today = date.today()
+
+    # Generate daily activities with constant suffer score
+    acts = []
+    for i in range(60, 0, -1):
+        d_str = (today - timedelta(days=i)).isoformat()
+        acts.append({
+            "id": i,
+            "start_date_local": f"{d_str}T09:00:00Z",
+            "sport_type": "Run",
+            "moving_time": 3600,
+            "suffer_score": 60,
+        })
+
+    res = calculate_fitness_fatigue(acts, ctl_days=42, atl_days=7, display_days=30)
+    cur = res["current"]
+    assert cur["ctl"] > 0
+    assert cur["atl"] > 0
+    # Because steady load ran for 60 days, ATL responds faster than CTL
+    # CTL ~ 60 * (1 - e^(-1/42)), ATL ~ 60 * (1 - e^(-1/7))
+    assert cur["tsb"] == round(cur["ctl"] - cur["atl"], 1)
+    assert len(res["series"]) == 31  # 30 days + today
+    assert "ctl_ramp_7d" in cur
+
+
+def test_calculate_fitness_fatigue_invalid_params():
+    import pytest
+    with pytest.raises(ValueError):
+        calculate_fitness_fatigue([], ctl_days=0)
+    with pytest.raises(ValueError):
+        calculate_fitness_fatigue([], atl_days=-5)
+
 

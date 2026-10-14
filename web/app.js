@@ -6,6 +6,7 @@ let disciplineChart = null;
 let recoveryChart = null;
 
 // Progression Charts
+let performanceChart = null;
 let effortProgressionChart = null;
 let volumeProgressionChart = null;
 let elevationProgressionChart = null;
@@ -109,6 +110,9 @@ async function initApp() {
     renderTriathlonPredictions(dashboardData.triathlon_pb || dashboardData.triathlon);
     renderWeatherOutlook(dashboardData.weather);
     updateProgressionCharts(dashboardData.progression);
+    if (dashboardData.performance) {
+      updatePerformanceChart(dashboardData.performance);
+    }
   } catch (err) {
     console.error("Initialization error:", err);
     showToast("Failed to load dashboard data: " + err.message, "error");
@@ -117,6 +121,9 @@ async function initApp() {
   // Outside the try: a separate endpoint on its own error path, so a durability
   // failure neither blanks the dashboard nor is masked by a dashboard failure.
   fetchDurability();
+
+  // Load equipment mileage monitor
+  loadGearTracker();
 
   // Load workout plan compliance
   loadCompliance();
@@ -146,6 +153,9 @@ function setupEventListeners() {
 
   const todayBtn = document.getElementById("sendTelegramTodayBtn");
   if (todayBtn) todayBtn.addEventListener("click", handleSendTelegramToday);
+
+  const weeklyReportBtn = document.getElementById("sendTelegramWeeklyBtn");
+  if (weeklyReportBtn) weeklyReportBtn.addEventListener("click", handleSendTelegramWeekly);
 
   const checkCompBtn = document.getElementById("checkComplianceBtn");
   if (checkCompBtn) {
@@ -272,6 +282,7 @@ function setupEventListeners() {
     // Trigger chart resize if moving to Progression tab
     if (target === "progression") {
       setTimeout(() => {
+        if (performanceChart) performanceChart.resize();
         if (effortProgressionChart) effortProgressionChart.resize();
         if (volumeProgressionChart) volumeProgressionChart.resize();
         if (elevationProgressionChart) elevationProgressionChart.resize();
@@ -959,6 +970,99 @@ function initProgressionCharts() {
       },
     },
   });
+
+  // 5. Banister CTL / ATL / TSB Performance Chart
+  const perfCanvas = document.getElementById("performanceChart");
+  if (perfCanvas) {
+    const ctxPerf = perfCanvas.getContext("2d");
+    performanceChart = new Chart(ctxPerf, {
+      type: "line",
+      data: {
+        labels: [],
+        datasets: [
+          {
+            label: "Fitness (CTL, 42d)",
+            data: [],
+            borderColor: "#00f2fe",
+            backgroundColor: "rgba(0, 242, 254, 0.08)",
+            borderWidth: 2.5,
+            pointRadius: 0,
+            pointHitRadius: 6,
+            fill: false,
+            tension: 0.2,
+            yAxisID: "yLoad",
+          },
+          {
+            label: "Fatigue (ATL, 7d)",
+            data: [],
+            borderColor: "#ff0080",
+            backgroundColor: "rgba(255, 0, 128, 0.08)",
+            borderWidth: 2,
+            pointRadius: 0,
+            pointHitRadius: 6,
+            fill: false,
+            tension: 0.2,
+            yAxisID: "yLoad",
+          },
+          {
+            label: "Form (TSB = CTL - ATL)",
+            data: [],
+            type: "bar",
+            backgroundColor: function(context) {
+              const val = context.raw;
+              if (val === null || val === undefined) return "rgba(148, 163, 184, 0.4)";
+              if (val >= 25) return "rgba(56, 189, 248, 0.5)"; // Freshness / Transition
+              if (val >= -10) return "rgba(16, 185, 129, 0.6)"; // Optimal / Race Ready
+              if (val >= -30) return "rgba(245, 158, 11, 0.6)"; // Productive Overreaching
+              return "rgba(239, 68, 68, 0.6)"; // High Fatigue / Overuse Risk
+            },
+            borderRadius: 3,
+            yAxisID: "yTsb",
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          yLoad: {
+            type: "linear",
+            position: "left",
+            grid: { color: "rgba(255, 255, 255, 0.05)" },
+            ticks: { color: "#00f2fe" },
+            title: { display: true, text: "Training Load (CTL / ATL)", color: "#00f2fe" },
+          },
+          yTsb: {
+            type: "linear",
+            position: "right",
+            grid: {
+              color: function(context) {
+                if (context.tick && context.tick.value === 0) return "rgba(255, 255, 255, 0.25)";
+                return "transparent";
+              },
+            },
+            ticks: { color: "#10b981" },
+            title: { display: true, text: "Form (TSB)", color: "#10b981" },
+          },
+          x: {
+            grid: { display: false },
+            ticks: { color: "#94a3b8", maxTicksLimit: 14 },
+          },
+        },
+        plugins: {
+          legend: {
+            labels: { color: "#94a3b8", font: { family: "Inter", size: 11 } },
+          },
+          tooltip: {
+            callbacks: {
+              title: (items) => (items && items[0] ? items[0].label : ""),
+            },
+          },
+        },
+      },
+    });
+  }
 }
 
 function updateCharts(week, garmin) {
@@ -1022,6 +1126,124 @@ function updateProgressionCharts(progression) {
     acwrProgressionChart.data.labels = labels;
     acwrProgressionChart.data.datasets[0].data = acwrs;
     acwrProgressionChart.update();
+  }
+}
+
+function updatePerformanceChart(perfData) {
+  if (!perfData) return;
+  const current = perfData.current || {};
+  const series = perfData.series || [];
+
+  const ctlEl = document.getElementById("ctlVal");
+  if (ctlEl && current.ctl !== undefined) ctlEl.textContent = current.ctl.toFixed(1);
+
+  const atlEl = document.getElementById("atlVal");
+  if (atlEl && current.atl !== undefined) atlEl.textContent = current.atl.toFixed(1);
+
+  const tsbBadge = document.getElementById("perfTsbBadge");
+  if (tsbBadge && current.tsb !== undefined) {
+    const sign = current.tsb > 0 ? "+" : "";
+    const label = current.status_label || current.status || "Form";
+    tsbBadge.textContent = `Form (TSB): ${sign}${current.tsb.toFixed(1)} (${label})`;
+    tsbBadge.className = "acwr-badge";
+    if (current.status === "optimal") {
+      tsbBadge.classList.add("badge-optimal");
+    } else if (current.status === "freshness") {
+      tsbBadge.classList.add("badge-low");
+    } else if (current.status === "high_risk") {
+      tsbBadge.classList.add("badge-spike");
+    } else {
+      tsbBadge.classList.add("badge-overreaching");
+    }
+  }
+
+  const rampEl = document.getElementById("rampVal");
+  if (rampEl && current.ctl_ramp_7d !== undefined) {
+    const rSign = current.ctl_ramp_7d > 0 ? "+" : "";
+    rampEl.textContent = `${rSign}${current.ctl_ramp_7d.toFixed(1)}/wk`;
+  }
+
+  if (performanceChart && series.length > 0) {
+    performanceChart.data.labels = series.map((s) => s.date);
+    performanceChart.data.datasets[0].data = series.map((s) => s.ctl);
+    performanceChart.data.datasets[1].data = series.map((s) => s.atl);
+    performanceChart.data.datasets[2].data = series.map((s) => s.tsb);
+    performanceChart.update();
+  }
+}
+
+async function loadGearTracker() {
+  try {
+    const res = await fetch("/api/gear");
+    if (!res.ok) return;
+    const data = await res.json();
+    renderGearTracker(data.gear || []);
+  } catch (err) {
+    console.warn("Could not load equipment monitor:", err);
+  }
+}
+
+function renderGearTracker(gearList) {
+  const grid = document.getElementById("gearGrid");
+  const alertBadge = document.getElementById("gearAlertBadge");
+  if (!grid) return;
+
+  if (!gearList || gearList.length === 0) {
+    grid.innerHTML = `
+      <div style="grid-column: 1 / -1; padding: 20px; text-align: center; color: var(--text-muted); font-size: 13px;">
+        No equipment telemetry linked in Strava activities yet.
+      </div>
+    `;
+    if (alertBadge) {
+      alertBadge.textContent = "Active Tracking";
+      alertBadge.className = "acwr-badge badge-optimal";
+    }
+    return;
+  }
+
+  let retireCount = 0;
+  let warnCount = 0;
+
+  grid.innerHTML = gearList.map((g) => {
+    if (g.status === "retire") retireCount++;
+    else if (g.status === "warning") warnCount++;
+
+    const pct = Math.min(100, Math.round((g.total_km / (g.threshold_km || 650)) * 100));
+    const tagClass = (g.gear_type || "").toLowerCase() === "shoes" ? "shoes" : "bike";
+    const statusClass = g.status === "retire" ? "retire" : (g.status === "warning" ? "warning" : "optimal");
+
+    return `
+      <div class="gear-item-card">
+        <div class="gear-card-header">
+          <div class="gear-name" title="${g.name}">${g.name}</div>
+          <span class="gear-type-tag ${tagClass}">${g.gear_type}</span>
+        </div>
+        <div class="gear-bar-track">
+          <div class="gear-bar-fill ${statusClass}" style="width: ${pct}%;"></div>
+        </div>
+        <div class="gear-meta-row">
+          <span>Usage: <strong>${g.total_km} km</strong> / ${g.threshold_km} km (${pct}%)</span>
+          <span>Rem: <strong>${g.remaining_km} km</strong></span>
+        </div>
+        <div class="gear-meta-row" style="margin-top: 4px; font-size: 11px; color: var(--text-muted);">
+          <span>${g.activity_count} sessions</span>
+          <span>${g.last_used ? "Last: " + g.last_used : ""}</span>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  if (alertBadge) {
+    if (retireCount > 0) {
+      alertBadge.textContent = `⚠️ ${retireCount} Shoe${retireCount > 1 ? "s" : ""} Over Limit`;
+      alertBadge.className = "acwr-badge badge-spike";
+    } else if (warnCount > 0) {
+      alertBadge.textContent = `⚡ ${warnCount} Item${warnCount > 1 ? "s" : ""} in Warning Band`;
+      alertBadge.className = "acwr-badge badge-overreaching";
+    } else {
+      alertBadge.textContent = "✅ All Equipment Fresh";
+      alertBadge.className = "acwr-badge badge-optimal";
+    }
   }
 }
 
@@ -1228,6 +1450,35 @@ async function handleSendTelegramToday() {
       showToast(`✈️ Today's workout brief sent to Telegram! (${data.target_date})`, "success");
     } else {
       showToast(`⚠️ Telegram: ${data.dispatch ? data.dispatch.detail : 'Dispatched with dry-run'}`, "info");
+    }
+  } catch (err) {
+    showToast("Telegram dispatch error: " + err.message, "error");
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = origText;
+  }
+}
+
+async function handleSendTelegramWeekly() {
+  const btn = document.getElementById("sendTelegramWeeklyBtn");
+  if (!btn) return;
+  const origText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = "<span>⏳ Sending...</span>";
+
+  try {
+    const res = await fetch("/api/notifications/telegram/weekly", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dry_run: false }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Dispatch failed");
+
+    if (data.success) {
+      showToast(`✈️ Weekly summary digest sent to Telegram! (${data.target_week})`, "success");
+    } else {
+      showToast(`⚠️ Telegram: ${data.dispatch ? data.dispatch.detail : "Dispatched with dry-run"}`, "info");
     }
   } catch (err) {
     showToast("Telegram dispatch error: " + err.message, "error");

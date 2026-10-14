@@ -7,6 +7,7 @@ from .metrics import (
     process_activities_into_weeks,
     calculate_acwr,
     build_progression_history,
+    calculate_fitness_fatigue,
 )
 from .ai_coach import (
     generate_weekly_coaching_insights,
@@ -19,6 +20,7 @@ __all__ = [
     "process_activities_into_weeks",
     "calculate_acwr",
     "build_progression_history",
+    "calculate_fitness_fatigue",
     "generate_weekly_coaching_insights",
     "predict_race_performances",
     "predict_triathlon_performances",

@@ -3,17 +3,23 @@ Training Load, Relative Effort (Suffer Score), and Progression Metrics.
 """
 
 import math
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from src.config import (
     ACWR_CHRONIC_WEEKS,
     ACWR_MIN_CHRONIC_WEEKS,
+    ATL_DAYS,
     BIKE_SPORTS,
+    CTL_DAYS,
     HR_MAX,
     HR_REST,
     RUN_SPORTS,
     STRENGTH_SPORTS,
     SWIM_SPORTS,
+    TSB_FRESH_MAX,
+    TSB_FRESH_MIN,
+    TSB_OPTIMAL_MAX,
+    TSB_OPTIMAL_MIN,
 )
 from src.formatting import corrected_distance_and_speed
 
@@ -449,4 +455,147 @@ def calculate_polarized_distribution(
         "classification": classification,
         "is_polarized": classification == "polarized",
         "by_sport": by_sport,
+    }
+
+
+def _classify_tsb(tsb: float) -> tuple[str, str]:
+    """Classify Training Stress Balance into a status key and standard label."""
+    if tsb > TSB_FRESH_MAX:
+        return "transition", "Transition / Untrained"
+    elif tsb >= TSB_FRESH_MIN:
+        return "fresh", "Race Ready / Fresh"
+    elif tsb >= TSB_OPTIMAL_MAX:
+        return "neutral", "Neutral / Maintenance"
+    elif tsb >= TSB_OPTIMAL_MIN:
+        return "optimal", "Optimal Training / Overload"
+    else:
+        return "high_fatigue", "High Fatigue / Overreaching Risk"
+
+
+def calculate_fitness_fatigue(
+    activities: list[dict],
+    ctl_days: int = CTL_DAYS,
+    atl_days: int = ATL_DAYS,
+    display_days: int = 90,
+) -> dict:
+    """
+    Calculate daily Chronic Training Load (CTL / Fitness), Acute Training Load
+    (ATL / Fatigue), and Training Stress Balance (TSB / Form = CTL - ATL)
+    using the Banister Impulse-Response Exponentially Weighted Moving Average (EWMA) model.
+
+    To ensure mathematical accuracy and eliminate cold-start bias, the EWMA is warmed up
+    from the earliest recorded activity in the provided set, and then sliced to
+    the most recent `display_days` up through today.
+
+    Returns:
+    {
+        "current": {
+            "date": str,
+            "ctl": float,
+            "atl": float,
+            "tsb": float,
+            "status": str,
+            "status_label": str,
+            "ctl_ramp_7d": float,
+        },
+        "series": [
+            {
+                "date": str,
+                "day_load": float,
+                "ctl": float,
+                "atl": float,
+                "tsb": float,
+                "status": str,
+            },
+            ...
+        ]
+    }
+    """
+    if ctl_days <= 0 or atl_days <= 0:
+        raise ValueError("Time constants ctl_days and atl_days must be positive.")
+
+    # 1. Bucket daily loads
+    daily_loads: dict[date, float] = {}
+    for act in activities:
+        raw_dt = act.get("start_date_local", "")
+        if not raw_dt:
+            continue
+        try:
+            act_date = datetime.fromisoformat(raw_dt.replace("Z", "+00:00")).date()
+            effort = calculate_relative_effort(act)
+            daily_loads[act_date] = daily_loads.get(act_date, 0.0) + effort
+        except (ValueError, TypeError):
+            continue
+
+    today = date.today()
+    if daily_loads:
+        start_date = min(daily_loads.keys())
+        # Warmup at least 60 days before the display window to stabilize CTL
+        display_start = today - timedelta(days=display_days)
+        start_date = min(start_date, display_start - timedelta(days=ctl_days * 2))
+    else:
+        start_date = today - timedelta(days=display_days)
+
+    end_date = max(today, max(daily_loads.keys(), default=today))
+
+    # 2. Iterate daily and update EWMA
+    ctl_decay = math.exp(-1.0 / float(ctl_days))
+    atl_decay = math.exp(-1.0 / float(atl_days))
+
+    ctl = 0.0
+    atl = 0.0
+
+    full_series = []
+    curr = start_date
+
+    while curr <= end_date:
+        load = daily_loads.get(curr, 0.0)
+        ctl = (ctl * ctl_decay) + (load * (1.0 - ctl_decay))
+        atl = (atl * atl_decay) + (load * (1.0 - atl_decay))
+        tsb = ctl - atl
+        status_key, status_label = _classify_tsb(tsb)
+
+        full_series.append({
+            "date": curr.isoformat(),
+            "day_load": round(load, 1),
+            "ctl": round(ctl, 1),
+            "atl": round(atl, 1),
+            "tsb": round(tsb, 1),
+            "status": status_key,
+            "status_label": status_label,
+        })
+        curr += timedelta(days=1)
+
+    display_start_iso = (today - timedelta(days=display_days)).isoformat()
+    visible_series = [s for s in full_series if s["date"] >= display_start_iso]
+
+    # Current snapshot
+    current_entry = full_series[-1] if full_series else {
+        "date": today.isoformat(),
+        "day_load": 0.0,
+        "ctl": 0.0,
+        "atl": 0.0,
+        "tsb": 0.0,
+        "status": "neutral",
+        "status_label": "Neutral / Maintenance",
+    }
+
+    # 7-day ramp rate for CTL (fitness progression slope)
+    ctl_ramp_7d = 0.0
+    if len(full_series) >= 8:
+        ctl_ramp_7d = round(full_series[-1]["ctl"] - full_series[-8]["ctl"], 1)
+
+    current_summary = {
+        "date": current_entry["date"],
+        "ctl": current_entry["ctl"],
+        "atl": current_entry["atl"],
+        "tsb": current_entry["tsb"],
+        "status": current_entry["status"],
+        "status_label": current_entry["status_label"],
+        "ctl_ramp_7d": ctl_ramp_7d,
+    }
+
+    return {
+        "current": current_summary,
+        "series": visible_series,
     }

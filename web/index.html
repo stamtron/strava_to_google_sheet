@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>StaminAI — Adaptive Endurance & Recovery Platform</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <link rel="stylesheet" href="/static/styles.css?v=4.2">
+  <link rel="stylesheet" href="/static/styles.css?v=4.4">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
@@ -31,6 +31,9 @@
         </button>
         <button id="sendTelegramBtn" class="btn btn-share" title="Send tomorrow's workout and weather to Telegram">
           <span>✈️ Tomorrow</span>
+        </button>
+        <button id="sendTelegramWeeklyBtn" class="btn btn-share" title="Send executive weekly summary to Telegram">
+          <span>✈️ Weekly</span>
         </button>
         <button id="garminWorkoutsBtn" class="btn btn-garmin" title="Sync training program from coach spreadsheet to Garmin Connect (Watch & Tacx)">
           <span>⌚ Sync Training Program to Garmin</span>
@@ -295,6 +298,20 @@ Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
           <!-- Rendered dynamically -->
         </div>
       </div>
+
+      <!-- Equipment & Shoe Wear Monitor (Weekly view) -->
+      <div class="glass-panel ai-card weekly-gear-card">
+        <div class="ai-header">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <h3 style="font-size: 16px;">👟 Equipment & Shoe Mileage Monitor</h3>
+            <span id="gearAlertBadge" class="acwr-badge badge-optimal">Loading…</span>
+          </div>
+          <span class="bio-badge">Shoe Wear Limit: 650 km</span>
+        </div>
+        <div id="gearGrid" class="gear-grid">
+          <!-- Rendered dynamically by app.js from /api/gear -->
+        </div>
+      </div>
     </div>
 
     <!-- VIEW 2: Race & Triathlon Projections -->
@@ -390,10 +407,57 @@ Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
           </div>
         </div>
       </div>
+
+      <!-- Race-Day Taper & Nutrition Strategy -->
+      <div class="glass-panel ai-card taper-card" style="margin-top: 24px;">
+        <div class="ai-header">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <h3 style="font-size: 16px;">🏁 Race-Day Taper & Nutrition Strategy</h3>
+            <span id="targetRaceBadge" class="bio-badge">Target: Full Ironman (140.6)</span>
+          </div>
+          <span id="raceCountdownBadge" class="acwr-badge badge-optimal">October 25, 2026</span>
+        </div>
+        <div class="taper-grid">
+          <div class="taper-col">
+            <div class="taper-stat-label">TARGET FORM (TSB) ON RACE MORNING</div>
+            <div class="taper-stat-val" style="color: #10b981;">+10 to +25</div>
+            <p class="taper-stat-sub">Fresh legs with minimal loss of aerobic conditioning.</p>
+          </div>
+          <div class="taper-col">
+            <div class="taper-stat-label">RACE HOURLY FUELING (CARBS)</div>
+            <div class="taper-stat-val" style="color: #00f2fe;">60 – 90 g/hr</div>
+            <p class="taper-stat-sub">Maltodextrin/fructose 1:0.8 blend on bike, gels on run.</p>
+          </div>
+          <div class="taper-col">
+            <div class="taper-stat-label">ESTIMATED FLUID & ELECTROLYTES</div>
+            <div class="taper-stat-val" style="color: #f59e0b;">500 – 750 ml/hr</div>
+            <p class="taper-stat-sub">500-800mg sodium/hr scaled to ambient temperature.</p>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- VIEW 3: Long-Term Progression Analytics -->
     <div id="progressionView" class="progression-section">
+      <!-- Daily Fitness, Fatigue & Form (CTL / ATL / TSB) Banner Card -->
+      <div class="glass-panel progression-hero-card" style="margin-bottom: 24px; padding: 24px;">
+        <div class="section-header" style="margin-bottom: 14px; flex-wrap: wrap; gap: 12px;">
+          <div>
+            <h3 style="font-size: 16px; margin-bottom: 4px;">⚡ Fitness, Fatigue & Form (CTL / ATL / TSB Model)</h3>
+            <p class="brand-subtitle">Banister Impulse-Response EWMA: 42-Day Chronic Load, 7-Day Fatigue, and Daily Performance Readiness</p>
+          </div>
+          <div class="performance-badges" style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+            <span id="perfCtlBadge" class="bio-badge" title="Chronic Training Load (Fitness)">🏋️ Fitness (CTL): <strong id="ctlVal">--</strong></span>
+            <span id="perfAtlBadge" class="bio-badge" title="Acute Training Load (Fatigue)">⚡ Fatigue (ATL): <strong id="atlVal">--</strong></span>
+            <span id="perfTsbBadge" class="acwr-badge badge-optimal" title="Training Stress Balance (Form = CTL - ATL)">Form (TSB): --</span>
+            <span id="perfRampBadge" class="bio-badge" title="7-Day Fitness Ramp Rate">📈 7d Ramp: <strong id="rampVal">--</strong></span>
+          </div>
+        </div>
+        <div class="chart-wrapper" style="height: 320px;">
+          <canvas id="performanceChart"></canvas>
+        </div>
+      </div>
+
       <div class="progression-grid">
         <!-- Relative Effort & Hours Trend -->
         <div class="glass-panel progression-chart-card">
@@ -505,6 +569,6 @@ Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
     </div>
   </div>
 
-  <script src="/static/app.js?v=4.3"></script>
+  <script src="/static/app.js?v=4.4"></script>
 </body>
 </html>
