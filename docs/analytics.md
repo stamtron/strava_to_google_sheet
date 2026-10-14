@@ -22,6 +22,44 @@ The **Acute:Chronic Workload Ratio (ACWR)** monitors training load progression t
 
 ---
 
+## ⚡ Fitness, Fatigue & Form (Banister Impulse-Response EWMA)
+
+StaminAI implements Eric Banister's classic two-component impulse-response model using Exponentially Weighted Moving Averages (EWMA) to quantify daily physiological adaptation:
+
+- **Chronic Training Load (CTL / Fitness)**: $\tau_1 = 42\text{ days}$. Represents long-term aerobic conditioning and muscular resilience built over weeks.
+- **Acute Training Load (ATL / Fatigue)**: $\tau_2 = 7\text{ days}$. Represents acute physiological exhaustion and muscular damage from recent hard sessions.
+- **Training Stress Balance (TSB / Form)**:
+  $$\text{TSB} = \text{CTL} - \text{ATL}$$
+
+### Mathematical Formulation & Decay
+For each day $t$ with daily training stress $W(t)$:
+$$\text{CTL}(t) = \text{CTL}(t-1) \cdot e^{-1/42} + W(t) \cdot (1 - e^{-1/42})$$
+$$\text{ATL}(t) = \text{ATL}(t-1) \cdot e^{-1/7} + W(t) \cdot (1 - e^{-1/7})$$
+
+> [!TIP]
+> **Warm-Up Initialization**: StaminAI eliminates cold-start bias by starting the EWMA calculation from the athlete's earliest recorded historical activity before slicing the most recent 90 days for visual display.
+
+### TSB Performance Bands
+- **`transition` ($\text{TSB} > +25$)**: Transition / Untrained — high freshness but decaying fitness.
+- **`fresh` ($+10 \le \text{TSB} \le +25$)**: Race Ready / Fresh — optimal tapering peak zone for target events.
+- **`neutral` ($-10 \le \text{TSB} < +10$)**: Neutral / Maintenance — balanced training load and recovery.
+- **`optimal` ($-30 \le \text{TSB} < -10$)**: Optimal Training Overload — progressive fitness-building stimulus.
+- **`high_fatigue` ($\text{TSB} < -30$)**: High Fatigue / Overreaching Risk — severe exhaustion; prioritize recovery or non-impact cross-training.
+
+---
+
+## 🫀 Garmin Biometric Baselines & Anomaly Detection
+
+To detect autonomic nervous system (ANS) fatigue and overreaching before injuries occur, StaminAI evaluates daily Garmin health metrics against rolling individual baselines:
+
+$$\text{Normal Band} = \mu \pm 0.75 \times \sigma$$
+
+- **Overnight HRV**: Suppressed values below the $-0.75\sigma$ floor indicate sympathetic stress or incomplete parasympathetic restoration.
+- **Resting Heart Rate (RHR)**: Elevated values above $+0.75\sigma$ indicate systemic fatigue, dehydration, or impending illness.
+- **Integration**: Feeds directly into the daily workout readiness assessor to automatically recommend interval volume reductions or low-impact substitutions.
+
+---
+
 ## 🏃 Run Durability & Injury Prevention Engine
 
 Endurance athletes often have cardiovascular capacity that outpaces their musculoskeletal structural tolerance (tendons, bones, fascia). StaminAI's durability engine assesses run-specific load across five dimensions:

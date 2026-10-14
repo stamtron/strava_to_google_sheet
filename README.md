@@ -11,14 +11,17 @@
 ## 🌟 Key Highlights
 
 - **Multi-Sport Telemetry Sync**: Automated Strava OAuth2 sync with sport corrections (swimming pace `/100m`, pool distance correction, indoor trainer speed estimation).
-- **24/7 Garmin Biometrics**: Automated tracking of Sleep hours, Resting Heart Rate (HRrest), overnight HRV, and daily Body Battery.
+- **24/7 Garmin Biometrics & Baselines**: Automated tracking of Sleep hours, Resting Heart Rate (HRrest), overnight HRV, daily Body Battery, plus statistical baseline normal ranges ($\mu \pm 0.75\sigma$) with autonomic fatigue anomaly detection.
+- **Fitness, Fatigue & Form (Banister EWMA)**: Chronic Training Load (CTL, 42d), Acute Training Load (ATL, 7d), and Training Stress Balance (TSB = CTL - ATL) tracking readiness, freshness, and optimal overload.
+- **Equipment & Shoe Mileage Tracker**: Automated tracking of cumulative mileage per shoe/bike with wear degradation thresholds and retirement alert warnings.
+- **Race-Day Taper & Nutrition Protocols**: Scientific 3-week step-down volume progression, carbohydrate-loading, pre-race fueling schedules, and ambient-scaled electrolyte targets.
 - **Over-the-Air Workout Push**: Parses natural Greek coaching workouts and schedules structured workout steps onto Garmin Connect & Tacx for direct watch sync.
 - **Sports-Science Durability Engine**: ACWR (Acute:Chronic Workload Ratio), week-over-week run ramp rate, run spacing, Foster monotony & strain, and non-impact cross-training substitutions.
 - **80/20 Polarized HR Zones**: Karvonen Heart Rate Reserve 5-Zone boundaries (Z1–Z5) tracking low vs tempo trap vs high-intensity balance.
 - **Weather-Adjusted Pacing**: Real-time Open-Meteo Athens weather factoring thermal penalties (>15°C) and aerodynamic wind drag into workout targets.
 - **Conversational AI Coach**: Floating chat drawer powered by Gemini with 14 tools, long-term memory (SQLite/ChromaDB), web search, and server-enforced injury disclaimers.
 - **Dual Sheet Layout Engine**: Seamlessly syncs to both classic single-row and modern 7-row block Google Sheets layouts with exponential backoff retry.
-- **Daily Telegram Briefings**: Automated morning and evening workout briefs and interactive two-way bot (`/today`, `/tomorrow`, `/recovery`, `/stats`, `/coach`).
+- **Daily & Weekly Telegram Briefings**: Automated morning/evening briefs, Sunday executive weekly digests (`/weekly`, `/form`), and interactive two-way bot (`/today`, `/tomorrow`, `/recovery`, `/stats`, `/gear`, `/coach`).
 
 ---
 
@@ -52,7 +55,8 @@ uv run python main.py                     # View recent Strava activities in ter
 uv run python main.py --sheet             # Sync Strava + Garmin to Google Sheets
 uv run python main.py --backfill          # One-time full Strava history import into SQLite
 uv run python main.py --telegram-next-day # Dispatch tomorrow's brief to Telegram
-uv run pytest                             # Run offline test suite (348+ tests)
+uv run python main.py --telegram-weekly   # Dispatch weekly executive summary to Telegram
+uv run pytest                             # Run offline test suite (357+ tests)
 ```
 
 ---

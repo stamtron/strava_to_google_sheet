@@ -70,6 +70,12 @@ All settings in StaminAI are centralized in [`src/config.py`](../src/config.py) 
 | `INDOOR_BIKE_SPEED_KMH` | `21.0` | Estimated speed (km/h) for indoor trainer rides reporting 0 km |
 | `ACWR_CHRONIC_WEEKS` | `4` | Weeks in the chronic baseline window |
 | `ACWR_MIN_CHRONIC_WEEKS` | `2` | Minimum chronic history required before ACWR ratio is reported |
+| `CTL_DAYS` | `42` | Banister Chronic Training Load (CTL / Fitness) EWMA time constant (days) |
+| `ATL_DAYS` | `7` | Banister Acute Training Load (ATL / Fatigue) EWMA time constant (days) |
+| `TSB_OPTIMAL_MIN` | `-30.0` | Lower TSB boundary for optimal training overload |
+| `TSB_OPTIMAL_MAX` | `-10.0` | Upper TSB boundary for optimal training overload |
+| `TSB_FRESH_MIN` | `10.0` | Lower TSB boundary for race-ready freshness |
+| `TSB_FRESH_MAX` | `25.0` | Upper TSB boundary for race-ready freshness (values above are transition) |
 | `RUN_RAMP_SAFE_PCT` | `10.0` | Safe weekly run volume ramp percentage (the 10% rule) |
 | `RUN_LONG_RUN_MAX_SHARE` | `0.40` | Maximum safe share of weekly run volume in a single long run |
 | `RUN_MIN_REST_DAYS` | `2` | Minimum recommended non-running days per week |
@@ -80,6 +86,7 @@ All settings in StaminAI are centralized in [`src/config.py`](../src/config.py) 
 | `CROSS_TRAINING_AQUA_SHARE` | `0.40` | Aqua-jogging share in suggested cross-training volume |
 | `CROSS_TRAINING_BIKE_SHARE` | `0.60` | Cycling share in suggested cross-training volume |
 | `SHOE_ALERT_KM` | `650` | Mileage threshold to warn for running shoe replacement |
+| `TELEGRAM_WEEKLY_DISPATCH_TIME` | `21:15` | Automated Sunday evening weekly executive brief dispatch time (`HH:MM`) |
 
 ---
 

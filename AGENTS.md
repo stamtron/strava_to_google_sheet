@@ -45,7 +45,7 @@ strava_to_google_sheet/
 │   ├── index.html                # Dashboard + floating AI Coach chat drawer + Garmin modal
 │   ├── styles.css                # Custom glassmorphic design system
 │   └── app.js                    # Chart.js charts, chat drawer & interaction logic
-├── tests/                        # pytest suite (offline, 348+ tests)
+├── tests/                        # pytest suite (offline, 357+ tests)
 │   ├── conftest.py               # Shared synthetic-activity fixtures & tmp_path DB
 │   ├── test_formatting.py        # Unit conversions & sport corrections
 │   ├── test_metrics.py           # Relative effort, weekly rollups, ACWR
@@ -141,6 +141,8 @@ strava_to_google_sheet/
      persists results to `.garmin_cache.json`. Finished weeks are cached
      indefinitely; the in-progress week honours `GARMIN_CACHE_TTL`. Prefer it over
      per-week calls — the dashboard used to issue ~210 sequential requests.
+   - `compute_biometric_baselines` calculates rolling athlete normal bands for HRV and RHR
+     ($\mu \pm 0.75\sigma$) with `evaluate_biometric_status` detecting autonomic fatigue and stress.
 
 6. **[`src/integrations/sheets.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/integrations/sheets.py)**
    - Authenticates via desktop OAuth2 (`credentials.json` -> `gsheets_token.json`).
@@ -157,6 +159,10 @@ strava_to_google_sheet/
      `ACWR_CHRONIC_WEEKS` weeks *preceding* it. The current week is excluded from
      its own baseline; with fewer than `ACWR_MIN_CHRONIC_WEEKS` of history, or a
      zero baseline, `acwr_ratio` is `None` and `zone` is `"unknown"`.
+   - Computes daily **Fitness, Fatigue & Form (Banister Impulse-Response EWMA)** via
+     `calculate_fitness_fatigue`: Chronic Training Load (`CTL`, 42d), Acute Training
+     Load (`ATL`, 7d), and Training Stress Balance (`TSB` = CTL - ATL). Uses historical
+     warmup to prevent day-1 cold-start bias and classifies TSB into standard zones.
    - Computes Karvonen Heart Rate Reserve 5-Zone boundaries (Z1–Z5) and computes
      weekly polarized 80/20 balance (Low intensity Z1-Z2 vs Moderate Z3 vs High Z4-Z5)
      to detect Zone 3 "tempo traps".
@@ -272,13 +278,14 @@ strava_to_google_sheet/
       to Garmin watches and the Tacx Training app.
 
 15. **[`src/integrations/telegram.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/integrations/telegram.py)**
-    - Telegram Bot API integration delivering training alerts, interactive bot commands, and daily workout briefs.
+    - Telegram Bot API integration delivering training alerts, interactive bot commands, daily workout briefs, and weekly executive summaries.
     - `build_daily_brief`: centralized daily brief compiler shared across Telegram dispatch, REST preview endpoints, and the CLI. Reads coach prescriptions from Google Sheets, enriches them with Open-Meteo Athens weather, computes thermal/wind pace adjustments, pairs with daily Garmin recovery biometrics and an AI coach tip, and formats a clean Markdown brief.
+    - `build_weekly_summary`: executive weekly summary compiler aggregating multi-sport volumes, ACWR sweet-spot status, Banister CTL/ATL/TSB form, Garmin health averages & baseline deviations, and shoe wear retirement warnings.
     - `dispatch_next_day_workout` / `dispatch_today_workout`: sends the formatted brief via Telegram Markdown messaging.
-    - Resilient background dispatch scheduler tracks `last_daily_brief_date` in SQLite `sync_state` and uses a `>= target_time` comparison, ensuring dispatches are not skipped if the server boots or restarts slightly past the scheduled dispatch window.
+    - Resilient background dispatch scheduler tracks `last_daily_brief_date` and `last_weekly_brief_date` in SQLite `sync_state` and uses a `>= target_time` comparison, ensuring daily briefs and Sunday evening weekly digests (`TELEGRAM_WEEKLY_DISPATCH_TIME`) are not skipped if the server restarts.
     - `get_telegram_webhook_info()` checks Telegram's server configuration on startup: if an active webhook URL is set, background long-polling is automatically disabled to eliminate 409 Conflict errors.
     - Inbound webhooks enforce strict constant-time verification against `TELEGRAM_WEBHOOK_SECRET` via the `X-Telegram-Bot-Api-Secret-Token` header with fail-closed security.
-    - Includes an interactive command parser (`/today`, `/tomorrow`, `/recovery`, `/compliance`, `/sync`,
+    - Includes an interactive command parser (`/today`, `/tomorrow`, `/weekly`, `/form`, `/recovery`, `/compliance`, `/sync`,
       `/stats`, `/gear`, `/coach`) for direct two-way interactions with the athlete.
 
 16. **[`src/integrations/weather.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/integrations/weather.py)**
@@ -299,8 +306,9 @@ strava_to_google_sheet/
 18. **[`src/analytics/gear.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/analytics/gear.py)**
     - Aggregates cumulative mileage and session counts per `gear_id` from Strava activity
       histories and details.
-    - Flags running shoes approaching or exceeding `SHOE_ALERT_KM` (default 650 km) to
+    - Flags running shoes approaching (`warning` at 85%) or exceeding `SHOE_ALERT_KM` (`retire` at 650 km) to
       prevent midsole deadening and related impact injuries.
+    - Backs the `GET /api/gear` endpoint and the glassmorphic Equipment Monitor card in the Weekly tab.
 
 19. **[`src/analytics/weather_pace.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/analytics/weather_pace.py)**
     - Thermal and aerodynamic running pace correction engine.
@@ -309,14 +317,15 @@ strava_to_google_sheet/
       without cardiovascular overstress.
 
 20. **[`src/api/server.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/api/server.py)**
-    - FastAPI backend exposing 24 REST endpoints:
+    - FastAPI backend exposing REST endpoints:
       - Health & Data: `GET /api/health`, `GET /api/activities`, `GET /api/dashboard`,
         `GET /api/history/status`, `POST /api/history/backfill`, `POST /api/sheet/sync`
+      - Performance & Load: `GET /api/performance` (Banister CTL/ATL/TSB)
       - Weather & Pace: `GET /api/weather`
       - Durability & Biometrics: `GET /api/durability`
       - Compliance & Gear: `GET /api/compliance`, `GET /api/gear`
       - Garmin Workouts: `GET /api/workouts/preview`, `POST /api/workouts/sync`
-      - Notifications: `POST /api/notifications/telegram/next-day`, `POST /api/notifications/telegram/today`, `POST /api/notifications/telegram/webhook`
+      - Notifications: `POST /api/notifications/telegram/next-day`, `POST /api/notifications/telegram/today`, `POST /api/notifications/telegram/weekly`, `POST /api/notifications/telegram/webhook`
       - Strava Webhook: `GET /api/strava/webhook` (verification handshake),
         `POST /api/strava/webhook` (real-time activity ingestion & optional sheet sync)
       - AI Coach & Chat: `POST /api/ai/coach`, `POST /api/ai/chat`,

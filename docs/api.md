@@ -25,6 +25,12 @@ Queries Strava activities from local storage or cached API fetches.
 Returns Athens, Greece (or configured coordinates) daily historical and 7-day forecast weather.
 - **Response**: `{ city, coordinates, forecast: [ { date, temp_max, temp_min, rain_mm, rain_prob, wind_kmh, wmo_code } ] }`.
 
+### `GET /api/performance`
+Calculates and returns Banister Impulse-Response EWMA training metrics:
+- **Response**:
+  - `current`: `{ ctl, atl, tsb, status, status_label, ctl_ramp_7d }`
+  - `series`: `[ { date, day_load, ctl, atl, tsb, status }, ... ]` (90-day time-series)
+
 ---
 
 ## 🏃 Durability, Compliance & Gear
@@ -34,12 +40,13 @@ Returns the run durability assessment, Foster monotony & strain, ramp rate, and 
 - **Response**: `{ risk_level, ramp_rate_pct, spacing, monotony, strain, signals, cross_training }`.
 
 ### `GET /api/compliance`
-Matches Google Sheets planned workouts against completed Strava telemetry for the current week.
+Matches Google Sheets planned workouts against completed Strava telemetry for a specified date or the current week.
+- **Parameters**: `target_date` (optional ISO string e.g. `2026-10-14`).
 - **Response**: `{ overall_score, days: [ { date, planned, actual, delta_km, pace_adherence, score } ] }`.
 
 ### `GET /api/gear`
-Returns aggregated mileage for running shoes and bicycles, including alert states.
-- **Response**: `{ shoes: [ { id, name, distance_km, alert, threshold_km } ], bikes: [ ... ] }`.
+Returns aggregated equipment and shoe usage, cumulative mileage, threshold status, and retirement warnings.
+- **Response**: `{ gear: [ { gear_id, name, gear_type, total_km, threshold_km, remaining_km, activity_count, status, alert } ] }`.
 
 ---
 
@@ -113,8 +120,11 @@ Dispatches tomorrow's workout brief, Athens weather, recovery status, and coach 
 ### `POST /api/notifications/telegram/today`
 Dispatches today's training brief to Telegram.
 
+### `POST /api/notifications/telegram/weekly`
+Dispatches an executive weekly summary digest (volume breakdown, ACWR, Banister CTL/ATL/TSB, Garmin baselines, shoe retirement warnings) to Telegram.
+
 ### `POST /api/notifications/telegram/webhook`
-Receives two-way bot command interactions from Telegram Bot API (`/today`, `/tomorrow`, `/recovery`, `/stats`, `/coach`, etc.).
+Receives two-way bot command interactions from Telegram Bot API (`/today`, `/tomorrow`, `/weekly`, `/form`, `/recovery`, `/stats`, `/gear`, `/coach`, etc.).
 
 ---
 
