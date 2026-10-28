@@ -16,12 +16,30 @@ from typing import Any
 
 import requests
 
+from src.analytics.weather_pace import calculate_weather_pace_adjustment, parse_pace_string_to_sec
 from src.config import (
+    DEFAULT_RUN_PACE_SEC_PER_KM,
+    STRAVA_DETAIL_DELAY_SEC,
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
-    TELEGRAM_DAILY_DISPATCH_TIME,
+    TELEGRAM_DAILY_DISPATCH_FALLBACK,
+    TELEGRAM_DISPATCH_RETRY_BACKOFF_SEC,
+    TELEGRAM_HTTP_TIMEOUT_SEC,
+    TELEGRAM_MAX_MESSAGE_CHARS,
+    TELEGRAM_WEEKLY_DISPATCH_FALLBACK,
 )
-from src.analytics.weather_pace import calculate_weather_pace_adjustment, parse_pace_string_to_sec
+from src.formatting import format_mmss
+from src.status_labels import (
+    HEAT_IMPACT_LABELS,
+    acwr_label,
+    compliance_summary,
+    gear_display_name,
+    readiness_advice,
+    tsb_label,
+    weather_advice,
+    weather_pace_range,
+)
+from src.timeutil import now_local, today_local
 
 logger = logging.getLogger(__name__)
 
@@ -38,13 +56,116 @@ GREEK_DAY_NAMES = {
 # State tracker to prevent duplicate daily auto-dispatches on the same day
 _LAST_DISPATCHED_DATE: str | None = None
 
+# Epoch seconds of the last failed dispatch attempt per kind ("daily"/"weekly"),
+# so a failing send backs off instead of retrying on every bot-loop iteration.
+_LAST_DISPATCH_FAILURE: dict[str, float] = {}
+
+_BOT_URL_TOKEN_RE = re.compile(r"/bot[^/\s]+/")
+
+
+def redact_token(value: Any) -> str:
+    """
+    Strip the bot token from any string (exception text, URLs, response bodies).
+
+    requests embeds the full https://api.telegram.org/bot<TOKEN>/... URL in its
+    exception messages, so anything logged or returned must pass through here.
+    """
+    text = str(value)
+    token = (TELEGRAM_BOT_TOKEN or "").strip()
+    if token:
+        text = text.replace(token, "<redacted>")
+    return _BOT_URL_TOKEN_RE.sub("/bot<redacted>/", text)
+
+
+def _hard_split(line: str, limit: int) -> list[str]:
+    """Split a single overlong line into <= limit pieces, never inside an <html> tag."""
+    pieces = []
+    while len(line) > limit:
+        cut = limit
+        open_idx = line.rfind("<", 0, cut)
+        if open_idx > line.rfind(">", 0, cut) and open_idx > 0:
+            cut = open_idx
+        pieces.append(line[:cut])
+        line = line[cut:]
+    if line:
+        pieces.append(line)
+    return pieces
+
+
+def split_message(text: str, limit: int = TELEGRAM_MAX_MESSAGE_CHARS) -> list[str]:
+    """
+    Split text into chunks of at most `limit` chars for Telegram's 4096-char cap.
+
+    Breaks at newlines where possible so formatting survives; only a single line
+    longer than the limit is hard-split.
+    """
+    if len(text) <= limit:
+        return [text]
+
+    chunks: list[str] = []
+    current = ""
+    for line in text.split("\n"):
+        for piece in _hard_split(line, limit) if len(line) > limit else [line]:
+            if not current:
+                current = piece
+            elif len(current) + 1 + len(piece) <= limit:
+                current += "\n" + piece
+            else:
+                chunks.append(current)
+                current = piece
+    if current:
+        chunks.append(current)
+    return [c for c in chunks if c.strip()]
+
+
+def _send_chunk(url: str, chat_id: str, text: str) -> dict:
+    """Send one <= limit chunk, falling back to plain text if Markdown is rejected."""
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "Markdown",
+    }
+    resp = requests.post(url, json=payload, timeout=TELEGRAM_HTTP_TIMEOUT_SEC)
+    if resp.status_code == 200:
+        return {"success": True, "provider": "telegram", "detail": "Message delivered."}
+
+    # Attempt 2: If Telegram rejects Markdown entities (e.g. unescaped symbols in workouts),
+    # retry as plain text to ensure delivery.
+    if resp.status_code == 400 and "parse" in resp.text.lower():
+        logger.warning(
+            "Telegram markdown parsing failed, retrying as plain text: %s", redact_token(resp.text[:120])
+        )
+        payload_plain = {
+            "chat_id": chat_id,
+            "text": text,
+        }
+        resp_plain = requests.post(url, json=payload_plain, timeout=TELEGRAM_HTTP_TIMEOUT_SEC)
+        if resp_plain.status_code == 200:
+            return {
+                "success": True,
+                "provider": "telegram",
+                "detail": "Message delivered (plain text fallback).",
+            }
+        return {
+            "success": False,
+            "provider": "telegram",
+            "detail": f"Telegram error (HTTP {resp_plain.status_code}): {redact_token(resp_plain.text[:200])}",
+        }
+
+    return {
+        "success": False,
+        "provider": "telegram",
+        "detail": f"Telegram error (HTTP {resp.status_code}): {redact_token(resp.text[:200])}",
+    }
+
 
 def send_telegram_message(message: str, chat_id: str | None = None) -> dict:
     """
     Dispatch a message to athlete's Telegram via Telegram Bot API.
 
-    Falls back to plain text if Markdown entity parsing fails, and falls back to
-    console print if credentials are not configured.
+    Messages over TELEGRAM_MAX_MESSAGE_CHARS are split at newlines and sent in
+    order. Falls back to plain text if Markdown entity parsing fails, and falls
+    back to console print if credentials are not configured.
 
     Returns {'success': bool, 'provider': str, 'detail': str}.
     """
@@ -65,47 +186,26 @@ def send_telegram_message(message: str, chat_id: str | None = None) -> dict:
         }
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
+    chunks = split_message(text)
 
-    # Attempt 1: Send with Markdown formatting
-    payload = {
-        "chat_id": target_chat_id,
-        "text": text,
-        "parse_mode": "Markdown",
-    }
-
-    try:
-        resp = requests.post(url, json=payload, timeout=10.0)
-        if resp.status_code == 200:
-            return {"success": True, "provider": "telegram", "detail": "Message delivered."}
-
-        # Attempt 2: If Telegram rejects Markdown entities (e.g. unescaped symbols in workouts),
-        # retry as plain text to ensure delivery.
-        if resp.status_code == 400 and "parse" in resp.text.lower():
-            logger.warning("Telegram markdown parsing failed, retrying as plain text: %s", resp.text[:120])
-            payload_plain = {
-                "chat_id": target_chat_id,
-                "text": text,
-            }
-            resp_plain = requests.post(url, json=payload_plain, timeout=10.0)
-            if resp_plain.status_code == 200:
-                return {
-                    "success": True,
-                    "provider": "telegram",
-                    "detail": "Message delivered (plain text fallback).",
-                }
-            return {
+    result: dict = {}
+    for idx, chunk in enumerate(chunks, start=1):
+        try:
+            result = _send_chunk(url, target_chat_id, chunk)
+        except Exception as e:
+            result = {
                 "success": False,
                 "provider": "telegram",
-                "detail": f"Telegram error (HTTP {resp_plain.status_code}): {resp_plain.text[:200]}",
+                "detail": f"Telegram request failed: {redact_token(e)}",
             }
+        if not result["success"]:
+            if len(chunks) > 1:
+                result["detail"] = f"Part {idx}/{len(chunks)}: {result['detail']}"
+            return result
 
-        return {
-            "success": False,
-            "provider": "telegram",
-            "detail": f"Telegram error (HTTP {resp.status_code}): {resp.text[:200]}",
-        }
-    except Exception as e:
-        return {"success": False, "provider": "telegram", "detail": f"Telegram request failed: {e}"}
+    if len(chunks) > 1:
+        result["detail"] = f"Message delivered in {len(chunks)} parts."
+    return result
 
 
 def _strip_greek_accents(text: str) -> str:
@@ -173,7 +273,7 @@ def format_next_day_brief(
             lines.append("• " + " | ".join(items))
 
         if readiness_info and readiness_info.get("needs_modulation"):
-            lines.append(f"• {readiness_info.get('modulation_advice')}")
+            lines.append(f"• {readiness_advice(readiness_info)}")
 
     # Weather section
     if weather_info:
@@ -198,20 +298,21 @@ def format_next_day_brief(
         if is_run and t_max is not None:
             # Extract target pace if mentioned e.g. @ 5,15 or @ 5:15
             pace_match = re.search(r"@\s*(\d{1,2}[:,\.]\d{2})", clean_workout)
-            base_pace_sec = parse_pace_string_to_sec(pace_match.group(1)) if pace_match else 315.0  # default 5:15
+            base_pace_sec = parse_pace_string_to_sec(pace_match.group(1)) if pace_match else DEFAULT_RUN_PACE_SEC_PER_KM
             adj = calculate_weather_pace_adjustment(
                 base_pace_sec,
                 temp_c=t_max,
                 wind_kmh=wind,
             )
             if adj.get("needs_adjustment"):
-                lines.append(f"\n🌡️ *Προσαρμογή Ρυθμού ({adj['heat_impact']}):*")
+                lines.append(f"\n🌡️ *Προσαρμογή Ρυθμού ({HEAT_IMPACT_LABELS[adj['heat_impact']]}):*")
                 if pace_match:
-                    lines.append(f"• Στόχος: {pace_match.group(1)} → Προτεινόμενο: *{adj['adjusted_pace_range']}*")
+                    lines.append(f"• Στόχος: {pace_match.group(1)} → Προτεινόμενο: *{weather_pace_range(adj)}*")
                 else:
                     lines.append(f"• Προσαρμογή: *+{adj['adjustment_sec']:.0f}s/χλμ* για αποφυγή καρδιακής επιβάρυνσης")
-                if adj.get("advice"):
-                    lines.append(f"• _{adj['advice']}_")
+                advice = weather_advice(adj)
+                if advice:
+                    lines.append(f"• _{advice}_")
 
     # Coach Tip
     if coach_tip:
@@ -229,9 +330,9 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
     Validates sender against TELEGRAM_CHAT_ID.
     """
     from src.config import TELEGRAM_CHAT_ID
+    from src.integrations.garmin import assess_workout_readiness, get_daily_recovery_metrics
     from src.integrations.sheets import get_planned_workout_for_date
     from src.integrations.weather import get_weather_for_date
-    from src.integrations.garmin import get_daily_recovery_metrics, assess_workout_readiness
 
     clean_text = (command_text or "").strip()
     if not clean_text:
@@ -267,7 +368,7 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
         )
 
     if cmd in ("/today", "today", "σημερα", "/simera"):
-        target_d = date.today()
+        target_d = today_local()
         w_info = get_planned_workout_for_date(target_d)
         weath = get_weather_for_date(target_d)
         rec = get_daily_recovery_metrics(target_d)
@@ -284,7 +385,7 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
         )
 
     if cmd in ("/tomorrow", "/next", "tomorrow", "αυριο", "/avrio"):
-        target_d = date.today() + timedelta(days=1)
+        target_d = today_local() + timedelta(days=1)
         w_info = get_planned_workout_for_date(target_d)
         weath = get_weather_for_date(target_d)
         rec = get_daily_recovery_metrics(target_d)
@@ -302,7 +403,7 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
 
     if cmd in ("/recovery", "recovery", "/health", "/sleep"):
         try:
-            target_d = date.today()
+            target_d = today_local()
             w_info = get_planned_workout_for_date(target_d)
             rec = get_daily_recovery_metrics(target_d)
             readiness = assess_workout_readiness(rec, workout_text=w_info.get("workout_text", ""))
@@ -315,7 +416,7 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
             score = rec.get("recovery_score", 75)
 
             lines = [
-                f"🔋 *Ημερήσια Αποκατάσταση & Ετοιμότητα*",
+                "🔋 *Ημερήσια Αποκατάσταση & Ετοιμότητα*",
                 "━━━━━━━━━━━━━━━━━━━━",
                 f"• Κατάσταση: {icon} *{status.upper()}* (Score: {score}/100)",
             ]
@@ -335,7 +436,7 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
                 lines.append(f"• ⚠️ Σημάδια κόπωσης: _{', '.join(rec['flags'])}_")
 
             lines.append("━━━━━━━━━━━━━━━━━━━━")
-            lines.append(f"💡 *Οδηγία Προπόνησης:*\n{readiness.get('modulation_advice', '')}")
+            lines.append(f"💡 *Οδηγία Προπόνησης:*\n{readiness_advice(readiness)}")
             return "\n".join(lines)
         except Exception as e:
             return f"❌ Σφάλμα ανάκτησης αποκατάστασης: `{e}`"
@@ -344,9 +445,10 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
         try:
             import json
             import os
+
+            from src.analytics.metrics import calculate_fitness_fatigue
             from src.config import ACTIVITIES_CACHE_FILE
             from src.storage.activity_store import get_activities, init_db
-            from src.analytics.metrics import calculate_fitness_fatigue
 
             conn = init_db()
             acts = get_activities(conn, limit=250)
@@ -369,7 +471,7 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
             atl = cur.get("atl", 0.0)
             tsb = cur.get("tsb", 0.0)
             status = cur.get("status", "neutral")
-            label = cur.get("status_label", "Neutral")
+            label = tsb_label(cur.get("status"))
             ramp = cur.get("ctl_ramp_7d", 0.0)
 
             # Visual indicator for TSB
@@ -419,15 +521,15 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
     if cmd in ("/compliance", "compliance", "/execution"):
         try:
             parts = clean_text.split()
-            target_str = parts[1] if len(parts) > 1 else date.today().isoformat()
+            target_str = parts[1] if len(parts) > 1 else today_local().isoformat()
             t_date = date.fromisoformat(target_str)
         except ValueError:
             return "⚠️ Μη έγκυρη ημερομηνία. Χρησιμοποίησε `/compliance YYYY-MM-DD` (π.χ. `/compliance 2026-09-08`)."
 
         try:
+            from src.analytics.compliance import evaluate_daily_compliance
             from src.integrations.sheets import get_planned_workout_for_date
             from src.storage.activity_store import get_activities, init_db
-            from src.analytics.compliance import evaluate_daily_compliance
 
             w_info = get_planned_workout_for_date(t_date)
             planned_text = w_info.get("workout_text", "")
@@ -452,38 +554,54 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
             if matches:
                 lines.append("• Εκτελεσθείσες Δραστηριότητες:")
                 for m in matches:
-                    st = m.get("status", "unknown").upper()
-                    st_icon = "✅" if "COMPLIANT" in st else ("🟡" if "PARTIAL" in st else "ℹ️")
-                    lines.append(f"  {st_icon} *{m.get('sport')}*: {m.get('actual_distance_km', 0):.1f}km @ {m.get('actual_pace', 'N/A')} ({st})")
+                    st = m.get("status", "unknown")
+                    st_icon = {"spot_on": "✅", "overreach": "🟡", "underreach": "🟡", "missed": "❌"}.get(st, "ℹ️")
+                    pace_sec = m.get("actual_pace_sec")
+                    unit = "/100μ" if m.get("pace_unit") == "per_100m" else "/χλμ"
+                    pace = f"{format_mmss(pace_sec)}{unit}" if pace_sec else "N/A"
+                    lines.append(f"  {st_icon} *{m.get('sport')}*: {m.get('actual_km') or 0:.1f}km @ {pace} ({st})")
             else:
                 lines.append("• Καμία δραστηριότητα Strava δεν ταυτοποιήθηκε για αυτή την ημέρα.")
 
             lines.append("━━━━━━━━━━━━━━━━━━━━")
-            lines.append(f"📝 {comp.get('summary', '')}")
+            lines.append(f"📝 {compliance_summary(comp)}")
             return "\n".join(lines)
         except Exception as e:
             return f"❌ Σφάλμα αξιολόγησης συμμόρφωσης: `{e}`"
 
     if cmd in ("/sync", "sync", "/sheets"):
         try:
-            from src.integrations.strava import fetch_activities, fetch_details_for_activities, get_access_token
             from src.integrations.sheets import write_to_sheet
+            from src.integrations.strava import fetch_activities, fetch_details_for_activities, get_access_token
+            from src.storage.activity_store import get_details, init_db, upsert_activities, upsert_details
 
             token = get_access_token(interactive=False)
             summaries = fetch_activities(token, per_page=30)
-            details = fetch_details_for_activities(token, summaries, delay_sec=0.5)
+            conn = init_db()
+            try:
+                # Known details are reused so re-syncing the same window costs no
+                # extra Strava calls (the main defence against the rate limit).
+                details = fetch_details_for_activities(
+                    token, summaries, known_details=get_details(conn), delay_sec=STRAVA_DETAIL_DELAY_SEC
+                )
+                upsert_activities(conn, summaries)
+                if details:
+                    upsert_details(conn, details)
+            finally:
+                conn.close()
             write_to_sheet(summaries, details)
             return f"✅ *Συγχρονισμός ολοκληρώθηκε!*\nΕνημερώθηκαν τα κελιά στο Google Sheets για τις τελευταίες {len(summaries)} δραστηριότητες."
         except Exception as e:
-            return f"❌ *Σφάλμα συγχρονισμού:* `{e}`"
+            return f"❌ *Σφάλμα συγχρονισμού:* `{redact_token(e)}`"
 
     if cmd in ("/stats", "stats", "/volume"):
         try:
-            import os
             import json
+            import os
+
+            from src.analytics.metrics import calculate_acwr, process_activities_into_weeks
             from src.config import ACTIVITIES_CACHE_FILE
             from src.storage.activity_store import get_activities, init_db
-            from src.analytics.metrics import calculate_acwr, process_activities_into_weeks
 
             conn = init_db()
             acts = get_activities(conn, limit=200)
@@ -535,11 +653,12 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
 
     if cmd in ("/gear", "/shoes", "shoes", "gear"):
         try:
-            import os
             import json
+            import os
+
+            from src.analytics.gear import extract_gear_summary
             from src.config import ACTIVITIES_CACHE_FILE
             from src.storage.activity_store import get_activities, get_details, init_db
-            from src.analytics.gear import extract_gear_summary
 
             conn = init_db()
             acts = get_activities(conn, limit=250)
@@ -563,7 +682,7 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
             for g in summary:
                 alert_icon = "⚠️" if g["alert"] else ("🟡" if g["status"] == "warning" else "🟢")
                 lines.append(
-                    f"{alert_icon} *{g['name']}* ({g['gear_type']}):\n"
+                    f"{alert_icon} *{gear_display_name(g)}* ({g['gear_type']}):\n"
                     f"   • Χιλιόμετρα: *{g['total_km']:.1f} km* / Όριο: {g['threshold_km']:.0f} km\n"
                     f"   • Υπολειπόμενα: *{g['remaining_km']:.1f} km* ({g['activity_count']} προπονήσεις)"
                 )
@@ -599,13 +718,13 @@ def get_telegram_webhook_info() -> dict | None:
         return None
     url = f"https://api.telegram.org/bot{token}/getWebhookInfo"
     try:
-        resp = requests.get(url, timeout=10)
+        resp = requests.get(url, timeout=TELEGRAM_HTTP_TIMEOUT_SEC)
         if resp.status_code == 200:
             data = resp.json()
             if data.get("ok"):
                 return data.get("result")
     except Exception as e:
-        logger.warning("Could not check Telegram webhook info: %s", e)
+        logger.warning("Could not check Telegram webhook info: %s", redact_token(e))
     return None
 
 
@@ -633,24 +752,37 @@ def poll_telegram_updates(offset: int = 0, timeout: int = 20) -> tuple[int, list
                 "Telegram polling conflict (HTTP 409): a webhook is active or another bot instance is polling."
             )
         else:
-            logger.warning("Telegram polling returned HTTP %d: %s", resp.status_code, resp.text[:120])
+            logger.warning(
+                "Telegram polling returned HTTP %d: %s", resp.status_code, redact_token(resp.text[:120])
+            )
     except Exception as e:
-        logger.warning("Telegram polling transient error: %s", e)
+        logger.warning("Telegram polling transient error: %s", redact_token(e))
 
     return offset, []
 
 
 def process_incoming_update(update: dict) -> None:
-    """Process a single Telegram update message."""
-    message = update.get("message") or update.get("edited_message")
+    """
+    Process a single Telegram update message.
+
+    Edits are ignored (re-running a command because a typo was fixed would
+    re-trigger syncs), and updates from any chat other than TELEGRAM_CHAT_ID are
+    dropped silently so the bot never reveals itself to strangers.
+    """
+    message = update.get("message")
     if not message:
         return
 
     chat = message.get("chat") or {}
-    chat_id = str(chat.get("id", ""))
+    chat_id = str(chat.get("id", "")).strip()
     text = message.get("text", "")
 
     if not text:
+        return
+
+    configured_chat_id = (TELEGRAM_CHAT_ID or "").strip()
+    if not configured_chat_id or chat_id != configured_chat_id:
+        logger.warning("Ignoring Telegram update from unauthorized chat_id %s", chat_id or "<none>")
         return
 
     reply = handle_telegram_command(text, chat_id=chat_id)
@@ -726,15 +858,16 @@ def build_weekly_summary(week_key: str | None = None) -> tuple[str, dict]:
     """
     import json
     import os
-    from src.config import ACTIVITIES_CACHE_FILE
-    from src.storage.activity_store import get_activities, get_details, init_db
+
+    from src.analytics.gear import extract_gear_summary
     from src.analytics.metrics import (
         calculate_acwr,
         calculate_fitness_fatigue,
         process_activities_into_weeks,
     )
+    from src.config import ACTIVITIES_CACHE_FILE
     from src.integrations.garmin import _load_garmin_cache, compute_biometric_baselines
-    from src.analytics.gear import extract_gear_summary
+    from src.storage.activity_store import get_activities, get_details, init_db
 
     conn = init_db()
     acts = get_activities(conn, limit=250)
@@ -786,12 +919,12 @@ def build_weekly_summary(week_key: str | None = None) -> tuple[str, dict]:
 
     ratio = acwr.get("acwr_ratio")
     acwr_str = f"{ratio:.2f}" if ratio is not None else "N/A"
-    acwr_zone = str(acwr.get("status", "Unknown")).split("(")[0].strip()
+    acwr_zone = acwr_label(acwr.get("status"), short=True)
 
     tsb = cur_perf.get("tsb", 0.0)
     ctl = cur_perf.get("ctl", 0.0)
     atl = cur_perf.get("atl", 0.0)
-    form_status = cur_perf.get("status_label", "Neutral")
+    form_status = tsb_label(cur_perf.get("status"))
 
     lines = [
         "📊 *ΕΒΔΟΜΑΔΙΑΙΑ ΑΝΑΣΚΟΠΗΣΗ STAMINAI*",
@@ -828,7 +961,7 @@ def build_weekly_summary(week_key: str | None = None) -> tuple[str, dict]:
     if alerts:
         lines.append("\n👟 *Ειδοποιήσεις Εξοπλισμού:*")
         for g in alerts:
-            lines.append(f"• ⚠️ *{g['name']}:* {g['total_km']:.0f}km / {g['threshold_km']:.0f}km (απομένουν {g['remaining_km']:.0f}km)")
+            lines.append(f"• ⚠️ *{gear_display_name(g)}:* {g['total_km']:.0f}km / {g['threshold_km']:.0f}km (απομένουν {g['remaining_km']:.0f}km)")
 
     lines.append("\n━━━━━━━━━━━━━━━━━━━━")
     lines.append("🚀 Έτοιμοι για τη νέα προπονητική εβδομάδα!")
@@ -846,72 +979,104 @@ def build_weekly_summary(week_key: str | None = None) -> tuple[str, dict]:
     return text, meta
 
 
+def _dispatch_backoff_active(kind: str) -> bool:
+    """True while a failed `kind` dispatch is still inside its retry backoff window."""
+    failed_at = _LAST_DISPATCH_FAILURE.get(kind)
+    return failed_at is not None and (time.time() - failed_at) < TELEGRAM_DISPATCH_RETRY_BACKOFF_SEC
+
+
+def _record_dispatch_failure(kind: str, detail: Any) -> None:
+    _LAST_DISPATCH_FAILURE[kind] = time.time()
+    logger.warning(
+        "%s Telegram dispatch failed (retrying in %ss): %s",
+        kind.capitalize(),
+        TELEGRAM_DISPATCH_RETRY_BACKOFF_SEC,
+        redact_token(detail),
+    )
+
+
 def run_daily_dispatch_check() -> bool:
     """
     Check if the current Athens time has reached TELEGRAM_DAILY_DISPATCH_TIME,
     and if so, automatically send tomorrow's workout briefing once per day.
     On Sunday evenings after TELEGRAM_WEEKLY_DISPATCH_TIME, also dispatches
     the executive weekly recap.
+
+    A failed attempt (send error or exception while building the brief) is
+    retried only after TELEGRAM_DISPATCH_RETRY_BACKOFF_SEC, not on every loop.
     """
     global _LAST_DISPATCHED_DATE
     from src.config import TELEGRAM_DAILY_DISPATCH_TIME, TELEGRAM_WEEKLY_DISPATCH_TIME
     from src.storage.activity_store import get_sync_state, init_db, set_sync_state
 
-    now_dt = datetime.now()
+    now_dt = now_local()
     today_str = now_dt.strftime("%Y-%m-%d")
     current_hhmm = now_dt.strftime("%H:%M")
 
-    target_time = (TELEGRAM_DAILY_DISPATCH_TIME or "20:30").strip()
-    weekly_target_time = (TELEGRAM_WEEKLY_DISPATCH_TIME or "21:00").strip()
+    target_time = (TELEGRAM_DAILY_DISPATCH_TIME or TELEGRAM_DAILY_DISPATCH_FALLBACK).strip()
+    weekly_target_time = (TELEGRAM_WEEKLY_DISPATCH_TIME or TELEGRAM_WEEKLY_DISPATCH_FALLBACK).strip()
 
     conn = None
     last_sent = _LAST_DISPATCHED_DATE
     last_weekly_sent = None
-    try:
-        conn = init_db()
-        persisted = get_sync_state(conn, "telegram_last_dispatched_date")
-        if persisted:
-            last_sent = persisted
-        last_weekly_sent = get_sync_state(conn, "telegram_last_weekly_dispatched_date")
-    except Exception as e:
-        logger.warning("Could not read dispatch sync state from store: %s", e)
-
     dispatched_any = False
+    try:
+        try:
+            conn = init_db()
+            persisted = get_sync_state(conn, "telegram_last_dispatched_date")
+            if persisted:
+                last_sent = persisted
+            last_weekly_sent = get_sync_state(conn, "telegram_last_weekly_dispatched_date")
+        except Exception as e:
+            logger.warning("Could not read dispatch sync state from store: %s", e)
 
-    # 1. Daily Next-Day Workout Briefing
-    if current_hhmm >= target_time and last_sent != today_str:
-        logger.info("Executing daily automated Telegram dispatch for tomorrow's workout...")
-        target_date = date.today() + timedelta(days=1)
-        brief, _ = build_daily_brief(target_date)
-        res = send_telegram_message(brief)
-        if res.get("success"):
-            _LAST_DISPATCHED_DATE = today_str
-            if conn:
-                try:
-                    set_sync_state(conn, "telegram_last_dispatched_date", today_str)
-                except Exception as e:
-                    logger.warning("Could not persist telegram_last_dispatched_date: %s", e)
-            logger.info("Daily Telegram dispatch sent successfully for %s", target_date)
-            dispatched_any = True
-        else:
-            logger.warning("Daily Telegram dispatch delivery failed: %s", res.get("detail"))
+        # 1. Daily Next-Day Workout Briefing
+        if current_hhmm >= target_time and last_sent != today_str and not _dispatch_backoff_active("daily"):
+            logger.info("Executing daily automated Telegram dispatch for tomorrow's workout...")
+            target_date = today_local() + timedelta(days=1)
+            try:
+                brief, _ = build_daily_brief(target_date)
+                res = send_telegram_message(brief)
+            except Exception as e:
+                res = {"success": False, "detail": f"{type(e).__name__}: {e}"}
+            if res.get("success"):
+                _LAST_DISPATCHED_DATE = today_str
+                _LAST_DISPATCH_FAILURE.pop("daily", None)
+                if conn:
+                    try:
+                        set_sync_state(conn, "telegram_last_dispatched_date", today_str)
+                    except Exception as e:
+                        logger.warning("Could not persist telegram_last_dispatched_date: %s", e)
+                logger.info("Daily Telegram dispatch sent successfully for %s", target_date)
+                dispatched_any = True
+            else:
+                _record_dispatch_failure("daily", res.get("detail"))
 
-    # 2. Sunday Evening Weekly Summary Briefing (weekday 6 == Sunday)
-    if now_dt.weekday() == 6 and current_hhmm >= weekly_target_time and last_weekly_sent != today_str:
-        logger.info("Executing weekly Sunday automated Telegram summary dispatch...")
-        weekly_brief, _ = build_weekly_summary()
-        w_res = send_telegram_message(weekly_brief)
-        if w_res.get("success"):
-            if conn:
-                try:
-                    set_sync_state(conn, "telegram_last_weekly_dispatched_date", today_str)
-                except Exception as e:
-                    logger.warning("Could not persist telegram_last_weekly_dispatched_date: %s", e)
-            logger.info("Weekly Sunday Telegram summary sent successfully.")
-            dispatched_any = True
-        else:
-            logger.warning("Weekly Sunday Telegram dispatch delivery failed: %s", w_res.get("detail"))
-
-    if conn:
-        conn.close()
+        # 2. Sunday Evening Weekly Summary Briefing (weekday 6 == Sunday)
+        if (
+            now_dt.weekday() == 6
+            and current_hhmm >= weekly_target_time
+            and last_weekly_sent != today_str
+            and not _dispatch_backoff_active("weekly")
+        ):
+            logger.info("Executing weekly Sunday automated Telegram summary dispatch...")
+            try:
+                weekly_brief, _ = build_weekly_summary()
+                w_res = send_telegram_message(weekly_brief)
+            except Exception as e:
+                w_res = {"success": False, "detail": f"{type(e).__name__}: {e}"}
+            if w_res.get("success"):
+                _LAST_DISPATCH_FAILURE.pop("weekly", None)
+                if conn:
+                    try:
+                        set_sync_state(conn, "telegram_last_weekly_dispatched_date", today_str)
+                    except Exception as e:
+                        logger.warning("Could not persist telegram_last_weekly_dispatched_date: %s", e)
+                logger.info("Weekly Sunday Telegram summary sent successfully.")
+                dispatched_any = True
+            else:
+                _record_dispatch_failure("weekly", w_res.get("detail"))
+    finally:
+        if conn:
+            conn.close()
     return dispatched_any

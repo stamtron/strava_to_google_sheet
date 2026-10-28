@@ -6,16 +6,18 @@ dynamically detects Old vs New weekly layouts,
 and writes formatted Strava & Garmin training data.
 """
 
+import json
 import logging
 import os
 import re
+import socket
+import sqlite3
 import sys
 import time
 import webbrowser
 from datetime import date, datetime, timedelta
 
-logger = logging.getLogger(__name__)
-
+import httplib2
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -23,13 +25,17 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from src.analytics.metrics import normalize_rpe
 from src.config import (
     BIKE_SPORTS,
     CREDENTIALS_FILE,
+    FIRST_WEEK_ROW,
+    GOOGLE_SHEET_ID,
     GSHEETS_MAX_RETRIES,
+    GSHEETS_RETRY_DELAY_SEC,
     GSHEETS_SCOPES,
     GSHEETS_TOKEN_FILE,
-    GOOGLE_SHEET_ID,
+    PLAN_LAST_ROW,
     RUN_SPORTS,
     SHEET_NAME,
     STRENGTH_SPORTS,
@@ -41,32 +47,50 @@ from src.formatting import (
     format_duration_short_el,
     format_pace,
 )
-from src.analytics.metrics import normalize_rpe
 from src.integrations.garmin import get_weekly_health_summaries
-import logging
+from src.storage.atomic_file import write_json_atomic
 
 logger = logging.getLogger(__name__)
 
+# Plan rows read from Column A: from the first week block to the last plan row.
+PLAN_COL_A_RANGE = f"'{SHEET_NAME}'!A{FIRST_WEEK_ROW}:A{PLAN_LAST_ROW}"
 
-def execute_with_retry(request, retries: int = GSHEETS_MAX_RETRIES, delay_sec: float = 1.5):
-    """Execute a Google API request with automatic retries on transient errors."""
-    for attempt in range(retries):
+_TRANSIENT_HTTP_STATUSES = (500, 502, 503, 504, 429)
+# Transport-level failures (timeouts, resets, TLS/DNS hiccups) are as transient
+# as a 503. OSError already covers socket.timeout/ConnectionError; they are
+# listed for clarity.
+_TRANSIENT_TRANSPORT_ERRORS = (socket.timeout, ConnectionError, OSError, httplib2.HttpLib2Error)
+
+
+def execute_with_retry(request, retries: int = GSHEETS_MAX_RETRIES, delay_sec: float = GSHEETS_RETRY_DELAY_SEC):
+    """
+    Execute a Google API request with automatic retries on transient errors.
+
+    The request always executes at least once, even with retries <= 0.
+    """
+    attempts = max(1, int(retries))
+    for attempt in range(attempts):
         try:
             return request.execute()
         except HttpError as e:
             status = getattr(e.resp, "status", None)
-            if status in (500, 502, 503, 504, 429) and attempt < retries - 1:
-                sleep_time = delay_sec * (2 ** attempt)
-                logger.warning(
-                    "Google Sheets API transient error (HTTP %s). Retrying in %.1fs (attempt %d/%d)...",
-                    status,
-                    sleep_time,
-                    attempt + 1,
-                    retries,
-                )
-                time.sleep(sleep_time)
-                continue
-            raise
+            if status not in _TRANSIENT_HTTP_STATUSES or attempt >= attempts - 1:
+                raise
+            reason = f"HTTP {status}"
+        except _TRANSIENT_TRANSPORT_ERRORS as e:
+            if attempt >= attempts - 1:
+                raise
+            reason = type(e).__name__
+        sleep_time = delay_sec * (2 ** attempt)
+        logger.warning(
+            "Google Sheets API transient error (%s). Retrying in %.1fs (attempt %d/%d)...",
+            reason,
+            sleep_time,
+            attempt + 1,
+            attempts,
+        )
+        time.sleep(sleep_time)
+    return None  # unreachable: the final attempt either returns or raises
 
 
 def _get_week_start(d: date) -> date:
@@ -105,8 +129,11 @@ def parse_date_range(text: str) -> tuple[date, date] | None:
     if m2:
         d1, m1, d2, m2_m, yr = int(m2.group(1)), int(m2.group(2)), int(m2.group(3)), int(m2.group(4)), int(m2.group(5))
         year = 2000 + yr if yr < 100 else yr
+        # The year belongs to the end date: in "29/12-4/1/26" the week starts
+        # in December of the previous year.
+        start_year = year - 1 if m1 > m2_m else year
         try:
-            start = date(year, m1, d1)
+            start = date(start_year, m1, d1)
             end = date(year, m2_m, d2)
             return start, end
         except ValueError:
@@ -156,8 +183,7 @@ def get_sheets_service(interactive: bool = True):
                 access_type="offline",
             )
 
-        with open(GSHEETS_TOKEN_FILE, "w") as token:
-            token.write(creds.to_json())
+        write_json_atomic(GSHEETS_TOKEN_FILE, json.loads(creds.to_json()))
 
     return build("sheets", "v4", credentials=creds)
 
@@ -284,7 +310,7 @@ def _strip_greek_accents(text: str) -> str:
     return text
 
 
-def inspect_week_blocks(col_a_rows: list[list[str]], start_row: int = 13) -> dict[int, dict]:
+def inspect_week_blocks(col_a_rows: list[list[str]], start_row: int = FIRST_WEEK_ROW) -> dict[int, dict]:
     """
     Parse week blocks from Column A data.
     Returns a dict mapping week_start_row -> {
@@ -360,8 +386,63 @@ def inspect_week_blocks(col_a_rows: list[list[str]], start_row: int = 13) -> dic
     return blocks
 
 
+def _activity_date(act: dict) -> date | None:
+    raw_dt = act.get("start_date_local", "")
+    return date.fromisoformat(raw_dt[:10]) if raw_dt else None
+
+
+def _load_week_activities_from_store(week_monday: date, week_sunday: date) -> list[dict] | None:
+    """Stored activities for one Mon-Sun week, or None if the store is unavailable."""
+    from src.storage.activity_store import get_activities, init_db
+
+    try:
+        conn = init_db()
+    except (sqlite3.Error, OSError) as e:
+        logger.warning("Activity store unavailable for weekly totals: %s", e)
+        return None
+    try:
+        return get_activities(conn, since=week_monday, until=week_sunday)
+    except (sqlite3.Error, ValueError) as e:
+        logger.warning("Could not read week %s from the activity store: %s", week_monday, e)
+        return None
+    finally:
+        conn.close()
+
+
+def _week_activities_for_totals(
+    batch_week_activities: list[dict],
+    week_monday: date,
+    week_sunday: date,
+    batch_oldest: date | None,
+) -> list[dict] | None:
+    """
+    Every activity of the week, for computing the weekly totals.
+
+    The sync batch is only the most recent N activities, so on its own it can
+    cut a week in half and the totals would undercount. The local store holds
+    the full history, so its week is merged with the batch (batch wins by id,
+    being the freshest copy). Without the store, the batch is trusted only if it
+    reaches back before the week's Monday; otherwise None means "skip totals".
+    """
+    stored = _load_week_activities_from_store(week_monday, week_sunday)
+    if stored is not None:
+        merged = {str(a.get("id")): a for a in stored}
+        merged.update({str(a.get("id")): a for a in batch_week_activities})
+        return list(merged.values())
+    if batch_oldest is not None and batch_oldest < week_monday:
+        return batch_week_activities
+    return None
+
+
 def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
-    """Write Strava and Garmin data into Google Sheets."""
+    """
+    Write Strava and Garmin data into Google Sheets.
+
+    When `details.incomplete` is set (see strava.DetailsResult: the detail fetch
+    stopped on a rate limit or network error), day cells containing an activity
+    without details are left untouched rather than overwritten with
+    HR/calorie-less text; the next sync fills them in.
+    """
     if not activities:
         logger.info("No activities to write.")
         return
@@ -371,6 +452,7 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
 
     if details is None:
         details = {}
+    details_incomplete = bool(getattr(details, "incomplete", False))
 
     service = get_sheets_service()
     sheet = service.spreadsheets()
@@ -381,21 +463,21 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
     result = execute_with_retry(
         sheet.values().get(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range=f"'{SHEET_NAME}'!A13:A120",
+            range=PLAN_COL_A_RANGE,
         )
     )
     col_a = result.get("values", [])
 
     week_map = {}
     for idx, row in enumerate(col_a):
-        row_num = 13 + idx
+        row_num = FIRST_WEEK_ROW + idx
         val = row[0] if row else ""
         date_range = parse_date_range(val)
         if date_range:
-            week_start, week_end = date_range
+            week_start, _week_end = date_range
             week_map[week_start] = row_num
 
-    week_blocks = inspect_week_blocks(col_a, start_row=13)
+    week_blocks = inspect_week_blocks(col_a, start_row=FIRST_WEEK_ROW)
 
     # Group activities by day
     activities_by_day = {}
@@ -449,7 +531,7 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
 
     # Read existing cell contents
     read_ranges = []
-    for target_date, day_activities, week_start_row, target_row, col, layout in cell_info:
+    for _date, _acts, _week_row, target_row, col, _layout in cell_info:
         read_ranges.append(f"'{SHEET_NAME}'!{col}{target_row}")
 
     for r in unique_week_rows:
@@ -484,7 +566,18 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
     SEPARATOR = "\n\n── Strava Data ──\n"
     updates = []
 
-    for target_date, day_activities, week_start_row, target_row, col, layout in cell_info:
+    for target_date, day_activities, _week_row, target_row, col, layout in cell_info:
+        if details_incomplete and any(
+            not (details.get(a.get("id")) or details.get(str(a.get("id")))) for a in day_activities
+        ):
+            logger.warning(
+                "Skipping cell %s%s (%s): activity details incomplete after an interrupted fetch",
+                col,
+                target_row,
+                target_date,
+            )
+            continue
+
         formatted = format_activities_for_cell(day_activities, details)
         existing = get_existing_value(col, target_row)
 
@@ -539,14 +632,25 @@ def write_to_sheet(activities: list[dict], details: dict | None = None) -> None:
         {monday.isoformat(): (monday, sunday) for monday, sunday in week_span_by_row.values()}
     )
 
+    batch_dates = [d for d in (_activity_date(a) for a in activities) if d is not None]
+    batch_oldest = min(batch_dates) if batch_dates else None
+
     # Update weekly totals
     for r in unique_week_rows:
         block = week_blocks.get(r, {"layout": "old", "summary_row": r})
         layout = block["layout"]
-        row_activities = activities_by_row[r]
+        week_monday, week_sunday = week_span_by_row[r]
+        row_activities = _week_activities_for_totals(activities_by_row[r], week_monday, week_sunday, batch_oldest)
+        if row_activities is None:
+            logger.warning(
+                "Skipping weekly totals for %s → %s: sync batch does not cover the whole week "
+                "and the activity store is unavailable",
+                week_monday,
+                week_sunday,
+            )
+            continue
         run_dist, run_time, bike_dist, bike_time, bike_elev, swim_dist_m, swim_time, strength_time = calculate_weekly_totals(row_activities)
 
-        week_monday, week_sunday = week_span_by_row[r]
         health_summary = garmin_by_week.get(week_monday.isoformat())
 
         sleep_val = f"{health_summary['total_sleep_h']:.1f}h" if health_summary and health_summary.get("total_sleep_h") else None
@@ -735,14 +839,14 @@ def get_planned_workout_for_date(target_date: date) -> dict:
         result = execute_with_retry(
             sheet.values().get(
                 spreadsheetId=GOOGLE_SHEET_ID,
-                range=f"'{SHEET_NAME}'!A13:A150",
+                range=PLAN_COL_A_RANGE,
             )
         )
         col_a = result.get("values", [])
 
         week_map = {}
         for idx, row in enumerate(col_a):
-            row_num = 13 + idx
+            row_num = FIRST_WEEK_ROW + idx
             val = row[0] if row else ""
             date_range = parse_date_range(val)
             if date_range:
@@ -762,7 +866,7 @@ def get_planned_workout_for_date(target_date: date) -> dict:
         col_letters = ["B", "C", "D", "E", "F", "G", "H"]
         col = col_letters[target_date.weekday()]
 
-        week_blocks = inspect_week_blocks(col_a, start_row=13)
+        week_blocks = inspect_week_blocks(col_a, start_row=FIRST_WEEK_ROW)
         block = week_blocks.get(r, {"layout": "old", "program_row": r})
         is_new = block["layout"] == "new"
 

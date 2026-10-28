@@ -2,8 +2,6 @@
 
 from datetime import date
 
-from tests.conftest import make_activity
-
 from src.storage.activity_store import (
     count_activities,
     date_range,
@@ -14,6 +12,7 @@ from src.storage.activity_store import (
     upsert_activities,
     upsert_details,
 )
+from tests.conftest import make_activity
 
 
 def test_roundtrip_preserves_the_full_summary(conn, activities):

@@ -8,18 +8,16 @@ steps (warmup, intervals, pace/power targets, cooldown) using Gemini AI
 so they sync directly to Garmin Watches and the Tacx Training App.
 """
 
-from datetime import date, datetime, timedelta
 import json
 import logging
 import re
-import time
+from datetime import date, timedelta
 from typing import Any
 
 from garminconnect.workout import (
     ConditionType,
     CyclingWorkout,
     ExecutableStep,
-    RepeatGroup,
     RunningWorkout,
     SportType,
     StepType,
@@ -28,10 +26,15 @@ from garminconnect.workout import (
 )
 
 from src.config import (
+    DEFAULT_RUN_PACE_SEC_PER_KM,
+    FIRST_WEEK_ROW,
+    GARMIN_WORKOUT_NAME_MAX_CHARS,
     GEMINI_API_KEY,
     GEMINI_MODELS,
     GOOGLE_SHEET_ID,
+    PLAN_LAST_ROW,
     SHEET_NAME,
+    WORKOUT_SPEED_TOLERANCE_MS,
 )
 from src.integrations.garmin import get_garmin_client
 from src.integrations.sheets import (
@@ -40,8 +43,11 @@ from src.integrations.sheets import (
     inspect_week_blocks,
     parse_date_range,
 )
+from src.timeutil import today_local
 
 logger = logging.getLogger(__name__)
+
+_PLAN_COL_A_RANGE = f"A{FIRST_WEEK_ROW}:A{PLAN_LAST_ROW}"
 
 # Keywords for sport detection
 SWIM_KEYWORDS = [
@@ -121,7 +127,7 @@ def speed_ms_to_pace_str(speed_ms: float) -> str:
     """Convert meters/sec speed to min:sec /km format."""
     if speed_ms <= 0:
         return "-:--"
-    total_sec = int(round(1000.0 / speed_ms))
+    total_sec = round(1000.0 / speed_ms)
     mins = total_sec // 60
     secs = total_sec % 60
     return f"{mins}:{secs:02d}"
@@ -192,27 +198,27 @@ def extract_week_coach_workouts(week_offset: int = 0) -> dict[str, Any]:
     res = execute_with_retry(
         sheet.values().get(
             spreadsheetId=GOOGLE_SHEET_ID,
-            range=f"'{SHEET_NAME}'!A13:A120",
+            range=f"'{SHEET_NAME}'!{_PLAN_COL_A_RANGE}",
         )
     )
     col_a = res.get("values", [])
 
     weeks: list[tuple[int, date, date]] = []
     for idx, row in enumerate(col_a):
-        row_num = 13 + idx
+        row_num = FIRST_WEEK_ROW + idx
         val = row[0] if row else ""
         date_range = parse_date_range(val)
         if date_range:
             weeks.append((row_num, date_range[0], date_range[1]))
 
     if not weeks:
-        raise ValueError(f"No week date ranges found in sheet '{SHEET_NAME}'!A13:A120")
+        raise ValueError(f"No week date ranges found in sheet '{SHEET_NAME}'!{_PLAN_COL_A_RANGE}")
 
-    today = date.today()
+    today = today_local()
 
     # Find the current week index
     current_idx = None
-    for idx, (r, w_start, w_end) in enumerate(weeks):
+    for idx, (_row, w_start, w_end) in enumerate(weeks):
         if w_start <= today <= w_end:
             current_idx = idx
             break
@@ -228,7 +234,7 @@ def extract_week_coach_workouts(week_offset: int = 0) -> dict[str, Any]:
     # 2. Find the workout row:
     # In New block layout: Column A contains 'ΠΡΟΓΡΑΜΜΑ'.
     # In Old single-row layout: target_row itself contains the workouts.
-    week_blocks = inspect_week_blocks(col_a, start_row=13)
+    week_blocks = inspect_week_blocks(col_a, start_row=FIRST_WEEK_ROW)
     block = week_blocks.get(target_row, {"layout": "old", "program_row": target_row})
     is_new_layout = block["layout"] == "new"
     workout_row = block["program_row"] if is_new_layout else target_row
@@ -355,11 +361,11 @@ def parse_workout_with_heuristics(sport_type: str, coach_text: str, day_name: st
                 "target_type": "speed" if speed_ms else "no_target",
             }
             if speed_ms:
-                interval_step["target_value_low"] = round(speed_ms - 0.10, 2)
-                interval_step["target_value_high"] = round(speed_ms + 0.10, 2)
+                interval_step["target_value_low"] = round(speed_ms - WORKOUT_SPEED_TOLERANCE_MS, 2)
+                interval_step["target_value_high"] = round(speed_ms + WORKOUT_SPEED_TOLERANCE_MS, 2)
                 est_time = int(dist_m / speed_ms)
             else:
-                est_time = int(dist_km * 315)
+                est_time = int(dist_km * DEFAULT_RUN_PACE_SEC_PER_KM)
             steps.append(interval_step)
             total_est_sec += est_time
             step_order += 1
@@ -479,7 +485,7 @@ def parse_workout_with_heuristics(sport_type: str, coach_text: str, day_name: st
 
     return {
         "sport": sport_type,
-        "workout_name": title[:35],
+        "workout_name": title[:GARMIN_WORKOUT_NAME_MAX_CHARS],
         "description": coach_text[:250],
         "estimated_duration_sec": total_est_sec,
         "steps": steps,
@@ -545,7 +551,7 @@ Rules:
             if "steps" in data and len(data["steps"]) > 0:
                 data["source"] = model_name
                 if len(data.get("workout_name", "")) > 35:
-                    data["workout_name"] = data["workout_name"][:35]
+                    data["workout_name"] = data["workout_name"][:GARMIN_WORKOUT_NAME_MAX_CHARS]
                 return data
         except Exception as e:
             logger.warning("Gemini parsing with %s failed: %s, falling back to heuristics", model_name, e)
@@ -560,7 +566,7 @@ def build_garmin_workout_object(parsed: dict[str, Any]) -> RunningWorkout | Cycl
     from the parsed JSON dictionary.
     """
     sport = parsed.get("sport", "running")
-    workout_name = parsed.get("workout_name", "Coach Workout")[:35]
+    workout_name = parsed.get("workout_name", "Coach Workout")[:GARMIN_WORKOUT_NAME_MAX_CHARS]
     desc = parsed.get("description", "")
     est_sec = int(parsed.get("estimated_duration_sec", 3600))
     raw_steps = parsed.get("steps", [])
@@ -725,10 +731,48 @@ def preview_week_workouts(week_offset: int = 0) -> dict[str, Any]:
     }
 
 
+def _scheduled_workout_keys(client: Any, week_start: str, week_end: str) -> set[tuple[str, str]] | None:
+    """
+    Return {(date, title)} of workouts already on the Garmin calendar for the week,
+    or None if the calendar couldn't be read (the caller then syncs without dedup).
+    """
+    start, end = date.fromisoformat(week_start), date.fromisoformat(week_end)
+    months = {(start.year, start.month), (end.year, end.month)}
+    keys: set[tuple[str, str]] = set()
+    try:
+        for year, month in sorted(months):
+            calendar = client.get_scheduled_workouts(year, month)
+            items = calendar.get("calendarItems") if isinstance(calendar, dict) else None
+            for item in items if isinstance(items, list) else []:
+                if not isinstance(item, dict) or item.get("itemType") != "workout":
+                    continue
+                if item.get("date") and item.get("title"):
+                    keys.add((str(item["date"])[:10], str(item["title"])))
+    except Exception as e:
+        logger.warning("Could not read the Garmin calendar to skip duplicates: %s", e)
+        return None
+    return keys
+
+
+def _delete_orphan_workout(client: Any, workout_id: Any) -> None:
+    """Remove an uploaded-but-unscheduled workout so failed syncs don't pile up in the library."""
+    if not hasattr(client, "delete_workout"):
+        return
+    try:
+        client.delete_workout(workout_id)
+    except Exception as e:
+        logger.warning("Could not delete unscheduled Garmin workout %s: %s", workout_id, e)
+
+
 def sync_week_workouts_to_garmin(week_offset: int = 0, dry_run: bool = False) -> dict[str, Any]:
     """
     Extract, parse, and upload/schedule Running and Cycling workouts
     to Garmin Connect (which syncs to Watch & Tacx).
+
+    Past days are skipped ("skipped_past"), workouts already on the Garmin
+    calendar with the same date and name are skipped ("skipped_duplicate") so
+    re-running the sync is idempotent, and an uploaded workout whose scheduling
+    fails is deleted again so it doesn't linger unscheduled in the library.
     """
     preview = preview_week_workouts(week_offset=week_offset)
     workouts = preview["workouts"]
@@ -756,13 +800,23 @@ def sync_week_workouts_to_garmin(week_offset: int = 0, dry_run: bool = False) ->
         raise ConnectionError("Failed to authenticate with Garmin Connect. Check GARMIN_EMAIL and GARMIN_PASSWORD.")
 
     results = []
+    today_str = today_local().isoformat()
+    existing = _scheduled_workout_keys(client, preview["week_start"], preview["week_end"])
 
     for w in workouts:
         target_date = w["date"]
-        workout_obj = build_garmin_workout_object(w)
-        payload = workout_obj.to_dict()
+        base = {"date": target_date, "sport": w["sport"], "workout_name": w["workout_name"]}
+
+        if target_date < today_str:
+            results.append({**base, "status": "skipped_past"})
+            continue
+        if existing is not None and (target_date, w["workout_name"]) in existing:
+            results.append({**base, "status": "skipped_duplicate"})
+            continue
 
         try:
+            payload = build_garmin_workout_object(w).to_dict()
+
             # 1. Upload to Garmin Workout library
             upload_res = client.upload_workout(payload)
             workout_id = upload_res.get("workoutId")
@@ -778,7 +832,11 @@ def sync_week_workouts_to_garmin(week_offset: int = 0, dry_run: bool = False) ->
                 continue
 
             # 2. Schedule on athlete's Garmin calendar for that exact date
-            sch_res = client.schedule_workout(workout_id, target_date)
+            try:
+                sch_res = client.schedule_workout(workout_id, target_date)
+            except Exception:
+                _delete_orphan_workout(client, workout_id)
+                raise
             schedule_id = sch_res.get("workoutScheduleId")
 
             results.append({

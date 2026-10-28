@@ -13,6 +13,29 @@ let elevationProgressionChart = null;
 let acwrProgressionChart = null;
 let currentProgressionData = [];
 
+// Mutating API calls must carry this header; the server rejects them otherwise
+// (a cross-site form post cannot set custom headers). When the server has
+// API_AUTH_TOKEN set, store the same value in localStorage.staminaiApiToken.
+const API_CLIENT_HEADER = "X-StaminAI-Client";
+const API_CLIENT_HEADER_VALUE = "web";
+const API_TOKEN_STORAGE_KEY = "staminaiApiToken";
+
+function apiFetch(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  headers.set(API_CLIENT_HEADER, API_CLIENT_HEADER_VALUE);
+  const token = localStorage.getItem(API_TOKEN_STORAGE_KEY);
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  return fetch(url, { ...options, headers });
+}
+
+// initApp can run more than once; Chart.js refuses to reuse a canvas that still
+// owns a chart, so drop the previous instance before building a new one.
+function createChart(ctx, config) {
+  const existing = Chart.getChart(ctx.canvas || ctx);
+  if (existing) existing.destroy();
+  return new Chart(ctx, config);
+}
+
 function formatDateDMY(d) {
   if (!d) return "";
   const dateObj = typeof d === "string" ? new Date(d.includes("T") ? d : d + "T00:00:00") : d;
@@ -49,6 +72,25 @@ const DAY_SHORT_EN = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
 
 // Presentation for the ACWR zones emitted by the API (`acwr.zone`). Colours live
 // here, not in the analytics layer, which only reports the machine-readable zone.
+// Short labels for the ACWR `status` key (a zone, or why no ratio exists yet).
+const ACWR_STATUS_LABELS = {
+  low: "Low Load",
+  optimal: "Optimal Zone",
+  overreaching: "Overreaching",
+  spike: "Overtraining Spike Risk",
+  insufficient_history: "Insufficient history",
+  no_baseline: "No chronic baseline",
+};
+
+// Labels for the Banister form (TSB) `status` key.
+const TSB_STATUS_LABELS = {
+  transition: "Transition / Untrained",
+  fresh: "Race Ready / Fresh",
+  neutral: "Neutral / Maintenance",
+  optimal: "Optimal Training / Overload",
+  high_fatigue: "High Fatigue / Overreaching Risk",
+};
+
 const ACWR_ZONE_STYLES = {
   low: { color: "#38bdf8", border: "rgba(56, 189, 248, 0.3)" },
   optimal: { color: "#10b981", border: "rgba(16, 185, 129, 0.3)" },
@@ -110,7 +152,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 async function initApp() {
   try {
-    const res = await fetch("/api/dashboard");
+    const res = await apiFetch("/api/dashboard");
     if (!res.ok) throw new Error("Failed to load dashboard data");
     dashboardData = await res.json();
 
@@ -525,14 +567,14 @@ function renderMetricCards(week, garmin) {
   const acwr = week.acwr || {};
   const acwrBadge = document.getElementById("metricAcwrBadge");
   if (acwr.acwr_ratio) {
-    acwrBadge.textContent = `ACWR: ${acwr.acwr_ratio} (${acwr.status ? acwr.status.split('(')[0].trim() : 'Active'})`;
+    acwrBadge.textContent = `ACWR: ${acwr.acwr_ratio} (${ACWR_STATUS_LABELS[acwr.status] || 'Active'})`;
     const zoneStyle = ACWR_ZONE_STYLES[acwr.zone] || ACWR_ZONE_STYLES.unknown;
     acwrBadge.style.color = zoneStyle.color;
     acwrBadge.style.borderColor = zoneStyle.border;
   } else {
     // No ratio yet (not enough chronic history) — show why instead of a stale value.
     acwrBadge.textContent = acwr.status
-      ? `ACWR: — (${acwr.status.split('(')[0].trim()})`
+      ? `ACWR: — (${ACWR_STATUS_LABELS[acwr.status] || acwr.status})`
       : "ACWR: —";
     acwrBadge.style.color = ACWR_ZONE_STYLES.unknown.color;
     acwrBadge.style.borderColor = ACWR_ZONE_STYLES.unknown.border;
@@ -801,7 +843,7 @@ function renderCalendar(week) {
 
 function initCharts() {
   const ctxDisc = document.getElementById("disciplineChart").getContext("2d");
-  disciplineChart = new Chart(ctxDisc, {
+  disciplineChart = createChart(ctxDisc, {
     type: "doughnut",
     data: {
       labels: ["Running", "Cycling", "Swimming", "Strength"],
@@ -825,7 +867,7 @@ function initCharts() {
   });
 
   const ctxRec = document.getElementById("recoveryChart").getContext("2d");
-  recoveryChart = new Chart(ctxRec, {
+  recoveryChart = createChart(ctxRec, {
     type: "bar",
     data: {
       labels: ["Sleep (h)", "HRV (ms)", "Resting HR (bpm)"],
@@ -851,7 +893,7 @@ function initCharts() {
 function initProgressionCharts() {
   // 1. Effort & Hours Progression
   const ctxEffort = document.getElementById("effortProgressionChart").getContext("2d");
-  effortProgressionChart = new Chart(ctxEffort, {
+  effortProgressionChart = createChart(ctxEffort, {
     type: "bar",
     data: {
       labels: [],
@@ -907,7 +949,7 @@ function initProgressionCharts() {
 
   // 2. Volume Progression (Stacked Bar)
   const ctxVol = document.getElementById("volumeProgressionChart").getContext("2d");
-  volumeProgressionChart = new Chart(ctxVol, {
+  volumeProgressionChart = createChart(ctxVol, {
     type: "bar",
     data: {
       labels: [],
@@ -933,7 +975,7 @@ function initProgressionCharts() {
 
   // 3. Elevation Progression
   const ctxElev = document.getElementById("elevationProgressionChart").getContext("2d");
-  elevationProgressionChart = new Chart(ctxElev, {
+  elevationProgressionChart = createChart(ctxElev, {
     type: "line",
     data: {
       labels: [],
@@ -964,7 +1006,7 @@ function initProgressionCharts() {
 
   // 4. ACWR Chart
   const ctxAcwr = document.getElementById("acwrProgressionChart").getContext("2d");
-  acwrProgressionChart = new Chart(ctxAcwr, {
+  acwrProgressionChart = createChart(ctxAcwr, {
     type: "line",
     data: {
       labels: [],
@@ -1002,7 +1044,7 @@ function initProgressionCharts() {
   const perfCanvas = document.getElementById("performanceChart");
   if (perfCanvas) {
     const ctxPerf = perfCanvas.getContext("2d");
-    performanceChart = new Chart(ctxPerf, {
+    performanceChart = createChart(ctxPerf, {
       type: "line",
       data: {
         labels: [],
@@ -1170,14 +1212,14 @@ function updatePerformanceChart(perfData) {
   const tsbBadge = document.getElementById("perfTsbBadge");
   if (tsbBadge && current.tsb !== undefined) {
     const sign = current.tsb > 0 ? "+" : "";
-    const label = current.status_label || current.status || "Form";
+    const label = TSB_STATUS_LABELS[current.status] || current.status || "Form";
     tsbBadge.textContent = `Form (TSB): ${sign}${current.tsb.toFixed(1)} (${label})`;
     tsbBadge.className = "acwr-badge";
     if (current.status === "optimal") {
       tsbBadge.classList.add("badge-optimal");
-    } else if (current.status === "freshness") {
+    } else if (current.status === "fresh") {
       tsbBadge.classList.add("badge-low");
-    } else if (current.status === "high_risk") {
+    } else if (current.status === "high_fatigue") {
       tsbBadge.classList.add("badge-spike");
     } else {
       tsbBadge.classList.add("badge-overreaching");
@@ -1201,7 +1243,7 @@ function updatePerformanceChart(perfData) {
 
 async function loadGearTracker() {
   try {
-    const res = await fetch("/api/gear");
+    const res = await apiFetch("/api/gear");
     if (!res.ok) return;
     const data = await res.json();
     renderGearTracker(data.gear || []);
@@ -1238,23 +1280,24 @@ function renderGearTracker(gearList) {
     const pct = Math.min(100, Math.round((g.total_km / (g.threshold_km || 650)) * 100));
     const tagClass = (g.gear_type || "").toLowerCase() === "shoes" ? "shoes" : "bike";
     const statusClass = g.status === "retire" ? "retire" : (g.status === "warning" ? "warning" : "optimal");
+    const gearName = g.name || `${g.gear_type} (${g.gear_id})`;
 
     return `
       <div class="gear-item-card">
         <div class="gear-card-header">
-          <div class="gear-name" title="${g.name}">${g.name}</div>
-          <span class="gear-type-tag ${tagClass}">${g.gear_type}</span>
+          <div class="gear-name" title="${escapeHtml(gearName)}">${escapeHtml(gearName)}</div>
+          <span class="gear-type-tag ${tagClass}">${escapeHtml(g.gear_type)}</span>
         </div>
         <div class="gear-bar-track">
           <div class="gear-bar-fill ${statusClass}" style="width: ${pct}%;"></div>
         </div>
         <div class="gear-meta-row">
-          <span>Usage: <strong>${g.total_km} km</strong> / ${g.threshold_km} km (${pct}%)</span>
-          <span>Rem: <strong>${g.remaining_km} km</strong></span>
+          <span>Usage: <strong>${escapeHtml(g.total_km)} km</strong> / ${escapeHtml(g.threshold_km)} km (${pct}%)</span>
+          <span>Rem: <strong>${escapeHtml(g.remaining_km)} km</strong></span>
         </div>
         <div class="gear-meta-row" style="margin-top: 4px; font-size: 11px; color: var(--text-muted);">
-          <span>${g.activity_count} sessions</span>
-          <span>${g.last_used ? "Last: " + g.last_used : ""}</span>
+          <span>${escapeHtml(g.activity_count)} sessions</span>
+          <span>${g.last_used ? "Last: " + escapeHtml(g.last_used) : ""}</span>
         </div>
       </div>
     `;
@@ -1285,9 +1328,9 @@ function renderPredictions(predData) {
   predData.predictions.forEach((p) => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td><strong>${p.name}</strong></td>
-      <td>${p.predicted_time}</td>
-      <td>${p.predicted_pace}</td>
+      <td><strong>${escapeHtml(p.name)}</strong></td>
+      <td>${escapeHtml(p.predicted_time)}</td>
+      <td>${escapeHtml(p.predicted_pace)}</td>
     `;
     tbody.appendChild(tr);
   });
@@ -1313,34 +1356,34 @@ function renderTriathlonPredictions(triData) {
     const s = p.splits;
     card.innerHTML = `
       <div class="tri-header">
-        <div class="tri-title">🏁 ${p.name}</div>
-        <div class="tri-total-time">${p.total_time}</div>
+        <div class="tri-title">🏁 ${escapeHtml(p.name)}</div>
+        <div class="tri-total-time">${escapeHtml(p.total_time)}</div>
       </div>
       <div class="tri-splits-grid">
         <div class="tri-split-box">
-          <div class="tri-split-label">🏊 Swim (${s.swim.distance})</div>
-          <div class="tri-split-time">${s.swim.time}</div>
-          <div class="tri-split-pace">${s.swim.pace}</div>
+          <div class="tri-split-label">🏊 Swim (${escapeHtml(s.swim.distance)})</div>
+          <div class="tri-split-time">${escapeHtml(s.swim.time)}</div>
+          <div class="tri-split-pace">${escapeHtml(s.swim.pace)}</div>
         </div>
         <div class="tri-split-box">
           <div class="tri-split-label">⚡ T1</div>
-          <div class="tri-split-time">${s.t1}</div>
+          <div class="tri-split-time">${escapeHtml(s.t1)}</div>
           <div class="tri-split-pace">Transition</div>
         </div>
         <div class="tri-split-box">
-          <div class="tri-split-label">🚴 Bike (${s.bike.distance})</div>
-          <div class="tri-split-time">${s.bike.time}</div>
-          <div class="tri-split-pace">${s.bike.speed}</div>
+          <div class="tri-split-label">🚴 Bike (${escapeHtml(s.bike.distance)})</div>
+          <div class="tri-split-time">${escapeHtml(s.bike.time)}</div>
+          <div class="tri-split-pace">${escapeHtml(s.bike.speed)}</div>
         </div>
         <div class="tri-split-box">
           <div class="tri-split-label">⚡ T2</div>
-          <div class="tri-split-time">${s.t2}</div>
+          <div class="tri-split-time">${escapeHtml(s.t2)}</div>
           <div class="tri-split-pace">Transition</div>
         </div>
         <div class="tri-split-box">
-          <div class="tri-split-label">🏃 Run (${s.run.distance})</div>
-          <div class="tri-split-time">${s.run.time}</div>
-          <div class="tri-split-pace">${s.run.pace}</div>
+          <div class="tri-split-label">🏃 Run (${escapeHtml(s.run.distance)})</div>
+          <div class="tri-split-time">${escapeHtml(s.run.time)}</div>
+          <div class="tri-split-pace">${escapeHtml(s.run.pace)}</div>
         </div>
       </div>
     `;
@@ -1436,7 +1479,7 @@ async function handleSendTelegram() {
   btn.innerHTML = "<span>⏳ Sending...</span>";
 
   try {
-    const res = await fetch("/api/notifications/telegram/next-day", {
+    const res = await apiFetch("/api/notifications/telegram/next-day", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ dry_run: false }),
@@ -1465,7 +1508,7 @@ async function handleSendTelegramToday() {
   btn.innerHTML = "<span>⏳ Sending...</span>";
 
   try {
-    const res = await fetch("/api/notifications/telegram/today", {
+    const res = await apiFetch("/api/notifications/telegram/today", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ dry_run: false }),
@@ -1494,7 +1537,7 @@ async function handleSendTelegramWeekly() {
   btn.innerHTML = "<span>⏳ Sending...</span>";
 
   try {
-    const res = await fetch("/api/notifications/telegram/weekly", {
+    const res = await apiFetch("/api/notifications/telegram/weekly", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ dry_run: false }),
@@ -1503,7 +1546,7 @@ async function handleSendTelegramWeekly() {
     if (!res.ok) throw new Error(data.detail || "Dispatch failed");
 
     if (data.success) {
-      showToast(`✈️ Weekly summary digest sent to Telegram! (${data.target_week})`, "success");
+      showToast(`✈️ Weekly summary digest sent to Telegram! (${data.meta?.week_key || ""})`, "success");
     } else {
       showToast(`⚠️ Telegram: ${data.dispatch ? data.dispatch.detail : "Dispatched with dry-run"}`, "info");
     }
@@ -1533,6 +1576,45 @@ function initComplianceDate() {
   }
 }
 
+// English summary for a /api/compliance result, built from its status keys and
+// match numbers (the analytics layer no longer ships prose).
+function complianceSummary(data) {
+  const km = (v) => (Number.isInteger(v) ? v.toFixed(1) : String(v));
+  const min = (v) => Number(v).toFixed(0);
+  switch (data.status) {
+    case "rest_day_honored":
+      return "Rest day honored. Zero training load recorded.";
+    case "rest_day_broken":
+      return `Rest day scheduled, but ${data.session_count || 0} session(s) totaling ${min(data.total_time_min || 0)}m logged.`;
+    case "unplanned_training":
+      return `${data.session_count || 0} activity(ies) logged without a scheduled plan.`;
+    case "rest_or_empty":
+      return "No workout planned and no activities recorded.";
+  }
+  const parts = (data.matches || []).map((m) => {
+    const pct = m.dist_compliance_pct ?? m.dur_compliance_pct;
+    const hasKm = m.planned_km && m.actual_km != null;
+    const hasMin = m.planned_min && m.actual_min != null;
+    if (m.status === "spot_on") {
+      if (hasKm) return `${m.sport}: Executed accurately (${km(m.actual_km)}km vs planned ${km(m.planned_km)}km).`;
+      if (hasMin) return `${m.sport}: Executed accurately (${min(m.actual_min)}m vs planned ${min(m.planned_min)}m).`;
+      return `${m.sport}: Executed accurately.`;
+    }
+    if (m.status === "overreach") {
+      return `${m.sport}: Volume overshot${pct != null ? ` (+${(pct - 100).toFixed(0)}%)` : ""}. Watch recovery.`;
+    }
+    if (m.status === "underreach") {
+      if (hasKm) return `${m.sport}: Volume under prescribed target (${km(m.actual_km)}km of ${km(m.planned_km)}km).`;
+      if (hasMin) return `${m.sport}: Volume under prescribed target (${min(m.actual_min)}m of ${min(m.planned_min)}m).`;
+      if (pct != null) return `${m.sport}: Volume under prescribed target (${pct.toFixed(0)}%).`;
+      return `${m.sport}: Volume under prescribed target.`;
+    }
+    if (m.status === "missed") return `${m.sport}: Session was not completed.`;
+    return null;
+  }).filter(Boolean);
+  return parts.join(" ") || "Workout evaluated.";
+}
+
 async function loadCompliance(targetDate) {
   const contentEl = document.getElementById("complianceContent");
   const badgeEl = document.getElementById("complianceScoreBadge");
@@ -1553,7 +1635,7 @@ async function loadCompliance(targetDate) {
   contentEl.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 16px;">Loading workout compliance for ${formatDateDMY(dateToFetch)}...</div>`;
 
   try {
-    const res = await fetch(`/api/compliance?target_date=${encodeURIComponent(dateToFetch)}`);
+    const res = await apiFetch(`/api/compliance?target_date=${encodeURIComponent(dateToFetch)}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
 
@@ -1586,19 +1668,19 @@ async function loadCompliance(targetDate) {
       matchesHtml = data.matches.map(m => {
         const tagClass = m.status === "spot_on" ? "tag-spot-on" : (m.status === "overreach" ? "tag-overreach" : "tag-underreach");
         const paceDiff = (m.pace_diff_sec !== null && m.pace_diff_sec !== undefined)
-          ? ` • Pace Diff: <strong>${m.pace_diff_sec > 0 ? "+" : ""}${m.pace_diff_sec}s/km</strong>`
+          ? ` • Pace Diff: <strong>${m.pace_diff_sec > 0 ? "+" : ""}${escapeHtml(m.pace_diff_sec)}s/km</strong>`
           : "";
         const distActual = (m.actual_km !== null && m.actual_km > 0)
           ? `${m.actual_km} km`
           : (m.actual_min ? `${m.actual_min}m` : (m.actual_km !== null && m.actual_km !== undefined ? `${m.actual_km} km` : "--"));
         const distPlanned = (m.planned_km !== null && m.planned_km !== undefined)
           ? `${m.planned_km} km`
-          : (m.planned_min ? `${m.planned_min}m` : (m.notes || "--"));
+          : (m.planned_min ? `${m.planned_min}m` : (m.status === "missed" ? `Prescribed ${m.sport} session was missed.` : "--"));
         return `
           <div style="margin-bottom: 8px;">
-            <span class="compliance-match-tag ${tagClass}">${m.sport.toUpperCase()}: ${m.status.replace("_", " ").toUpperCase()}</span>
+            <span class="compliance-match-tag ${tagClass}">${escapeHtml(String(m.sport || "").toUpperCase())}: ${escapeHtml(String(m.status || "").replace("_", " ").toUpperCase())}</span>
             <span style="font-size: 12px; color: var(--text-secondary); margin-left: 6px;">
-              Actual: <strong>${distActual}</strong> (Planned: ${distPlanned})${paceDiff}
+              Actual: <strong>${escapeHtml(distActual)}</strong> (Planned: ${escapeHtml(distPlanned)})${paceDiff}
             </span>
           </div>
         `;
@@ -1630,7 +1712,7 @@ async function loadCompliance(targetDate) {
       </div>
       <div class="compliance-summary-box">
         <span style="font-size: 20px;">💡</span>
-        <div><strong>Execution Summary:</strong> ${escapeHtml(data.summary || "Workout evaluation completed.")}</div>
+        <div><strong>Execution Summary:</strong> ${escapeHtml(complianceSummary(data))}</div>
       </div>
     `;
   } catch (err) {
@@ -1677,7 +1759,7 @@ async function handleGenerateAiFeedback() {
       athlete_notes: `${notes} [Fatigue: ${fatigue}/10, Soreness: ${soreness}/10, Mood: ${mood}/10]`,
     };
 
-    const res = await fetch("/api/ai/coach", {
+    const res = await apiFetch("/api/ai/coach", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -1717,7 +1799,7 @@ async function handleSheetSync() {
   btn.innerHTML = "<span>🔄 Syncing Logs...</span>";
 
   try {
-    const res = await fetch("/api/sheet/sync", {
+    const res = await apiFetch("/api/sheet/sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ count: 35 }),
@@ -1741,7 +1823,7 @@ function showToast(message, type = "success") {
   const container = document.getElementById("toastContainer");
   const toast = document.createElement("div");
   toast.className = `toast ${type}`;
-  toast.innerHTML = `<span>${type === "success" ? "✅" : "⚠️"}</span><span>${message}</span>`;
+  toast.innerHTML = `<span>${type === "success" ? "✅" : "⚠️"}</span><span>${escapeHtml(message)}</span>`;
 
   container.appendChild(toast);
 
@@ -1758,7 +1840,7 @@ async function fetchDurability() {
   // Loaded separately from the dashboard: it is a different endpoint answering a
   // different question, and a failure here must not blank the rest of the page.
   try {
-    const res = await fetch("/api/durability");
+    const res = await apiFetch("/api/durability");
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     renderDurability(await res.json());
   } catch (err) {
@@ -1812,10 +1894,10 @@ function renderDurability(data) {
     row.className = "durability-signal";
     row.style.borderLeftColor = style.color;
     row.innerHTML = `
-      <span class="durability-signal-label">${SIGNAL_LABELS[signal.key] || signal.key}</span>
+      <span class="durability-signal-label">${escapeHtml(SIGNAL_LABELS[signal.key] || signal.key)}</span>
       <span>
-        <span class="durability-signal-value" style="color: ${style.color}">${value}</span>
-        <span class="durability-signal-threshold">${threshold}</span>
+        <span class="durability-signal-value" style="color: ${style.color}">${escapeHtml(value)}</span>
+        <span class="durability-signal-threshold">${escapeHtml(threshold)}</span>
       </span>
     `;
     list.appendChild(row);
@@ -1842,7 +1924,7 @@ function renderRampHistory(history) {
     cell.title = `${week.run_km} km (was ${week.prev_run_km === null ? "n/a" : week.prev_run_km + " km"})`;
     cell.innerHTML = `
       <div class="durability-ramp-week-date" title="${formatDateDMY(date)}">${formatDateDM(date)}</div>
-      <div class="durability-ramp-week-pct" style="color: ${style.color}">${pct}</div>
+      <div class="durability-ramp-week-pct" style="color: ${style.color}">${escapeHtml(pct)}</div>
     `;
     host.appendChild(cell);
   });
@@ -1858,16 +1940,16 @@ function renderCrossTraining(plan) {
       const minutes = sub.equivalent_minutes ? `≈ ${sub.equivalent_minutes} min` : "no history yet";
       return `
         <div class="durability-swap-box">
-          <div class="durability-swap-label">${MODALITY_LABELS[sub.modality] || sub.modality}</div>
-          <div class="durability-swap-value">${sub.replacement_load}</div>
-          <div class="durability-swap-sub">${minutes}</div>
+          <div class="durability-swap-label">${escapeHtml(MODALITY_LABELS[sub.modality] || sub.modality)}</div>
+          <div class="durability-swap-value">${escapeHtml(sub.replacement_load)}</div>
+          <div class="durability-swap-sub">${escapeHtml(minutes)}</div>
         </div>`;
     })
     .join("");
 
   const strength = plan.strength || {};
   const chips = (strength.exercises || [])
-    .map((ex) => `<span class="durability-exercise-chip">${EXERCISE_LABELS[ex] || ex}</span>`)
+    .map((ex) => `<span class="durability-exercise-chip">${escapeHtml(EXERCISE_LABELS[ex] || ex)}</span>`)
     .join("");
 
   box.innerHTML = `
@@ -1875,18 +1957,18 @@ function renderCrossTraining(plan) {
     <div class="durability-swap-grid">
       <div class="durability-swap-box">
         <div class="durability-swap-label">🏃 Run</div>
-        <div class="durability-swap-value">${plan.safe_run_load}</div>
-        <div class="durability-swap-sub">of ${plan.target_run_load} effort</div>
+        <div class="durability-swap-value">${escapeHtml(plan.safe_run_load)}</div>
+        <div class="durability-swap-sub">of ${escapeHtml(plan.target_run_load)} effort</div>
       </div>
       ${swaps}
     </div>
     <div class="durability-plan-note">
       ${plan.shortfall_load > 0
-        ? `${plan.shortfall_load} effort moved off the pavement to keep the aerobic dose without the impact.`
+        ? `${escapeHtml(plan.shortfall_load)} effort moved off the pavement to keep the aerobic dose without the impact.`
         : "Running is holding up — the full target can stay on the pavement."}
     </div>
     <div class="durability-plan-title" style="margin-top: 12px;">
-      Single-leg strength · ${strength.sessions_per_week || 0}× / week
+      Single-leg strength · ${escapeHtml(strength.sessions_per_week || 0)}× / week
     </div>
     <div class="durability-exercises">${chips}</div>
   `;
@@ -1916,10 +1998,23 @@ const CHAT_GREETING =
   "I can see your activities, your recovery data and your projections — and I'll " +
   "remember what you tell me about yourself.";
 
+const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+
+// Safe in text and in quoted attributes alike (textContent round-tripping
+// leaves quotes alone, which breaks out of title="..." / href="...").
 function escapeHtml(text) {
-  const div = document.createElement("div");
-  div.textContent = text === null || text === undefined ? "" : String(text);
-  return div.innerHTML;
+  if (text === null || text === undefined) return "";
+  return String(text).replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch]);
+}
+
+// Only http(s) links may reach an href; javascript:/data: URIs become "#".
+function safeUrl(url) {
+  try {
+    const parsed = new URL(String(url), window.location.href);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : "#";
+  } catch {
+    return "#";
+  }
 }
 
 function initChatDrawer() {
@@ -1959,7 +2054,7 @@ function appendChatMessage(role, text, extras = {}) {
     block.innerHTML = sources
       .map(
         (s) =>
-          `<a href="${escapeHtml(s.uri)}" target="_blank" rel="noopener noreferrer">🔗 ${escapeHtml(
+          `<a href="${escapeHtml(safeUrl(s.uri))}" target="_blank" rel="noopener noreferrer">🔗 ${escapeHtml(
             s.title || s.uri,
           )}</a>`,
       )
@@ -2002,7 +2097,7 @@ async function sendChatMessage() {
   badge.textContent = "thinking…";
 
   try {
-    const res = await fetch("/api/ai/chat", {
+    const res = await apiFetch("/api/ai/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2052,7 +2147,7 @@ async function resetChatSession() {
   // and a failed one costs a fact, not the athlete's next question.
   if (!closing) return;
   try {
-    const res = await fetch("/api/coach/memory/extract", {
+    const res = await apiFetch("/api/coach/memory/extract", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: closing }),
@@ -2080,7 +2175,7 @@ async function loadChatMemory() {
   const list = document.getElementById("chatMemoryList");
   list.innerHTML = `<div class="chat-memory-item">Loading…</div>`;
   try {
-    const res = await fetch("/api/coach/memory");
+    const res = await apiFetch("/api/coach/memory");
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     renderChatMemory(data.facts || []);
@@ -2116,7 +2211,7 @@ function renderChatMemory(facts) {
 
 async function forgetChatFact(factId) {
   try {
-    const res = await fetch(`/api/coach/memory/${encodeURIComponent(factId)}`, { method: "DELETE" });
+    const res = await apiFetch(`/api/coach/memory/${encodeURIComponent(factId)}`, { method: "DELETE" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     showToast("Forgotten");
     await loadChatMemory();
@@ -2152,7 +2247,7 @@ async function loadGarminWorkouts() {
   if (statusEl) statusEl.textContent = "";
 
   try {
-    const res = await fetch("/api/workouts/preview?week_offset=0");
+    const res = await apiFetch("/api/workouts/preview?week_offset=0");
     if (!res.ok) {
       const errData = await res.json().catch(() => ({}));
       throw new Error(errData.detail || `HTTP ${res.status}`);
@@ -2207,7 +2302,7 @@ function renderGarminWorkouts(data) {
 
       return `<div style="font-size: 11px; color: #cbd5e1; display: flex; align-items: center; gap: 6px; padding: 2px 0;">
         <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: ${isRun ? '#f97316' : '#38bdf8'};"></span>
-        <strong style="text-transform: capitalize;">${escapeHtml(s.step_type)}:</strong> ${condStr}${targetStr}
+        <strong style="text-transform: capitalize;">${escapeHtml(s.step_type)}:</strong> ${escapeHtml(condStr)}${escapeHtml(targetStr)}
       </div>`;
     }).join("");
 
@@ -2248,7 +2343,7 @@ async function handleSendToGarmin() {
   if (statusEl) statusEl.textContent = "Connecting to Garmin Connect...";
 
   try {
-    const res = await fetch("/api/workouts/sync", {
+    const res = await apiFetch("/api/workouts/sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ week_offset: 0, dry_run: false })

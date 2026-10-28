@@ -2,11 +2,10 @@
 
 import pytest
 
-from tests.conftest import make_activity
-
 from src.integrations import strava_backfill
 from src.integrations.strava import StravaNetworkError, StravaRateLimitError
 from src.storage.activity_store import count_activities, get_sync_state, set_sync_state
+from tests.conftest import make_activity
 
 
 @pytest.fixture(autouse=True)

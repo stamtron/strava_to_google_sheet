@@ -16,9 +16,11 @@ already set by `ACWR_ZONES`, every function returns machine-readable keys —
 emoji.
 """
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
+from src.analytics.metrics import calculate_relative_effort, sport_group
 from src.config import (
+    ACWR_OPTIMAL_MAX,
     AQUA_JOG_LOAD_FACTOR,
     BIKE_RUN_LOAD_FACTOR,
     CROSS_TRAINING_AQUA_SHARE,
@@ -28,9 +30,11 @@ from src.config import (
     RUN_RAMP_SAFE_PCT,
     RUN_RETENTION_BY_RISK,
     STRAIN_WARN_THRESHOLD,
+    STRENGTH_SESSIONS_DEFAULT,
+    STRENGTH_SESSIONS_HIGH_RISK,
 )
-from src.analytics.metrics import calculate_relative_effort, sport_group
 from src.formatting import corrected_distance_and_speed
+from src.timeutil import today_local
 
 # Severity is ordered, so the worst signal in a set can be found by max().
 SEVERITY_ORDER = ("none", "unknown", "caution", "high")
@@ -60,7 +64,15 @@ def _act_date(act: dict):
     raw = act.get("start_date_local", "")
     if not raw:
         return None
-    return datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
+    try:
+        return datetime.fromisoformat(raw).date()
+    except (ValueError, TypeError):
+        return None
+
+
+def _days_elapsed(monday: date, today: date) -> int:
+    """Calendar days of the week starting `monday` that have happened by `today`."""
+    return max(0, min(7, (today - monday).days + 1))
 
 
 def _run_activities(week: dict) -> list[dict]:
@@ -75,16 +87,23 @@ def run_ramp_rate(weeks_dict: dict) -> list[dict]:
     """
     Week-over-week change in run volume, scored against the safe ramp threshold.
 
-    The first week has no predecessor and weeks following a zero-run week have no
-    meaningful denominator, so both report `change_pct=None` rather than an
-    infinite or invented increase. Reductions are reported but never flagged:
-    cutting volume is not an injury mechanism.
+    The predecessor is the previous *calendar* week; a week absent from
+    `weeks_dict` had no activities and counts as 0 km. The first week has no
+    predecessor and weeks following a zero-run week have no meaningful
+    denominator, so both report `change_pct=None` rather than an infinite or
+    invented increase. Reductions are reported but never flagged: cutting volume
+    is not an injury mechanism.
     """
     results = []
-    prev_km = None
+    sorted_keys = sorted(weeks_dict.keys())
 
-    for w_key in sorted(weeks_dict.keys()):
+    for i, w_key in enumerate(sorted_keys):
         run_km = round(weeks_dict[w_key].get("run_dist_km", 0.0), 2)
+        prev_key = (date.fromisoformat(w_key) - timedelta(days=7)).isoformat()
+        if prev_key in weeks_dict:
+            prev_km = round(weeks_dict[prev_key].get("run_dist_km", 0.0), 2)
+        else:
+            prev_km = 0.0 if i else None
 
         if prev_km is None or prev_km <= 0:
             change_pct, severity = None, "unknown"
@@ -105,7 +124,6 @@ def run_ramp_rate(weeks_dict: dict) -> list[dict]:
             "threshold_pct": RUN_RAMP_SAFE_PCT,
             "severity": severity,
         })
-        prev_km = run_km
 
     return results
 
@@ -117,7 +135,8 @@ def run_spacing_profile(weeks_dict: dict) -> dict:
     Two athletes running 40 km a week carry very different risk if one spreads it
     over five days and the other stacks it into three consecutive ones. Rest days
     are counted as calendar days in the week without a run, so a day with two
-    runs still costs only one.
+    runs still costs only one. For the in-progress week only days up to today
+    count; severity judges the rest days the week can still end with.
     """
     if not weeks_dict:
         return {
@@ -127,6 +146,7 @@ def run_spacing_profile(weeks_dict: dict) -> dict:
             "max_consecutive_run_days": 0,
             "longest_gap_days": 0,
             "rest_days_last_week": None,
+            "days_elapsed_last_week": 0,
             "back_to_back_days_last_week": 0,
             "min_rest_days": RUN_MIN_REST_DAYS,
             "severity": "unknown",
@@ -153,17 +173,23 @@ def run_spacing_profile(weeks_dict: dict) -> dict:
             longest_gap = max(longest_gap, (day - all_run_dates[i - 1]).days - 1)
 
     latest_key = sorted_keys[-1]
+    today = today_local()
     latest_dates = sorted({
-        d for a in _run_activities(weeks_dict[latest_key]) if (d := _act_date(a)) is not None
+        d
+        for a in _run_activities(weeks_dict[latest_key])
+        if (d := _act_date(a)) is not None and d <= today
     })
-    rest_days = 7 - len(latest_dates)
+    days_elapsed = _days_elapsed(date.fromisoformat(latest_key), today)
+    rest_days = max(0, days_elapsed - len(latest_dates))
+    # Rest days the week can still finish with if no further runs happen.
+    projected_rest_days = rest_days + (7 - days_elapsed)
     back_to_back = sum(
         1 for i in range(1, len(latest_dates)) if (latest_dates[i] - latest_dates[i - 1]).days == 1
     )
 
     if not latest_dates:
         severity = "none"
-    elif rest_days < RUN_MIN_REST_DAYS:
+    elif projected_rest_days < RUN_MIN_REST_DAYS:
         severity = "high"
     elif back_to_back >= 2:
         severity = "caution"
@@ -177,6 +203,7 @@ def run_spacing_profile(weeks_dict: dict) -> dict:
         "max_consecutive_run_days": max_streak,
         "longest_gap_days": longest_gap,
         "rest_days_last_week": rest_days,
+        "days_elapsed_last_week": days_elapsed,
         "back_to_back_days_last_week": back_to_back,
         "min_rest_days": RUN_MIN_REST_DAYS,
         "severity": severity,
@@ -240,15 +267,20 @@ def training_monotony_and_strain(weeks_dict: dict) -> dict:
     lets the athlete recover. Strain multiplies the week's total load by its
     monotony, so it catches high volume and unvarying volume together.
 
+    The in-progress week is scored over the days elapsed so far; future days
+    would otherwise enter as zeros and inflate its variance.
+
     A week whose days are perfectly uniform has zero deviation and therefore no
     finite monotony; it reports None rather than infinity.
     """
     per_week = []
+    today = today_local()
 
     for w_key in sorted(weeks_dict.keys()):
         week = weeks_dict[w_key]
         monday = datetime.fromisoformat(week["week_monday"]).date()
-        daily = {monday + timedelta(days=i): 0.0 for i in range(7)}
+        n_days = _days_elapsed(monday, today)
+        daily = {monday + timedelta(days=i): 0.0 for i in range(n_days)}
 
         for act in week.get("activities", []):
             day = _act_date(act)
@@ -257,8 +289,8 @@ def training_monotony_and_strain(weeks_dict: dict) -> dict:
 
         loads = list(daily.values())
         total = sum(loads)
-        mean = total / 7.0
-        variance = sum((x - mean) ** 2 for x in loads) / 7.0
+        mean = total / n_days if n_days else 0.0
+        variance = sum((x - mean) ** 2 for x in loads) / n_days if n_days else 0.0
         sd = variance**0.5
 
         if sd <= 0:
@@ -354,7 +386,7 @@ def assess_run_durability(weeks_dict: dict, acwr_run: dict | None = None) -> dic
         signals.append({
             "key": "run_acwr",
             "value": ratio,
-            "threshold": 1.3,
+            "threshold": ACWR_OPTIMAL_MAX,
             "severity": {
                 "optimal": "none",
                 "low": "none",
@@ -488,7 +520,7 @@ def suggest_cross_training(
     than guessed from a population average.
     """
     risk = durability.get("risk_level", "unknown")
-    retention = _RUN_RETENTION_BY_RISK.get(risk, 0.9)
+    retention = _RUN_RETENTION_BY_RISK.get(risk, _RUN_RETENTION_BY_RISK["unknown"])
 
     target = max(0.0, float(target_run_load))
     safe_run_load = round(target * retention, 1)
@@ -532,7 +564,7 @@ def suggest_cross_training(
         "run_retention": retention,
         "substitutions": substitutions,
         "strength": {
-            "sessions_per_week": 3 if risk == "high" else 2,
+            "sessions_per_week": STRENGTH_SESSIONS_HIGH_RISK if risk == "high" else STRENGTH_SESSIONS_DEFAULT,
             "focus": "single_leg",
             "exercises": list(SINGLE_LEG_EXERCISES),
         },

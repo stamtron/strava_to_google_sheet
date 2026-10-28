@@ -28,7 +28,7 @@ Returns Athens, Greece (or configured coordinates) daily historical and 7-day fo
 ### `GET /api/performance`
 Calculates and returns Banister Impulse-Response EWMA training metrics:
 - **Response**:
-  - `current`: `{ ctl, atl, tsb, status, status_label, ctl_ramp_7d }`
+  - `current`: `{ ctl, atl, tsb, status, ctl_ramp_7d }` (`status` is a key: `transition` | `fresh` | `neutral` | `optimal` | `high_fatigue`; labels live in `web/app.js`)
   - `series`: `[ { date, day_load, ctl, atl, tsb, status }, ... ]` (90-day time-series)
 
 ---

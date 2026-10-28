@@ -5,11 +5,18 @@ Entry point for terminal-based activity logging and Google Sheets synchronizatio
 """
 
 import argparse
+import logging
 import time
 from collections import defaultdict
 
-from src.config import STRAVA_DETAIL_DELAY_SEC
+from src.config import (
+    STRAVA_DETAIL_DELAY_SEC,
+    TELEGRAM_BOT_ERROR_SLEEP_SEC,
+    TELEGRAM_BOT_LOOP_SLEEP_SEC,
+    TELEGRAM_POLL_TIMEOUT_SEC,
+)
 from src.formatting import corrected_distance_and_speed, format_duration, format_pace
+from src.integrations.sheets import write_to_sheet
 from src.integrations.strava import (
     StravaAuthRequired,
     StravaNetworkError,
@@ -18,9 +25,11 @@ from src.integrations.strava import (
     fetch_details_for_activities,
     get_access_token,
 )
-from src.integrations.sheets import write_to_sheet
 from src.integrations.strava_backfill import backfill_all
-from src.storage.activity_store import init_db, upsert_activities, upsert_details
+from src.storage.activity_store import get_details, init_db, upsert_activities, upsert_details
+from src.timeutil import today_local
+
+logger = logging.getLogger(__name__)
 
 
 def group_activities_by_date(activities: list[dict]) -> dict[str, list[dict]]:
@@ -206,25 +215,41 @@ def main():
         print(f"\n🚀 Syncing Running & Cycling workouts to Garmin Connect (Week offset: {args.week_offset})...\n")
         sync_res = sync_week_workouts_to_garmin(week_offset=args.week_offset, dry_run=False)
         print(f"📅 Week: {sync_res['week_start']} → {sync_res['week_end']}")
-        print(f"Synced {len(sync_res['results'])} workouts to Garmin Connect Calendar:")
+        scheduled = sum(1 for r in sync_res["results"] if r.get("status") == "scheduled")
+        print(f"Scheduled {scheduled}/{len(sync_res['results'])} workouts on Garmin Connect Calendar:")
         for r in sync_res["results"]:
-            status_icon = "✅" if r.get("status") == "scheduled" else "❌"
+            status = r.get("status")
+            status_icon = "✅" if status == "scheduled" else ("⏭️" if str(status).startswith("skipped") else "❌")
             w_id = r.get("workout_id", "N/A")
             print(f"  {status_icon} [{r['date']}] {r['sport'].upper()} - {r['workout_name']} (ID: {w_id}, status: {r.get('status')})")
         return 0
 
     # Standalone interactive Telegram bot listener
     if args.telegram_bot:
-        from src.integrations.telegram import poll_telegram_updates, process_incoming_update, run_daily_dispatch_check
+        from src.integrations.telegram import (
+            poll_telegram_updates,
+            process_incoming_update,
+            redact_token,
+            run_daily_dispatch_check,
+        )
         print("🤖 Starting interactive Telegram bot worker (Ctrl+C to stop)...")
         offset = 0
         try:
             while True:
-                run_daily_dispatch_check()
-                offset, updates = poll_telegram_updates(offset=offset, timeout=10)
-                for u in updates:
-                    process_incoming_update(u)
-                time.sleep(0.5)
+                # One bad update or a transient outage must not kill the worker.
+                try:
+                    run_daily_dispatch_check()
+                    offset, updates = poll_telegram_updates(offset=offset, timeout=TELEGRAM_POLL_TIMEOUT_SEC)
+                    for u in updates:
+                        try:
+                            process_incoming_update(u)
+                        except Exception as e:
+                            logger.error("Failed to process Telegram update %s: %s", u.get("update_id"), redact_token(e))
+                except Exception as e:
+                    logger.error("Telegram bot loop iteration failed: %s", redact_token(e))
+                    time.sleep(TELEGRAM_BOT_ERROR_SLEEP_SEC)
+                    continue
+                time.sleep(TELEGRAM_BOT_LOOP_SLEEP_SEC)
         except KeyboardInterrupt:
             print("\n👋 Telegram bot stopped.")
             return 0
@@ -248,16 +273,17 @@ def main():
     # Telegram Workout Dispatcher
     if args.telegram_today or args.telegram_next_day or (args.date and not args.sheet):
         from datetime import date, timedelta
+
         from src.integrations.telegram import build_daily_brief, send_telegram_message
 
         if args.date:
             target_date = date.fromisoformat(args.date)
         elif args.telegram_today:
-            target_date = date.today()
+            target_date = today_local()
         else:
-            target_date = date.today() + timedelta(days=1)
+            target_date = today_local() + timedelta(days=1)
 
-        label = "Today's" if target_date == date.today() else "Next-Day"
+        label = "Today's" if target_date == today_local() else "Next-Day"
         print(f"✈️ Preparing {label} Workout Brief for {target_date}...")
 
         brief, meta = build_daily_brief(target_date)
@@ -285,23 +311,43 @@ def main():
         print(f"\n📥 Fetching last {args.count} activities from Strava...")
         activities = fetch_activities(access_token, per_page=args.count)
 
-        print(f"📋 Fetching details for {len(activities)} activities", end="", flush=True)
-        details = fetch_details_for_activities(
-            access_token,
-            activities,
-            delay_sec=STRAVA_DETAIL_DELAY_SEC,
-            progress=True,
-        )
-        print(" done!")
-
+        # Reuse details already in the local store so re-syncs cost no extra
+        # Strava calls; the store is optional, so a failure only costs the cache.
+        conn = None
+        known_details: dict = {}
         try:
             conn = init_db()
-            upsert_activities(conn, activities)
-            if details:
-                upsert_details(conn, details)
-            conn.close()
-        except Exception:
-            pass
+            batch_ids = [a["id"] for a in activities if a.get("id") is not None]
+            known_details = get_details(conn, batch_ids) if batch_ids else {}
+        except Exception as e:
+            logger.warning("Local activity store unavailable, fetching all details: %s", e)
+
+        try:
+            print(f"📋 Fetching details for {len(activities)} activities", end="", flush=True)
+            details = fetch_details_for_activities(
+                access_token,
+                activities,
+                known_details=known_details,
+                delay_sec=STRAVA_DETAIL_DELAY_SEC,
+                progress=True,
+            )
+            print(" done!")
+            if getattr(details, "incomplete", False):
+                print(
+                    f"  ⚠️  Detail fetch stopped early ({details.stop_reason}); "
+                    "activities without details will be skipped in the sheet. Re-run later to fill them in."
+                )
+
+            if conn is not None:
+                try:
+                    upsert_activities(conn, activities)
+                    if details:
+                        upsert_details(conn, details)
+                except Exception as e:
+                    logger.warning("Could not persist activities to the local store: %s", e)
+        finally:
+            if conn is not None:
+                conn.close()
     except StravaAuthRequired as e:
         print(f"\n❌ Strava authorization failed: {e}")
         return 1

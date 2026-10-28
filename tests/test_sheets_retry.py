@@ -3,6 +3,7 @@ Unit tests for Google Sheets API transient retry helper.
 """
 
 from unittest.mock import MagicMock
+
 import pytest
 from googleapiclient.errors import HttpError
 from httplib2 import Response
@@ -40,4 +41,34 @@ def test_execute_with_retry_raises_non_transient_error():
 
     with pytest.raises(HttpError):
         execute_with_retry(mock_req, retries=3, delay_sec=0.01)
+    assert mock_req.execute.call_count == 1
+
+
+def test_execute_with_retry_recovers_from_socket_timeout(monkeypatch):
+
+    monkeypatch.setattr("src.integrations.sheets.time.sleep", lambda s: None)
+    mock_req = MagicMock()
+    mock_req.execute.side_effect = [TimeoutError("timed out"), ConnectionResetError("reset"), {"ok": 1}]
+
+    assert execute_with_retry(mock_req, retries=3, delay_sec=0.01) == {"ok": 1}
+    assert mock_req.execute.call_count == 3
+
+
+def test_execute_with_retry_raises_transport_error_when_exhausted(monkeypatch):
+    import httplib2
+
+    monkeypatch.setattr("src.integrations.sheets.time.sleep", lambda s: None)
+    mock_req = MagicMock()
+    mock_req.execute.side_effect = httplib2.ServerNotFoundError("dns")
+
+    with pytest.raises(httplib2.ServerNotFoundError):
+        execute_with_retry(mock_req, retries=2, delay_sec=0.01)
+    assert mock_req.execute.call_count == 2
+
+
+def test_execute_with_retry_zero_retries_still_executes_once():
+    mock_req = MagicMock()
+    mock_req.execute.return_value = {"values": []}
+
+    assert execute_with_retry(mock_req, retries=0, delay_sec=0.01) == {"values": []}
     assert mock_req.execute.call_count == 1

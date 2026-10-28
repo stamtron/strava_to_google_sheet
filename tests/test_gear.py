@@ -3,6 +3,7 @@ Unit tests for Gear and Shoe Mileage Tracker.
 """
 
 from src.analytics.gear import extract_gear_summary
+from src.config import GEAR_BIKE_ALERT_KM, GEAR_WARNING_FRACTION
 
 
 def test_extract_gear_summary_with_retirement_alert():
@@ -68,10 +69,11 @@ def test_extract_gear_summary_warning_band():
 
 
 def test_api_gear_and_performance_endpoints(monkeypatch):
-    from fastapi.testclient import TestClient
-    from src.api.server import app
-
     import time
+
+    from fastapi.testclient import TestClient
+
+    from src.api.server import app
     fake_cache = {
         "timestamp": time.time(),
         "count": 200,
@@ -109,3 +111,32 @@ def test_api_gear_and_performance_endpoints(monkeypatch):
     assert "ctl" in perf_data["current"]
     assert "tsb" in perf_data["current"]
 
+
+
+def test_gear_type_follows_the_strava_id_prefix():
+    acts = [
+        # Shoes worn on a walk are still shoes.
+        {"id": 1, "sport_type": "Walk", "distance": 5000.0, "gear_id": "g123",
+         "start_date_local": "2026-09-01T08:00:00Z"},
+        # A bike id on an unknown sport is still a bike.
+        {"id": 2, "sport_type": "Workout", "distance": 20000.0, "gear_id": "b456",
+         "start_date_local": "2026-09-02T08:00:00Z"},
+    ]
+    by_id = {g["gear_id"]: g for g in extract_gear_summary(acts, shoe_alert_km=650)}
+    assert by_id["g123"]["gear_type"] == "Shoes"
+    assert by_id["g123"]["threshold_km"] == 650.0
+    assert by_id["b456"]["gear_type"] == "Bike"
+    assert by_id["b456"]["threshold_km"] == GEAR_BIKE_ALERT_KM
+
+
+def test_unprefixed_gear_falls_back_to_the_activity_sport():
+    acts = [{"id": 1, "sport_type": "Ride", "distance": 10000.0, "gear_id": "x9",
+             "start_date_local": "2026-09-01T08:00:00Z"}]
+    assert extract_gear_summary(acts)[0]["gear_type"] == "Bike"
+
+
+def test_bike_warning_band_uses_the_configured_fraction():
+    km = GEAR_BIKE_ALERT_KM * GEAR_WARNING_FRACTION + 1
+    acts = [{"id": 1, "sport_type": "Ride", "distance": km * 1000.0, "gear_id": "b1",
+             "start_date_local": "2026-09-01T08:00:00Z"}]
+    assert extract_gear_summary(acts)[0]["status"] == "warning"

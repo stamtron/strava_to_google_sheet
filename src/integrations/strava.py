@@ -5,21 +5,31 @@ Strava API Client and OAuth2 Authentication.
 import json
 import logging
 import os
+import threading
 import time
 import webbrowser
-
-logger = logging.getLogger(__name__)
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import requests
+
 from src.config import (
+    STRAVA_BACKOFF_BASE_SEC,
+    STRAVA_BACKOFF_CAP_SEC,
     STRAVA_CLIENT_ID,
     STRAVA_CLIENT_SECRET,
+    STRAVA_HTTP_TIMEOUT_SEC,
     STRAVA_MAX_RETRIES,
     STRAVA_REDIRECT_PORT,
     TOKEN_FILE,
 )
+from src.storage.atomic_file import write_json_atomic
+
+logger = logging.getLogger(__name__)
+
+# Serialises load -> refresh -> save so concurrent request threads don't each
+# burn the single-use refresh token or interleave writes to TOKEN_FILE.
+_TOKEN_LOCK = threading.Lock()
 
 AUTH_URL = "https://www.strava.com/oauth/authorize"
 TOKEN_URL = "https://www.strava.com/oauth/token"
@@ -39,6 +49,19 @@ class StravaRateLimitError(Exception):
 
 class StravaNetworkError(Exception):
     """Raised when Strava is unreachable (DNS, proxy, TLS, or timeout)."""
+
+
+class DetailsResult(dict):
+    """
+    Activity-id -> detail mapping returned by fetch_details_for_activities.
+
+    A plain dict for every existing caller, plus `incomplete` / `stop_reason`
+    ("rate_limit" or "network") when fetching stopped early, so writers can
+    avoid overwriting good sheet cells with detail-less values.
+    """
+
+    incomplete: bool = False
+    stop_reason: str | None = None
 
 
 class _OAuthCallbackHandler(BaseHTTPRequestHandler):
@@ -76,7 +99,7 @@ def _request(method: str, url: str, **kwargs) -> requests.Response:
     last_response = None
     for attempt in range(STRAVA_MAX_RETRIES):
         try:
-            response = requests.request(method, url, timeout=30, **kwargs)
+            response = requests.request(method, url, timeout=STRAVA_HTTP_TIMEOUT_SEC, **kwargs)
         except requests.RequestException as e:
             raise StravaNetworkError(f"Could not reach Strava ({url}): {e}") from e
         if response.status_code != 429:
@@ -85,11 +108,11 @@ def _request(method: str, url: str, **kwargs) -> requests.Response:
         last_response = response
         retry_after = response.headers.get("Retry-After")
         try:
-            delay = float(retry_after) if retry_after else 2.0 * (2**attempt)
+            delay = float(retry_after) if retry_after else STRAVA_BACKOFF_BASE_SEC * (2**attempt)
         except ValueError:
-            delay = 2.0 * (2**attempt)
+            delay = STRAVA_BACKOFF_BASE_SEC * (2**attempt)
         # Capped: a 15-minute window reset must not hang a request thread.
-        delay = min(delay, 30.0)
+        delay = min(delay, STRAVA_BACKOFF_CAP_SEC)
         if attempt < STRAVA_MAX_RETRIES - 1:
             logger.warning("Strava rate limit hit, retrying in %.0fs...", delay)
             time.sleep(delay)
@@ -104,16 +127,18 @@ def _request(method: str, url: str, **kwargs) -> requests.Response:
 def _load_cached_token() -> dict | None:
     if os.path.exists(TOKEN_FILE):
         try:
-            with open(TOKEN_FILE, "r") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError):
+            with open(TOKEN_FILE) as f:
+                data = json.load(f)
+        except (ValueError, OSError) as e:
+            # A torn or hand-edited file is treated as "no token", not a crash.
+            logger.warning("Ignoring unreadable Strava token file %s: %s", TOKEN_FILE, e)
             return None
+        return data if isinstance(data, dict) else None
     return None
 
 
 def _save_token(token_data: dict) -> None:
-    with open(TOKEN_FILE, "w") as f:
-        json.dump(token_data, f, indent=2)
+    write_json_atomic(TOKEN_FILE, token_data)
 
 
 def _refresh_access_token(refresh_token: str) -> dict:
@@ -123,7 +148,7 @@ def _refresh_access_token(refresh_token: str) -> dict:
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
     }
-    response = requests.post(TOKEN_URL, data=payload, timeout=30)
+    response = requests.post(TOKEN_URL, data=payload, timeout=STRAVA_HTTP_TIMEOUT_SEC)
     response.raise_for_status()
     token_data = response.json()
     _save_token(token_data)
@@ -167,7 +192,7 @@ def _authorize_new_user() -> dict:
         "code": _OAuthCallbackHandler.auth_code,
         "grant_type": "authorization_code",
     }
-    response = requests.post(TOKEN_URL, data=payload, timeout=30)
+    response = requests.post(TOKEN_URL, data=payload, timeout=STRAVA_HTTP_TIMEOUT_SEC)
     response.raise_for_status()
     token_data = response.json()
     _save_token(token_data)
@@ -182,6 +207,11 @@ def get_access_token(interactive: bool = True) -> str:
     raises StravaAuthRequired instead of opening a browser and blocking the
     calling thread on a redirect that will never arrive.
     """
+    with _TOKEN_LOCK:
+        return _get_access_token_locked(interactive)
+
+
+def _get_access_token_locked(interactive: bool) -> str:
     cached = _load_cached_token()
     if cached:
         expires_at = cached.get("expires_at", 0)
@@ -248,8 +278,11 @@ def fetch_details_for_activities(
     against Strava's rate limit — re-syncing the same window costs no extra
     calls. Keys are stringified activity IDs so the result survives a JSON
     round-trip unchanged.
+
+    Returns a DetailsResult; `incomplete` is True when a rate limit or network
+    failure stopped the loop before every activity had its details.
     """
-    details = {str(k): v for k, v in (known_details or {}).items()}
+    details = DetailsResult({str(k): v for k, v in (known_details or {}).items()})
 
     for act in activities:
         act_id = act.get("id")
@@ -262,11 +295,15 @@ def fetch_details_for_activities(
             details[key] = fetch_activity_detail(access_token, act_id)
         except StravaRateLimitError:
             logger.warning("Stopped fetching details early: Strava rate limit reached.")
+            details.incomplete = True
+            details.stop_reason = "rate_limit"
             break
         except StravaNetworkError as e:
             # Details are supplementary; keep what we have rather than losing the
             # activities we already fetched successfully.
             logger.warning("Stopped fetching details early: %s", e)
+            details.incomplete = True
+            details.stop_reason = "network"
             break
         if progress:
             print(".", end="", flush=True)

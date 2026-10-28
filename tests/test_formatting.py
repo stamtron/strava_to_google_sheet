@@ -6,8 +6,10 @@ from src.formatting import (
     format_duration,
     format_duration_el,
     format_duration_short_el,
+    format_mmss,
     format_pace,
     is_indoor_ride,
+    parse_pace_to_sec,
 )
 
 
@@ -72,3 +74,17 @@ def test_trainer_ride_with_real_distance_is_not_estimated():
     act = {"sport_type": "VirtualRide", "distance": 30000.0, "average_speed": 7.5, "moving_time": 4000, "trainer": True}
     assert not is_indoor_ride(act)
     assert corrected_distance_and_speed(act) == (30000.0, 7.5)
+
+
+def test_format_mmss_rounds_and_clamps():
+    assert format_mmss(315) == "5:15"
+    assert format_mmss(59.6) == "1:00"
+    assert format_mmss(-5) == "0:00"
+
+
+def test_parse_pace_to_sec_accepts_sheet_notations():
+    assert parse_pace_to_sec("5:15/km") == 315.0
+    assert parse_pace_to_sec("5,15''") == 315.0
+    assert parse_pace_to_sec("@ 4.50") == 290.0
+    assert parse_pace_to_sec("easy") is None
+    assert parse_pace_to_sec("") is None

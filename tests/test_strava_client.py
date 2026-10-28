@@ -146,3 +146,51 @@ def test_oauth_callback_port_differs_from_the_dashboard_port():
     """Sharing the port deadlocks the OAuth flow against the running server."""
     assert config.STRAVA_REDIRECT_PORT != config.SERVER_PORT
     assert str(config.STRAVA_REDIRECT_PORT) in strava.REDIRECT_URI
+
+
+def test_detail_fetch_flags_incomplete_on_rate_limit(monkeypatch):
+    def fake_detail(token, act_id):
+        if act_id == 2:
+            raise StravaRateLimitError("limit")
+        return {"id": act_id}
+
+    monkeypatch.setattr(strava, "fetch_activity_detail", fake_detail)
+    details = strava.fetch_details_for_activities("tok", [{"id": 1}, {"id": 2}, {"id": 3}], delay_sec=0)
+
+    assert details == {"1": {"id": 1}}
+    assert details.incomplete is True
+    assert details.stop_reason == "rate_limit"
+
+
+def test_detail_fetch_complete_run_is_not_flagged(monkeypatch):
+    monkeypatch.setattr(strava, "fetch_activity_detail", lambda tok, act_id: {"id": act_id})
+    details = strava.fetch_details_for_activities("tok", [{"id": 1}], delay_sec=0)
+    assert details.incomplete is False
+    assert details.stop_reason is None
+
+
+def test_saved_token_is_owner_only(monkeypatch, tmp_path):
+    import json
+    import stat
+
+    token_path = tmp_path / "strava_token.json"
+    monkeypatch.setattr(strava, "TOKEN_FILE", str(token_path))
+    strava._save_token({"access_token": "a", "refresh_token": "r"})
+
+    assert stat.S_IMODE(token_path.stat().st_mode) == 0o600
+    assert json.loads(token_path.read_text()) == {"access_token": "a", "refresh_token": "r"}
+    assert [p.name for p in tmp_path.iterdir()] == ["strava_token.json"]  # no temp leftovers
+
+
+def test_torn_token_file_is_treated_as_missing(monkeypatch, tmp_path):
+    token_path = tmp_path / "strava_token.json"
+    token_path.write_text('{"access_token": "a", "refre')
+    monkeypatch.setattr(strava, "TOKEN_FILE", str(token_path))
+    assert strava._load_cached_token() is None
+
+
+def test_token_file_with_non_object_json_is_treated_as_missing(monkeypatch, tmp_path):
+    token_path = tmp_path / "strava_token.json"
+    token_path.write_text("[1, 2]")
+    monkeypatch.setattr(strava, "TOKEN_FILE", str(token_path))
+    assert strava._load_cached_token() is None

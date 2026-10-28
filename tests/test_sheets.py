@@ -4,12 +4,11 @@ from datetime import date
 
 from src.integrations.sheets import (
     calculate_weekly_totals,
-    format_activity_for_cell,
     format_activities_for_cell,
+    format_activity_for_cell,
     inspect_week_blocks,
     parse_date_range,
 )
-
 
 # parse_date_range
 
@@ -28,6 +27,11 @@ def test_parse_cross_month_range_with_en_dash():
 
 def test_parse_cross_month_range_two_digit_year():
     assert parse_date_range("31/8-6/9/'26") == (date(2026, 8, 31), date(2026, 9, 6))
+
+
+def test_parse_new_year_range_puts_start_in_previous_year():
+    assert parse_date_range("29/12-4/1/26") == (date(2025, 12, 29), date(2026, 1, 4))
+    assert parse_date_range("29/12–4/1/2026") == (date(2025, 12, 29), date(2026, 1, 4))
 
 
 def test_parse_tolerates_whitespace_and_curly_quotes():
@@ -211,3 +215,98 @@ def test_inspect_week_blocks_3row_layout():
     assert blocks[16]["summary_row"] == 18
 
 
+
+
+# write_to_sheet: interrupted detail fetches and week coverage
+
+from unittest.mock import MagicMock
+
+import pytest
+
+from src.integrations.strava import DetailsResult
+
+OLD_TEMPLATE = "Τρέξιμο : 0\nΠοδηλασία : 0\nΚολύμβηση : 0"
+
+
+def _run(act_id, day, km):
+    return {
+        "id": act_id,
+        "name": f"Run {act_id}",
+        "sport_type": "Run",
+        "start_date_local": f"2026-10-{day:02d}T07:00:00Z",
+        "distance": km * 1000.0,
+        "moving_time": int(km * 300),
+        "average_speed": 3.33,
+    }
+
+
+@pytest.fixture
+def fake_sheet(monkeypatch):
+    """A mocked Sheets service with one OLD-layout week (5-11/10/26) at row 13."""
+    import src.integrations.sheets as sheets_mod
+
+    service = MagicMock()
+    values = service.spreadsheets.return_value.values.return_value
+    values.get.return_value.execute.return_value = {"values": [["5-11/10/26"]]}
+    values.batchGet.return_value.execute.return_value = {
+        "valueRanges": [{"range": f"'{sheets_mod.SHEET_NAME}'!A13", "values": [[OLD_TEMPLATE]]}]
+    }
+    values.batchUpdate.return_value.execute.return_value = {}
+
+    monkeypatch.setattr(sheets_mod, "GOOGLE_SHEET_ID", "sheet-id")
+    monkeypatch.setattr(sheets_mod, "get_sheets_service", lambda: service)
+    monkeypatch.setattr(sheets_mod, "get_weekly_health_summaries", lambda weeks: {})
+
+    def written():
+        if not values.batchUpdate.called:
+            return {}
+        body = values.batchUpdate.call_args[1]["body"]
+        return {u["range"].split("!")[-1]: u["values"][0][0] for u in body["data"]}
+
+    return sheets_mod, written
+
+
+def test_incomplete_details_leave_detail_less_cells_untouched(fake_sheet, monkeypatch):
+    sheets_mod, written = fake_sheet
+    monkeypatch.setattr(sheets_mod, "_load_week_activities_from_store", lambda m, s: [])
+
+    details = DetailsResult({"1": {"calories": 500}})
+    details.incomplete = True
+    sheets_mod.write_to_sheet([_run(1, 6, 10), _run(2, 7, 5)], details)
+
+    cells = written()
+    assert "C13" in cells  # Tuesday has its details
+    assert "D13" not in cells  # Wednesday's detail fetch was cut short
+
+
+def test_weekly_totals_merge_store_with_batch(fake_sheet, monkeypatch):
+    sheets_mod, written = fake_sheet
+    # Monday's run is only in the store (the batch was cut at Tuesday).
+    monkeypatch.setattr(
+        sheets_mod, "_load_week_activities_from_store", lambda m, s: [_run(9, 5, 8), _run(1, 6, 10)]
+    )
+
+    sheets_mod.write_to_sheet([_run(1, 6, 10)], {})
+
+    assert "Τρέξιμο : 18.00 χλμ" in written()["A13"]
+
+
+def test_weekly_totals_skipped_when_store_missing_and_batch_partial(fake_sheet, monkeypatch):
+    sheets_mod, written = fake_sheet
+    monkeypatch.setattr(sheets_mod, "_load_week_activities_from_store", lambda m, s: None)
+
+    sheets_mod.write_to_sheet([_run(1, 6, 10)], {})
+
+    cells = written()
+    assert "C13" in cells
+    assert "A13" not in cells
+
+
+def test_weekly_totals_from_batch_when_it_covers_the_week(fake_sheet, monkeypatch):
+    sheets_mod, written = fake_sheet
+    monkeypatch.setattr(sheets_mod, "_load_week_activities_from_store", lambda m, s: None)
+
+    # The batch reaches back into the previous week, so this week is complete.
+    sheets_mod.write_to_sheet([_run(1, 6, 10), _run(0, 1, 3)], {})
+
+    assert "Τρέξιμο : 10.00 χλμ" in written()["A13"]

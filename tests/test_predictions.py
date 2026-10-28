@@ -1,10 +1,23 @@
 """Race/triathlon prediction tests, including API unit-language consistency."""
 
 from src.analytics.ai_coach import (
+    calculate_readiness_score,
     format_pace_min_km,
     format_race_time,
+    planned_run_base_pace_sec,
     predict_race_performances,
     predict_triathlon_performances,
+)
+from src.config import (
+    DEFAULT_RUN_PACE_SEC_PER_KM,
+    READINESS_BASE_SCORE,
+    READINESS_HRV_HIGH_BONUS,
+    READINESS_HRV_LOW_PENALTY,
+    READINESS_SCORE_MAX,
+    READINESS_SCORE_MIN,
+    READINESS_SLEEP_GOOD_BONUS,
+    READINESS_SLEEP_LOW_PENALTY,
+    TRI_LEG_FACTORS,
 )
 
 GREEK_UNITS = ("χλμ", "/100μ", "χλμ/ω")
@@ -104,3 +117,63 @@ def test_triathlon_distances_are_ordered_by_total_time():
     totals = [p["total_time_seconds"] for p in tri["predictions"]]
     assert totals == sorted(totals)
     assert all(p["splits"] for p in tri["predictions"])
+
+
+# --- readiness heuristic ------------------------------------------------------
+
+
+def test_readiness_is_the_base_score_without_data():
+    assert calculate_readiness_score(None, None) == READINESS_BASE_SCORE
+
+
+def test_readiness_rewards_good_sleep_and_high_hrv():
+    expected = READINESS_BASE_SCORE + READINESS_SLEEP_GOOD_BONUS + READINESS_HRV_HIGH_BONUS
+    assert calculate_readiness_score(8.0, 75.0) == min(READINESS_SCORE_MAX, expected)
+
+
+def test_readiness_penalises_short_sleep_and_low_hrv():
+    expected = READINESS_BASE_SCORE - READINESS_SLEEP_LOW_PENALTY - READINESS_HRV_LOW_PENALTY
+    assert calculate_readiness_score(5.0, 40.0) == max(READINESS_SCORE_MIN, expected)
+
+
+def test_readiness_middle_band_is_neutral():
+    assert calculate_readiness_score(7.0, 60.0) == READINESS_BASE_SCORE
+
+
+def test_readiness_is_clamped(monkeypatch):
+    from src.analytics import ai_coach
+
+    monkeypatch.setattr(ai_coach, "READINESS_SLEEP_GOOD_BONUS", 500)
+    assert calculate_readiness_score(9.0, None) == READINESS_SCORE_MAX
+    monkeypatch.setattr(ai_coach, "READINESS_SLEEP_LOW_PENALTY", 500)
+    assert calculate_readiness_score(3.0, None) == READINESS_SCORE_MIN
+
+
+# --- planned run pace parsing ------------------------------------------------
+
+
+def test_planned_pace_reads_the_at_target():
+    assert planned_run_base_pace_sec("Τρέξιμο 8 χλμ @ 5:00") == 300.0
+    assert planned_run_base_pace_sec("Easy run 10k @4,45") == 285.0
+
+
+def test_planned_pace_falls_back_to_default_for_runs_without_a_target():
+    assert planned_run_base_pace_sec("Δρομικές ασκήσεις 30'") == DEFAULT_RUN_PACE_SEC_PER_KM
+
+
+def test_planned_pace_is_none_for_non_runs():
+    assert planned_run_base_pace_sec("Ποδήλατο 60' Z2") is None
+    assert planned_run_base_pace_sec("") is None
+    assert planned_run_base_pace_sec(None) is None
+
+
+# --- triathlon factors come from config --------------------------------------
+
+
+def test_triathlon_transitions_follow_config_for_pb_and_training_modes():
+    for use_race_pb, idx in ((True, 0), (False, 1)):
+        preds = predict_triathlon_performances([], use_race_pb=use_race_pb)["predictions"]
+        assert len(preds) == len(TRI_LEG_FACTORS)
+        for row, factors in zip(preds, TRI_LEG_FACTORS.values(), strict=True):
+            assert row["splits"]["t1"] == format_race_time(factors["t1_sec"][idx])
+            assert row["splits"]["t2"] == format_race_time(factors["t2_sec"][idx])

@@ -4,10 +4,7 @@ Unit tests for the Open-Meteo weather integration module.
 
 import json
 import time
-from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from src.integrations.weather import (
     decode_wmo_code,
@@ -15,6 +12,7 @@ from src.integrations.weather import (
     get_weather_outlook,
     parse_daily_weather_response,
 )
+from src.timeutil import today_local
 
 
 def test_decode_wmo_code():
@@ -69,7 +67,7 @@ def test_get_weather_outlook_with_caching(tmp_path, monkeypatch):
     cache_file = tmp_path / ".weather_cache.json"
     monkeypatch.setattr("src.integrations.weather.WEATHER_CACHE_FILE", str(cache_file))
 
-    today_str = date.today().isoformat()
+    today_str = today_local().isoformat()
     mock_payload = {
         "daily": {
             "time": [today_str],

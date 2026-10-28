@@ -4,32 +4,53 @@ Training Load, Relative Effort (Suffer Score), and Progression Metrics.
 
 import math
 from datetime import date, datetime, timedelta
+from itertools import pairwise
 
 from src.config import (
     ACWR_CHRONIC_WEEKS,
+    ACWR_LOW_MAX,
     ACWR_MIN_CHRONIC_WEEKS,
+    ACWR_OPTIMAL_MAX,
+    ACWR_OVERREACHING_MAX,
     ATL_DAYS,
     BIKE_SPORTS,
     CTL_DAYS,
+    FITNESS_DISPLAY_DAYS,
+    GREY_ZONE_MODERATE_MIN_PCT,
+    HIGH_INTENSITY_HEAVY_MIN_PCT,
     HR_MAX,
     HR_REST,
+    HR_ZONE_HRR_EDGES,
+    HR_ZONE_TIME_SPREAD,
+    KJ_TO_KCAL_FACTOR,
+    MIN_HRR_BPM,
+    POLARIZED_LOW_MIN_PCT,
+    POLARIZED_MODERATE_MAX_PCT,
+    PYRAMIDAL_LOW_MIN_PCT,
+    RPE_HRR_ANCHORS,
+    RPE_SUFFER_PER_MIN_ANCHORS,
     RUN_SPORTS,
     STRENGTH_SPORTS,
     SWIM_SPORTS,
+    TRIMP_DURATION_ONLY_PER_MIN,
+    TRIMP_EXPONENT,
+    TRIMP_HRR_FLOOR,
+    TRIMP_WEIGHT,
     TSB_FRESH_MAX,
     TSB_FRESH_MIN,
     TSB_OPTIMAL_MAX,
     TSB_OPTIMAL_MIN,
 )
 from src.formatting import corrected_distance_and_speed
+from src.timeutil import today_local
 
-# ACWR interpretation bands. `zone` is a stable machine-readable key; the
-# frontend maps it to a colour so presentation stays out of the analytics layer.
+# ACWR interpretation bands as (inclusive upper edge, zone key). Keys are
+# machine-readable; presentation layers map them to labels and colours.
 ACWR_ZONES = (
-    (0.8, "low", "Low Load (Recovery / Undertraining)"),
-    (1.3, "optimal", "Optimal Zone"),
-    (1.5, "overreaching", "Overreaching"),
-    (float("inf"), "spike", "Overtraining Spike Risk"),
+    (ACWR_LOW_MAX, "low"),
+    (ACWR_OPTIMAL_MAX, "optimal"),
+    (ACWR_OVERREACHING_MAX, "overreaching"),
+    (float("inf"), "spike"),
 )
 
 
@@ -46,12 +67,27 @@ def calculate_relative_effort(act: dict) -> float:
     avg_hr = act.get("average_heartrate")
     if moving_time_min > 0 and avg_hr and HR_MAX > HR_REST:
         # Banister TRIMP: fraction of heart-rate reserve, exponentially weighted.
-        hr_ratio = max(0.4, min(1.0, (avg_hr - HR_REST) / (HR_MAX - HR_REST)))
-        stress_factor = hr_ratio * 0.64 * math.exp(1.92 * hr_ratio)
+        hr_ratio = max(TRIMP_HRR_FLOOR, min(1.0, (avg_hr - HR_REST) / (HR_MAX - HR_REST)))
+        stress_factor = hr_ratio * TRIMP_WEIGHT * math.exp(TRIMP_EXPONENT * hr_ratio)
         return round(moving_time_min * stress_factor, 1)
 
     # Fallback duration-based load
-    return round(moving_time_min * 0.5, 1) if moving_time_min > 0 else 0.0
+    return round(moving_time_min * TRIMP_DURATION_ONLY_PER_MIN, 1) if moving_time_min > 0 else 0.0
+
+
+def _interpolate_rpe(value: float, anchors: tuple[tuple[float, float], ...]) -> int:
+    """Piecewise-linear lookup of `value` on (input, rpe) anchors, clamped to 1-10."""
+    if value <= anchors[0][0]:
+        raw_rpe = anchors[0][1]
+    elif value >= anchors[-1][0]:
+        raw_rpe = anchors[-1][1]
+    else:
+        raw_rpe = anchors[-1][1]
+        for (x0, y0), (x1, y1) in pairwise(anchors):
+            if value < x1:
+                raw_rpe = y0 + (value - x0) / (x1 - x0) * (y1 - y0)
+                break
+    return max(1, min(10, round(raw_rpe)))
 
 
 def normalize_rpe(
@@ -84,35 +120,15 @@ def normalize_rpe(
     # 2. Average Heart Rate via Karvonen %HRR
     avg_hr = act.get("average_heartrate")
     if avg_hr and hr_max > hr_rest:
-        hrr_pct = (avg_hr - hr_rest) / max(20.0, float(hr_max - hr_rest))
-        if hrr_pct < 0.40:
-            raw_rpe = 1.0 + (max(0.0, hrr_pct) / 0.40) * 1.0
-        elif hrr_pct < 0.60:
-            raw_rpe = 2.0 + ((hrr_pct - 0.40) / 0.20) * 2.0
-        elif hrr_pct < 0.75:
-            raw_rpe = 4.0 + ((hrr_pct - 0.60) / 0.15) * 2.0
-        elif hrr_pct < 0.85:
-            raw_rpe = 6.0 + ((hrr_pct - 0.75) / 0.10) * 2.0
-        else:
-            raw_rpe = 8.0 + ((hrr_pct - 0.85) / 0.15) * 2.0
-        return max(1, min(10, round(raw_rpe)))
+        hrr_pct = (avg_hr - hr_rest) / max(float(MIN_HRR_BPM), float(hr_max - hr_rest))
+        return _interpolate_rpe(hrr_pct, RPE_HRR_ANCHORS)
 
     # 3. Strava Suffer Score per minute intensity
     suffer = (detail.get("suffer_score") if detail else None) or act.get("suffer_score")
     moving_sec = act.get("moving_time", 0) or 0
     if suffer and moving_sec > 0:
         intensity = float(suffer) / (moving_sec / 60.0)
-        if intensity < 0.25:
-            raw_rpe = 1.0 + (intensity / 0.25) * 2.0
-        elif intensity < 0.50:
-            raw_rpe = 3.0 + ((intensity - 0.25) / 0.25) * 2.0
-        elif intensity < 0.80:
-            raw_rpe = 5.0 + ((intensity - 0.50) / 0.30) * 2.0
-        elif intensity < 1.20:
-            raw_rpe = 7.0 + ((intensity - 0.80) / 0.40) * 2.0
-        else:
-            raw_rpe = 9.0 + min(1.0, (intensity - 1.20) / 0.80) * 1.0
-        return max(1, min(10, round(raw_rpe)))
+        return _interpolate_rpe(intensity, RPE_SUFFER_PER_MIN_ANCHORS)
 
     return 4
 
@@ -170,7 +186,10 @@ def process_activities_into_weeks(activities: list[dict]) -> dict:
         raw_dt = act.get("start_date_local", "")
         if not raw_dt:
             continue
-        act_date = datetime.fromisoformat(raw_dt.replace("Z", "+00:00")).date()
+        try:
+            act_date = datetime.fromisoformat(raw_dt).date()
+        except (ValueError, TypeError, AttributeError):
+            continue
         week_monday = act_date - timedelta(days=act_date.weekday())
         week_key = week_monday.isoformat()
 
@@ -203,7 +222,7 @@ def process_activities_into_weeks(activities: list[dict]) -> dict:
         dist_km = dist_m / 1000.0
         elev = float(act.get("total_elevation_gain", 0) or 0)
         sport = act.get("sport_type") or act.get("type", "")
-        calories = float(act.get("calories", 0) or (act.get("kilojoules", 0) * 0.239) or 0)
+        calories = float(act.get("calories") or 0) or float(act.get("kilojoules") or 0) * KJ_TO_KCAL_FACTOR
 
         effort = calculate_relative_effort(act)
         group = sport_group(sport)
@@ -235,12 +254,12 @@ def process_activities_into_weeks(activities: list[dict]) -> dict:
     return weeks
 
 
-def _acwr_zone(ratio: float) -> tuple[str, str]:
-    """Map an ACWR ratio to its (zone, status) pair."""
-    for upper, zone, status in ACWR_ZONES:
+def _acwr_zone(ratio: float) -> str:
+    """Map an ACWR ratio to its zone key."""
+    for upper, zone in ACWR_ZONES:
         if ratio <= upper:
-            return zone, status
-    return ACWR_ZONES[-1][1], ACWR_ZONES[-1][2]
+            return zone
+    return ACWR_ZONES[-1][1]
 
 
 def calculate_acwr(
@@ -257,7 +276,11 @@ def calculate_acwr(
               the mean toward the acute value and compresses every ratio toward
               1.0, which hides exactly the spikes ACWR exists to detect.
 
-    Weeks with fewer than ACWR_MIN_CHRONIC_WEEKS of prior history get
+    Preceding weeks are found by calendar offset (monday - 7·k), so a week with
+    no activities counts as zero load instead of being skipped — skipping it
+    would leave a deload or injury break out of the baseline and hide the spike
+    on return. History is measured in calendar weeks since the earliest week in
+    `weeks_dict`; weeks with fewer than ACWR_MIN_CHRONIC_WEEKS of it get
     acwr_ratio=None rather than a ratio computed from too little data.
 
     `effort_key` selects which week field to score. It defaults to the aggregate,
@@ -265,11 +288,19 @@ def calculate_acwr(
     can sit in the optimal zone while one discipline spikes underneath it.
     """
     acwr_by_week = {}
+    if not sorted_week_keys:
+        return acwr_by_week
 
-    for i, w_key in enumerate(sorted_week_keys):
+    first_monday = min(date.fromisoformat(k) for k in (weeks_dict.keys() or sorted_week_keys))
+
+    for w_key in sorted_week_keys:
         current_effort = weeks_dict[w_key].get(effort_key, 0.0)
-        prior_keys = sorted_week_keys[max(0, i - ACWR_CHRONIC_WEEKS) : i]
-        prior_efforts = [weeks_dict[k].get(effort_key, 0.0) for k in prior_keys]
+        monday = date.fromisoformat(w_key)
+        history_weeks = max(0, (monday - first_monday).days // 7)
+        lookback = min(ACWR_CHRONIC_WEEKS, history_weeks)
+        preceding_weeks = [(monday - timedelta(weeks=k)).isoformat() for k in range(lookback, 0, -1)]
+        chronic_weeks = preceding_weeks[-ACWR_CHRONIC_WEEKS:]
+        prior_efforts = [weeks_dict.get(k, {}).get(effort_key, 0.0) for k in chronic_weeks]
 
         if len(prior_efforts) < ACWR_MIN_CHRONIC_WEEKS:
             acwr_by_week[w_key] = {
@@ -277,7 +308,7 @@ def calculate_acwr(
                 "chronic_effort": round(sum(prior_efforts) / len(prior_efforts), 1) if prior_efforts else None,
                 "acwr_ratio": None,
                 "chronic_weeks": len(prior_efforts),
-                "status": "Insufficient history",
+                "status": "insufficient_history",
                 "zone": "unknown",
             }
             continue
@@ -289,19 +320,19 @@ def calculate_acwr(
                 "chronic_effort": 0.0,
                 "acwr_ratio": None,
                 "chronic_weeks": len(prior_efforts),
-                "status": "No chronic baseline",
+                "status": "no_baseline",
                 "zone": "unknown",
             }
             continue
 
         ratio = round(current_effort / chronic_avg, 2)
-        zone, status = _acwr_zone(ratio)
+        zone = _acwr_zone(ratio)
         acwr_by_week[w_key] = {
             "acute_effort": round(current_effort, 1),
             "chronic_effort": round(chronic_avg, 1),
             "acwr_ratio": ratio,
             "chronic_weeks": len(prior_efforts),
-            "status": status,
+            "status": zone,
             "zone": zone,
         }
 
@@ -343,20 +374,23 @@ def build_progression_history(weeks_dict: dict, acwr_map: dict | None = None) ->
     return progression
 
 
+_ZONE_KEYS = ("z1", "z2", "z3", "z4", "z5")
+
+
 def calculate_hr_zones(hr_max: int = HR_MAX, hr_rest: int = HR_REST) -> dict[str, tuple[int, int]]:
     """
     Calculate 5 Heart Rate Training Zones using Karvonen Heart Rate Reserve (HRR).
 
     Returns { 'z1': (min_bpm, max_bpm), 'z2': ..., 'z5': ... }
     """
-    hrr = max(20, hr_max - hr_rest)
-    return {
-        "z1": (round(hr_rest + 0.50 * hrr), round(hr_rest + 0.60 * hrr)),
-        "z2": (round(hr_rest + 0.60 * hrr) + 1, round(hr_rest + 0.72 * hrr)),
-        "z3": (round(hr_rest + 0.72 * hrr) + 1, round(hr_rest + 0.82 * hrr)),
-        "z4": (round(hr_rest + 0.82 * hrr) + 1, round(hr_rest + 0.90 * hrr)),
-        "z5": (round(hr_rest + 0.90 * hrr) + 1, hr_max),
-    }
+    hrr = max(MIN_HRR_BPM, hr_max - hr_rest)
+    bpm = [round(hr_rest + edge * hrr) for edge in HR_ZONE_HRR_EDGES]
+    zones = {}
+    for i, key in enumerate(_ZONE_KEYS):
+        low = bpm[i] if i == 0 else bpm[i] + 1
+        high = bpm[i + 1] if i + 1 < len(bpm) else hr_max
+        zones[key] = (low, high)
+    return zones
 
 
 def estimate_activity_zone_times(act: dict, hr_max: int = HR_MAX, hr_rest: int = HR_REST) -> dict[str, float]:
@@ -373,19 +407,13 @@ def estimate_activity_zone_times(act: dict, hr_max: int = HR_MAX, hr_rest: int =
         # Without HR data, assume low-intensity Z2 baseline for aerobic endurance
         return {"z1": 0.0, "z2": moving_sec, "z3": 0.0, "z4": 0.0, "z5": 0.0}
 
-    hr_ratio = (avg_hr - hr_rest) / max(20.0, float(hr_max - hr_rest))
+    hr_ratio = (avg_hr - hr_rest) / max(float(MIN_HRR_BPM), float(hr_max - hr_rest))
 
-    # Spread time across adjacent zones centered around average intensity
-    if hr_ratio <= 0.60:
-        return {"z1": moving_sec * 0.75, "z2": moving_sec * 0.25, "z3": 0.0, "z4": 0.0, "z5": 0.0}
-    elif hr_ratio <= 0.72:
-        return {"z1": moving_sec * 0.20, "z2": moving_sec * 0.70, "z3": moving_sec * 0.10, "z4": 0.0, "z5": 0.0}
-    elif hr_ratio <= 0.82:
-        return {"z1": moving_sec * 0.10, "z2": moving_sec * 0.25, "z3": moving_sec * 0.55, "z4": moving_sec * 0.10, "z5": 0.0}
-    elif hr_ratio <= 0.90:
-        return {"z1": 0.0, "z2": moving_sec * 0.10, "z3": moving_sec * 0.25, "z4": moving_sec * 0.55, "z5": moving_sec * 0.10}
-    else:
-        return {"z1": 0.0, "z2": 0.0, "z3": moving_sec * 0.10, "z4": moving_sec * 0.30, "z5": moving_sec * 0.60}
+    # Spread time across adjacent zones centered around average intensity. The
+    # zone of the average is the number of zone edges (above Z1's) it exceeds.
+    zone_idx = sum(1 for edge in HR_ZONE_HRR_EDGES[1:] if hr_ratio > edge)
+    spread = HR_ZONE_TIME_SPREAD[zone_idx]
+    return {key: moving_sec * share for key, share in zip(_ZONE_KEYS, spread)}
 
 
 def calculate_polarized_distribution(
@@ -421,6 +449,7 @@ def calculate_polarized_distribution(
             "zones_sec": total_z,
             "classification": "unknown",
             "is_polarized": False,
+            "by_sport": by_sport,
         }
 
     low_sec = total_z["z1"] + total_z["z2"]
@@ -432,13 +461,13 @@ def calculate_polarized_distribution(
     high_pct = round((high_sec / total_time_sec) * 100.0, 1)
 
     # Sports science classification (Seiler Polarized / Pyramidal / Threshold)
-    if low_pct >= 75.0 and mod_pct <= 15.0:
+    if low_pct >= POLARIZED_LOW_MIN_PCT and mod_pct <= POLARIZED_MODERATE_MAX_PCT:
         classification = "polarized"  # Gold standard 80/20
-    elif low_pct >= 70.0 and mod_pct > high_pct:
+    elif low_pct >= PYRAMIDAL_LOW_MIN_PCT and mod_pct > high_pct:
         classification = "pyramidal"  # Progressive pyramid
-    elif mod_pct >= 25.0:
+    elif mod_pct >= GREY_ZONE_MODERATE_MIN_PCT:
         classification = "moderate_trap"  # Too much tempo (grey zone)
-    elif high_pct >= 25.0:
+    elif high_pct >= HIGH_INTENSITY_HEAVY_MIN_PCT:
         classification = "high_intensity_heavy"
     else:
         classification = "balanced"
@@ -458,25 +487,25 @@ def calculate_polarized_distribution(
     }
 
 
-def _classify_tsb(tsb: float) -> tuple[str, str]:
-    """Classify Training Stress Balance into a status key and standard label."""
+def _classify_tsb(tsb: float) -> str:
+    """Classify Training Stress Balance into a status key."""
     if tsb > TSB_FRESH_MAX:
-        return "transition", "Transition / Untrained"
+        return "transition"
     elif tsb >= TSB_FRESH_MIN:
-        return "fresh", "Race Ready / Fresh"
+        return "fresh"
     elif tsb >= TSB_OPTIMAL_MAX:
-        return "neutral", "Neutral / Maintenance"
+        return "neutral"
     elif tsb >= TSB_OPTIMAL_MIN:
-        return "optimal", "Optimal Training / Overload"
+        return "optimal"
     else:
-        return "high_fatigue", "High Fatigue / Overreaching Risk"
+        return "high_fatigue"
 
 
 def calculate_fitness_fatigue(
     activities: list[dict],
     ctl_days: int = CTL_DAYS,
     atl_days: int = ATL_DAYS,
-    display_days: int = 90,
+    display_days: int = FITNESS_DISPLAY_DAYS,
 ) -> dict:
     """
     Calculate daily Chronic Training Load (CTL / Fitness), Acute Training Load
@@ -485,7 +514,8 @@ def calculate_fitness_fatigue(
 
     To ensure mathematical accuracy and eliminate cold-start bias, the EWMA is warmed up
     from the earliest recorded activity in the provided set, and then sliced to
-    the most recent `display_days` up through today.
+    the most recent `display_days` up through today. Activities dated after
+    today (athlete-local) are ignored so `current` is always today's state.
 
     Returns:
     {
@@ -494,8 +524,7 @@ def calculate_fitness_fatigue(
             "ctl": float,
             "atl": float,
             "tsb": float,
-            "status": str,
-            "status_label": str,
+            "status": str,  # transition | fresh | neutral | optimal | high_fatigue
             "ctl_ramp_7d": float,
         },
         "series": [
@@ -521,22 +550,22 @@ def calculate_fitness_fatigue(
         if not raw_dt:
             continue
         try:
-            act_date = datetime.fromisoformat(raw_dt.replace("Z", "+00:00")).date()
+            act_date = datetime.fromisoformat(raw_dt).date()
             effort = calculate_relative_effort(act)
             daily_loads[act_date] = daily_loads.get(act_date, 0.0) + effort
         except (ValueError, TypeError):
             continue
 
-    today = date.today()
+    today = today_local()
     if daily_loads:
         start_date = min(daily_loads.keys())
-        # Warmup at least 60 days before the display window to stabilize CTL
+        # Warm up at least 2 × ctl_days before the display window to stabilize CTL
         display_start = today - timedelta(days=display_days)
         start_date = min(start_date, display_start - timedelta(days=ctl_days * 2))
     else:
         start_date = today - timedelta(days=display_days)
 
-    end_date = max(today, max(daily_loads.keys(), default=today))
+    end_date = today
 
     # 2. Iterate daily and update EWMA
     ctl_decay = math.exp(-1.0 / float(ctl_days))
@@ -553,7 +582,7 @@ def calculate_fitness_fatigue(
         ctl = (ctl * ctl_decay) + (load * (1.0 - ctl_decay))
         atl = (atl * atl_decay) + (load * (1.0 - atl_decay))
         tsb = ctl - atl
-        status_key, status_label = _classify_tsb(tsb)
+        status_key = _classify_tsb(tsb)
 
         full_series.append({
             "date": curr.isoformat(),
@@ -562,7 +591,6 @@ def calculate_fitness_fatigue(
             "atl": round(atl, 1),
             "tsb": round(tsb, 1),
             "status": status_key,
-            "status_label": status_label,
         })
         curr += timedelta(days=1)
 
@@ -577,7 +605,6 @@ def calculate_fitness_fatigue(
         "atl": 0.0,
         "tsb": 0.0,
         "status": "neutral",
-        "status_label": "Neutral / Maintenance",
     }
 
     # 7-day ramp rate for CTL (fitness progression slope)
@@ -591,7 +618,6 @@ def calculate_fitness_fatigue(
         "atl": current_entry["atl"],
         "tsb": current_entry["tsb"],
         "status": current_entry["status"],
-        "status_label": current_entry["status_label"],
         "ctl_ramp_7d": ctl_ramp_7d,
     }
 

@@ -11,8 +11,6 @@ from datetime import date, timedelta
 
 import pytest
 
-from tests.conftest import make_activity
-
 from src.analytics.durability import (
     SINGLE_LEG_EXERCISES,
     assess_run_durability,
@@ -34,6 +32,7 @@ from src.config import (
     RUN_RAMP_SAFE_PCT,
     STRAIN_WARN_THRESHOLD,
 )
+from tests.conftest import make_activity
 
 MONDAYS = ["2026-08-03", "2026-08-10", "2026-08-17", "2026-08-24"]
 
@@ -500,3 +499,66 @@ def test_a_negative_target_is_clamped_rather_than_inverted():
 
     assert plan["target_run_load"] == 0.0
     assert plan["shortfall_load"] == 0.0
+
+
+# ── Calendar gaps and the in-progress week ──────────────────────────────────
+
+
+def test_ramp_rate_after_a_missing_week_compares_against_zero_not_the_older_week():
+    """A week with no activity at all is absent from weeks_dict but still precedes the next."""
+    acts = run_week(MONDAYS[0], [20.0], start_id=1) + run_week(MONDAYS[2], [20.0], start_id=200)
+    ramp = run_ramp_rate(weeks_from(acts))
+
+    assert [r["week_key"] for r in ramp] == [MONDAYS[0], MONDAYS[2]]
+    assert ramp[1]["prev_run_km"] == 0.0
+    assert ramp[1]["change_pct"] is None
+    assert ramp[1]["severity"] == "unknown"
+
+
+@pytest.fixture
+def mid_week_today(monkeypatch):
+    """Pin today to the Wednesday of the last MONDAYS week (3 days elapsed)."""
+    import src.analytics.durability as durability_mod
+
+    today = date.fromisoformat(MONDAYS[-1]) + timedelta(days=2)
+    monkeypatch.setattr(durability_mod, "today_local", lambda: today)
+    return today
+
+
+def test_spacing_counts_rest_days_only_up_to_today(mid_week_today):
+    weeks = weeks_from(run_week(MONDAYS[-1], [8.0, 0, 0]))
+    spacing = run_spacing_profile(weeks)
+
+    assert spacing["days_elapsed_last_week"] == 3
+    assert spacing["rest_days_last_week"] == 2
+    assert spacing["severity"] == "none"
+
+
+def test_spacing_ignores_future_dated_runs_in_the_current_week(mid_week_today):
+    acts = run_week(MONDAYS[-1], [8.0, 0, 0, 0, 0, 10.0])  # Saturday run is planned/future
+    spacing = run_spacing_profile(weeks_from(acts))
+
+    assert spacing["rest_days_last_week"] == 2
+    assert spacing["back_to_back_days_last_week"] == 0
+
+
+def test_monotony_of_the_current_week_uses_elapsed_days_only(mid_week_today):
+    """Mon/Wed runs scored over Mon-Wed, not with four phantom zero days appended."""
+    acts = run_week(MONDAYS[-1], [5.0, 0, 5.0], suffer_score=100)
+    latest = training_monotony_and_strain(weeks_from(acts))["latest"]
+    full_week = training_monotony_and_strain(
+        weeks_from(run_week(MONDAYS[0], [5.0, 0, 5.0], suffer_score=100))
+    )["latest"]
+
+    # Loads [100, 0, 100] -> mean 66.7, sd 47.1; the full week would be 0.63.
+    assert latest["monotony"] == pytest.approx(1.41, abs=0.01)
+    assert full_week["monotony"] == pytest.approx(0.63, abs=0.01)
+
+
+def test_monotony_before_the_week_starts_is_unknown(monkeypatch):
+    import src.analytics.durability as durability_mod
+
+    monkeypatch.setattr(durability_mod, "today_local", lambda: date.fromisoformat(MONDAYS[-1]) - timedelta(days=1))
+    latest = training_monotony_and_strain(weeks_from(run_week(MONDAYS[-1], [5.0], suffer_score=100)))["latest"]
+    assert latest["monotony"] is None
+    assert latest["severity"] == "unknown"

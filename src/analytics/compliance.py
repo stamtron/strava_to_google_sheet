@@ -8,11 +8,35 @@ actual telemetry logged from Strava to calculate volume, pace, and execution fid
 from __future__ import annotations
 
 import re
-from datetime import date
 from typing import Any
 
-from src.config import BIKE_SPORTS, RUN_SPORTS, STRENGTH_SPORTS, SWIM_SPORTS
-from src.formatting import corrected_distance_and_speed, format_pace
+from src.analytics.metrics import sport_group
+from src.config import (
+    COMPLIANCE_REST_BROKEN_SHORT_MIN,
+    COMPLIANCE_SCORE_COMPLETED,
+    COMPLIANCE_SCORE_DEVIATION_FLOOR,
+    COMPLIANCE_SCORE_FULL,
+    COMPLIANCE_SCORE_OTHER,
+    COMPLIANCE_SCORE_REST_BROKEN_LONG,
+    COMPLIANCE_SCORE_REST_BROKEN_SHORT,
+    COMPLIANCE_SCORE_UNPLANNED,
+    COMPLIANCE_SPOT_ON_MAX_PCT,
+    COMPLIANCE_SPOT_ON_MIN_PCT,
+)
+from src.formatting import corrected_distance_and_speed, parse_pace_to_sec
+
+# Section-header keywords, matched on accent-stripped lower-case text. Word
+# boundaries keep e.g. "strides" from reading as a ride. Checked in order.
+_SPORT_KEYWORDS = (
+    ("Swim", re.compile(r"\b(?:κολυμβ\w*|κολυμπ\w*|swim\w*)")),
+    ("Ride", re.compile(r"\b(?:ποδηλασ\w*|ποδηλατ\w*|ride|rides|riding|bike|biking|cycling)\b")),
+    ("WeightTraining", re.compile(r"\b(?:ενδυναμωσ\w*|βαρη|βαρα|strength|gym)\b")),
+    ("Run", re.compile(r"\b(?:τρεξ\w*|run\w*)")),
+    ("Rest", re.compile(r"\b(?:ρεπο|rest day|ξεκουρασ\w*)")),
+)
+
+# metrics.sport_group key -> the sport label used by parsed plan items.
+_GROUP_TO_PLAN_SPORT = {"run": "Run", "bike": "Ride", "swim": "Swim", "strength": "WeightTraining"}
 
 
 def _normalize_greek(text: str) -> str:
@@ -74,9 +98,7 @@ def parse_planned_workout(text: str) -> list[dict[str, Any]]:
         if not pace_match:
             pace_match = re.search(r"(\d{1,2})[:,\.](\d{2})\s*(?:['΄’]{1,2}|/km|/χλμ)", desc, re.IGNORECASE)
         if pace_match:
-            mins = int(pace_match.group(1))
-            secs = int(pace_match.group(2))
-            target_pace_sec = mins * 60 + secs
+            target_pace_sec = int(parse_pace_to_sec(pace_match.group(0)))
 
         inferred_sport = sport or "Run"
         items.append({
@@ -89,17 +111,7 @@ def parse_planned_workout(text: str) -> list[dict[str, Any]]:
 
     for line in lines:
         lower = _normalize_greek(line)
-        new_sport = None
-        if any(w in lower for w in ("κολυμβηση", "κολυμπι", "swim")):
-            new_sport = "Swim"
-        elif any(w in lower for w in ("ποδηλασια", "ποδηλατο", "ride", "bike", "cycling")):
-            new_sport = "Ride"
-        elif any(w in lower for w in ("ενδυναμωση", "βαρη", "strength", "gym")):
-            new_sport = "WeightTraining"
-        elif any(w in lower for w in ("τρεξιμο", "run")):
-            new_sport = "Run"
-        elif any(w in lower for w in ("ρεπο", "rest day", "ξεκουραση")):
-            new_sport = "Rest"
+        new_sport = next((sport for sport, pattern in _SPORT_KEYWORDS if pattern.search(lower)), None)
 
         if new_sport and new_sport != current_sport:
             if current_sport:
@@ -116,16 +128,8 @@ def parse_planned_workout(text: str) -> list[dict[str, Any]]:
 
 
 def _map_act_sport_group(act_sport: str) -> str:
-    """Normalize activity sport to canonical groups."""
-    if act_sport in RUN_SPORTS:
-        return "Run"
-    if act_sport in BIKE_SPORTS:
-        return "Ride"
-    if act_sport in SWIM_SPORTS:
-        return "Swim"
-    if act_sport in STRENGTH_SPORTS:
-        return "WeightTraining"
-    return act_sport
+    """Normalize activity sport to the plan's sport labels (unknown sports pass through)."""
+    return _GROUP_TO_PLAN_SPORT.get(sport_group(act_sport), act_sport)
 
 
 def evaluate_daily_compliance(
@@ -141,18 +145,22 @@ def evaluate_daily_compliance(
     if is_rest_day:
         if not actual_activities:
             return {
-                "compliance_score": 100,
+                "compliance_score": COMPLIANCE_SCORE_FULL,
                 "status": "rest_day_honored",
-                "summary": "Rest day honored. Zero training load recorded.",
                 "matches": [],
                 "unmatched_actual": [],
             }
         # Athlete trained on a rest day
         total_time_min = sum((a.get("moving_time") or 0) / 60.0 for a in actual_activities)
         return {
-            "compliance_score": 50 if total_time_min < 30 else 30,
+            "compliance_score": (
+                COMPLIANCE_SCORE_REST_BROKEN_SHORT
+                if total_time_min < COMPLIANCE_REST_BROKEN_SHORT_MIN
+                else COMPLIANCE_SCORE_REST_BROKEN_LONG
+            ),
             "status": "rest_day_broken",
-            "summary": f"Rest day scheduled, but {len(actual_activities)} session(s) totaling {total_time_min:.0f}m logged.",
+            "session_count": len(actual_activities),
+            "total_time_min": round(total_time_min, 1),
             "matches": [],
             "unmatched_actual": [a.get("name", "Activity") for a in actual_activities],
         }
@@ -160,16 +168,15 @@ def evaluate_daily_compliance(
     if not planned_items:
         if actual_activities:
             return {
-                "compliance_score": 80,
+                "compliance_score": COMPLIANCE_SCORE_UNPLANNED,
                 "status": "unplanned_training",
-                "summary": f"{len(actual_activities)} activity(ies) logged without a scheduled plan.",
+                "session_count": len(actual_activities),
                 "matches": [],
                 "unmatched_actual": [a.get("name", "Activity") for a in actual_activities],
             }
         return {
-            "compliance_score": 100,
+            "compliance_score": COMPLIANCE_SCORE_FULL,
             "status": "rest_or_empty",
-            "summary": "No workout planned and no activities recorded.",
             "matches": [],
             "unmatched_actual": [],
         }
@@ -207,14 +214,16 @@ def evaluate_daily_compliance(
                 "planned_pace_sec": target_pace_sec,
                 "actual_pace_sec": None,
                 "dist_compliance_pct": 0.0 if target_km else None,
-                "notes": f"Prescribed {p_sport} session was missed.",
             })
             continue
 
         act_dist_m, _ = corrected_distance_and_speed(best_act)
         act_dist_km = act_dist_m / 1000.0
         moving_time_sec = best_act.get("moving_time") or 0
-        actual_pace_sec = (moving_time_sec / act_dist_km) if act_dist_km > 0 else None
+        # Swim targets (e.g. "@1:45") are per 100 m; everything else is per km.
+        is_swim = p_sport == "Swim"
+        pace_unit_km = 0.1 if is_swim else 1.0
+        actual_pace_sec = (moving_time_sec / (act_dist_km / pace_unit_km)) if act_dist_km > 0 else None
 
         dist_comp = None
         if target_km and target_km > 0:
@@ -230,25 +239,16 @@ def evaluate_daily_compliance(
         if target_pace_sec and actual_pace_sec:
             pace_diff = round(actual_pace_sec - target_pace_sec, 1)
 
-        # Classification
-        if dist_comp is not None:
-            if 88.0 <= dist_comp <= 112.0:
-                item_status = "spot_on"
-            elif dist_comp > 115.0:
-                item_status = "overreach"
-            else:
-                item_status = "underreach"
-        elif target_min:
-            act_min = moving_time_sec / 60.0
-            dur_pct = (act_min / target_min) * 100
-            if 85.0 <= dur_pct <= 115.0:
-                item_status = "spot_on"
-            elif dur_pct > 115.0:
-                item_status = "overreach"
-            else:
-                item_status = "underreach"
-        else:
+        # Classification: distance when prescribed, otherwise duration, same bands.
+        volume_pct = dist_comp if dist_comp is not None else dur_comp
+        if volume_pct is None:
             item_status = "completed"
+        elif volume_pct > COMPLIANCE_SPOT_ON_MAX_PCT:
+            item_status = "overreach"
+        elif volume_pct >= COMPLIANCE_SPOT_ON_MIN_PCT:
+            item_status = "spot_on"
+        else:
+            item_status = "underreach"
 
         matches.append({
             "sport": p_sport,
@@ -263,6 +263,7 @@ def evaluate_daily_compliance(
             "planned_pace_sec": target_pace_sec,
             "actual_pace_sec": round(actual_pace_sec, 1) if actual_pace_sec else None,
             "pace_diff_sec": pace_diff,
+            "pace_unit": "per_100m" if is_swim else "per_km",
             "moving_time_min": round(moving_time_sec / 60.0, 1),
         })
 
@@ -281,49 +282,23 @@ def evaluate_daily_compliance(
         for m in matches:
             st = m["status"]
             if st == "spot_on":
-                scores.append(100)
+                scores.append(COMPLIANCE_SCORE_FULL)
             elif st == "completed":
-                scores.append(90)
+                scores.append(COMPLIANCE_SCORE_COMPLETED)
             elif st in ("overreach", "underreach"):
+                # Over/underreach always carry a volume percentage (see classification).
                 pct = m.get("dist_compliance_pct") if m.get("dist_compliance_pct") is not None else m.get("dur_compliance_pct")
-                if pct is None:
-                    pct = 80.0
-                scores.append(max(40, int(100 - abs(100 - pct))))
+                deviation = abs(100 - pct)
+                scores.append(max(COMPLIANCE_SCORE_DEVIATION_FLOOR, int(COMPLIANCE_SCORE_FULL - deviation)))
             elif st == "missed":
                 scores.append(0)
             else:
-                scores.append(70)
+                scores.append(COMPLIANCE_SCORE_OTHER)
         score = int(sum(scores) / len(scores))
-
-    summary_parts = []
-    for m in matches:
-        comp_pct = m.get("dist_compliance_pct") if m.get("dist_compliance_pct") is not None else m.get("dur_compliance_pct")
-        if m["status"] == "spot_on":
-            if m.get("planned_km") and m.get("actual_km") is not None:
-                summary_parts.append(f"{m['sport']}: Executed accurately ({m['actual_km']}km vs planned {m['planned_km']}km).")
-            elif m.get("planned_min") and m.get("actual_min") is not None:
-                summary_parts.append(f"{m['sport']}: Executed accurately ({m['actual_min']:.0f}m vs planned {m['planned_min']:.0f}m).")
-            else:
-                summary_parts.append(f"{m['sport']}: Executed accurately.")
-        elif m["status"] == "overreach":
-            pct_str = f" (+{comp_pct - 100:.0f}%)" if comp_pct is not None else ""
-            summary_parts.append(f"{m['sport']}: Volume overshot{pct_str}. Watch recovery.")
-        elif m["status"] == "underreach":
-            if m.get("planned_km") and m.get("actual_km") is not None:
-                summary_parts.append(f"{m['sport']}: Volume under prescribed target ({m['actual_km']}km of {m['planned_km']}km).")
-            elif m.get("planned_min") and m.get("actual_min") is not None:
-                summary_parts.append(f"{m['sport']}: Volume under prescribed target ({m['actual_min']:.0f}m of {m['planned_min']:.0f}m).")
-            elif comp_pct is not None:
-                summary_parts.append(f"{m['sport']}: Volume under prescribed target ({comp_pct:.0f}%).")
-            else:
-                summary_parts.append(f"{m['sport']}: Volume under prescribed target.")
-        elif m["status"] == "missed":
-            summary_parts.append(f"{m['sport']}: Session was not completed.")
 
     return {
         "compliance_score": score,
         "status": "evaluated",
-        "summary": " ".join(summary_parts) or "Workout evaluated.",
         "matches": matches,
         "unmatched_actual": unmatched,
     }

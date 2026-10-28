@@ -8,12 +8,31 @@ past the injury prevention threshold.
 
 from __future__ import annotations
 
-import json
-from datetime import datetime
 from typing import Any
 
-from src.config import BIKE_SPORTS, RUN_SPORTS, SHOE_ALERT_KM
+from src.config import (
+    BIKE_SPORTS,
+    GEAR_BIKE_ALERT_KM,
+    GEAR_WARNING_FRACTION,
+    RUN_SPORTS,
+    SHOE_ALERT_KM,
+)
 from src.formatting import corrected_distance_and_speed
+
+# Strava gear ids encode their kind: "g…" is shoes, "b…" is a bike.
+_GEAR_ID_PREFIX_TYPES = {"g": "Shoes", "b": "Bike"}
+
+
+def _classify_gear(gear_id: str, sport: str) -> str:
+    """Gear type from the Strava id prefix, falling back to the activity's sport."""
+    prefix_type = _GEAR_ID_PREFIX_TYPES.get(str(gear_id)[:1].lower())
+    if prefix_type:
+        return prefix_type
+    if sport in RUN_SPORTS:
+        return "Shoes"
+    if sport in BIKE_SPORTS:
+        return "Bike"
+    return "Gear"
 
 
 def extract_gear_summary(
@@ -36,8 +55,7 @@ def extract_gear_summary(
             continue
 
         sport = act.get("sport_type") or act.get("type", "Unknown")
-        is_shoe = sport in RUN_SPORTS
-        is_bike = sport in BIKE_SPORTS
+        gear_type = _classify_gear(gear_id, sport)
 
         dist_m, _ = corrected_distance_and_speed(act)
         dist_km = dist_m / 1000.0
@@ -47,21 +65,27 @@ def extract_gear_summary(
         gear_obj = detail.get("gear") or {}
         gear_name = gear_obj.get("name") if isinstance(gear_obj, dict) else None
 
-        if gear_id not in gear_stats:
-            gear_type = "Shoes" if is_shoe else ("Bike" if is_bike else "Gear")
+        if gear_id not in gear_stats or gear_stats[gear_id]["gear_type"] == "Gear":
+            # An unrecognised id first seen on e.g. a walk is re-typed once a run
+            # or ride reveals what it is; totals carried so far are kept.
+            previous = gear_stats.get(gear_id)
             gear_stats[gear_id] = {
                 "gear_id": gear_id,
-                "name": gear_name or f"{gear_type} ({gear_id})",
+                "name": gear_name,  # None when Strava has no name; presenters fall back to the id
                 "gear_type": gear_type,
                 "total_km": 0.0,
                 "activity_count": 0,
                 "first_used": start_date[:10] if start_date else None,
                 "last_used": start_date[:10] if start_date else None,
-                "threshold_km": float(shoe_alert_km) if is_shoe else 5000.0,
+                "threshold_km": float(shoe_alert_km) if gear_type == "Shoes" else GEAR_BIKE_ALERT_KM,
             }
-        else:
-            if gear_name and "(" in gear_stats[gear_id]["name"]:
-                gear_stats[gear_id]["name"] = gear_name
+            if previous:
+                for key in ("total_km", "activity_count", "first_used", "last_used"):
+                    gear_stats[gear_id][key] = previous[key]
+                if previous["name"]:
+                    gear_stats[gear_id]["name"] = previous["name"]
+        elif gear_name and not gear_stats[gear_id]["name"]:
+            gear_stats[gear_id]["name"] = gear_name
 
         stat = gear_stats[gear_id]
         stat["total_km"] += dist_km
@@ -83,7 +107,7 @@ def extract_gear_summary(
         if total_km >= threshold:
             status = "retire"
             alert = True
-        elif total_km >= (threshold * 0.85):
+        elif total_km >= (threshold * GEAR_WARNING_FRACTION):
             status = "warning"
             alert = False
         else:

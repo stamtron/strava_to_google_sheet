@@ -16,13 +16,12 @@ import pytest
 
 chromadb = pytest.importorskip("chromadb")
 
-from src.analytics.coach_memory import (  # noqa: E402
+from src.analytics.coach_memory import (
     ChromaMemory,
     GeminiEmbeddingFunction,
     MemoryUnavailable,
-    _pad_with_critical_facts,
 )
-from src.storage.chat_store import FACT_CATEGORIES  # noqa: E402
+from src.storage.chat_store import FACT_CATEGORIES, pad_with_critical_facts
 
 
 class StubEmbeddings(chromadb.api.types.EmbeddingFunction):
@@ -247,14 +246,45 @@ def test_a_failing_query_degrades_to_recent_facts_rather_than_raising(memory, mo
 def test_padding_never_duplicates_a_fact_already_recalled():
     injury = {"id": "a", "category": "injury", "fact": "knee"}
     other = {"id": "b", "category": "preference", "fact": "flat"}
-    padded = _pad_with_critical_facts([injury], [injury, other], k=5)
+    padded = pad_with_critical_facts([injury], [injury, other], k=5)
     assert [f["id"] for f in padded] == ["a"]
 
 
 def test_padding_does_not_grow_a_full_result_set():
     hits = [{"id": str(i), "category": "preference"} for i in range(3)]
-    extra = [{"id": "x", "category": "injury"}]
-    assert _pad_with_critical_facts(hits, hits + extra, k=3) == hits
+    assert pad_with_critical_facts(hits, hits, k=3) == hits
+
+
+def test_a_full_recall_still_makes_room_for_an_unmatched_injury():
+    """With k semantic hits there were no empty slots, so injuries never rode along."""
+    hits = [{"id": str(i), "category": "preference"} for i in range(3)]
+    injury = {"id": "x", "category": "injury"}
+    padded = pad_with_critical_facts(hits, [*hits, injury], k=3)
+    # The weakest non-critical hit makes way; the rest keep relevance order.
+    assert [f["id"] for f in padded] == ["0", "1", "x"]
+
+
+def test_padding_keeps_critical_hits_and_caps_at_k():
+    hits = [
+        {"id": "p0", "category": "preference"},
+        {"id": "c0", "category": "constraint"},
+        {"id": "p1", "category": "preference"},
+    ]
+    missing = [{"id": f"i{n}", "category": "injury"} for n in range(5)]
+    padded = pad_with_critical_facts(hits, hits + missing, k=3)
+    assert len(padded) == 3
+    assert all(f["category"] in ("injury", "constraint") for f in padded)
+    assert padded[0]["id"] == "c0"
+
+
+def test_chroma_recall_with_more_than_k_facts_includes_the_injury(memory):
+    for i in range(6):
+        memory.remember(f"Prefers tempo run number {i} on the track.", category="preference")
+    memory.remember("Left knee ITBS flares above 40 km per week.", category="injury")
+
+    hits = memory.recall("tempo run on the track", k=3)
+    assert len(hits) == 3
+    assert any(h["category"] == "injury" for h in hits)
 
 
 # --------------------------------------------------------------------------- #
@@ -294,10 +324,7 @@ def test_documents_and_queries_use_different_task_types():
             def embed_content(model, contents, config):
                 seen.append(config["task_type"])
 
-                class _R:
-                    embeddings = [type("E", (), {"values": [0.1, 0.2]})() for _ in contents]
-
-                return _R()
+                return type("R", (), {"embeddings": [type("E", (), {"values": [0.1, 0.2]})() for _ in contents]})()
 
     fn = GeminiEmbeddingFunction(client=RecordingClient())
     # Chroma wraps `__call__` to normalize the result into numpy, hence the cast

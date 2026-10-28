@@ -32,7 +32,7 @@ from src.config import (
     COACH_MEMORY_DIR,
     GEMINI_API_KEY,
 )
-from src.storage.chat_store import FACT_CATEGORIES
+from src.storage.chat_store import FACT_CATEGORIES, pad_with_critical_facts
 
 # Distinct task types on write and on read. Gemini's embedding models are
 # trained asymmetrically: a stored fact and a question about it land closer
@@ -125,7 +125,7 @@ class ChromaMemory:
             )
         except MemoryUnavailable:
             raise
-        except Exception as e:  # noqa: BLE001 - the caller degrades to SqliteMemory
+        except Exception as e:
             raise MemoryUnavailable(f"Chroma memory unavailable: {e}") from e
 
     # ----------------------------------------------------------------- writes
@@ -209,7 +209,7 @@ class ChromaMemory:
                 n_results=min(k, available),
                 include=["documents", "metadatas", "distances"],
             )
-        except Exception:  # noqa: BLE001 - a degraded recall beats a failed turn
+        except Exception:
             return self.all_facts()[:k]
 
         hits = [
@@ -221,7 +221,9 @@ class ChromaMemory:
                 (result.get("distances") or [[None]])[0],
             )
         ]
-        return _pad_with_critical_facts(hits, self.all_facts(), k)
+        return pad_with_critical_facts(hits, self.all_facts(), k)
+
+
 
 
 def _persistent_client():
@@ -250,20 +252,6 @@ def _to_entry(fact_id: str, document: str, metadata, distance=None) -> dict:
     if distance is not None:
         entry["distance"] = round(float(distance), 4)
     return entry
-
-
-def _pad_with_critical_facts(hits: list[dict], facts: list[dict], k: int) -> list[dict]:
-    """Top up a recall with injuries and constraints the query didn't happen to match."""
-    if len(hits) >= k:
-        return hits[:k]
-    seen = {h["id"] for h in hits}
-    padded = list(hits)
-    for fact in facts:
-        if len(padded) >= k:
-            break
-        if fact["id"] not in seen and fact["category"] in ("injury", "constraint"):
-            padded.append(fact)
-    return padded
 
 
 def get_memory(conn=None):

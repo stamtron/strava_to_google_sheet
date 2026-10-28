@@ -7,18 +7,19 @@ AI coaching, and Google Sheets synchronization.
 """
 
 import asyncio
-from contextlib import asynccontextmanager
+import hmac
 import json
 import logging
 import os
 import time
-from datetime import date, datetime, timedelta
+from contextlib import asynccontextmanager, suppress
+from datetime import date, timedelta
 
-from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 server_logger = logging.getLogger(__name__)
 
@@ -67,50 +68,74 @@ async def lifespan(app: FastAPI):
     task = asyncio.create_task(telegram_worker())
     yield
     task.cancel()
-    try:
+    with suppress(asyncio.CancelledError):
         await task
-    except asyncio.CancelledError:
-        pass
 
 
-app = FastAPI(title="StaminAI Training API", version="2.0.0", lifespan=lifespan)
+# Webhooks are called by Strava and Telegram, which cannot send our client
+# header; they authenticate with their own shared secrets instead.
+_CLIENT_CHECK_EXEMPT_PATHS = frozenset({
+    "/api/strava/webhook",
+    "/api/notifications/telegram/webhook",
+})
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
-from src.config import (
-    ACTIVITIES_CACHE_FILE,
-    ACTIVITIES_CACHE_TTL,
-    ALLOWED_ORIGINS,
-    AUTO_SYNC_SHEET_ON_WEBHOOK,
-    HR_MAX,
-    HR_REST,
-    STRAVA_DETAIL_DELAY_SEC,
-    STRAVA_WEBHOOK_VERIFY_TOKEN,
-    WEB_DIR,
+
+def verify_client(request: Request) -> None:
+    """
+    Guard every state-changing /api route against cross-site requests.
+
+    A custom header cannot be sent cross-origin without a CORS preflight, which
+    ALLOWED_ORIGINS refuses, so requiring it blocks CSRF from any page the
+    browser visits. When API_AUTH_TOKEN is set, a bearer token is also required
+    so other machines on the network cannot trigger syncs or Telegram sends.
+    """
+    path = request.url.path
+    if request.method in _SAFE_METHODS or not path.startswith("/api/") or path in _CLIENT_CHECK_EXEMPT_PATHS:
+        return
+
+    # Read at call time so tests (and a reloaded .env) can change them.
+    from src import config
+
+    if request.headers.get(config.API_CLIENT_HEADER) != config.API_CLIENT_HEADER_VALUE:
+        raise HTTPException(status_code=403, detail=f"Missing or invalid {config.API_CLIENT_HEADER} header.")
+
+    if config.API_AUTH_TOKEN:
+        auth = request.headers.get("Authorization", "")
+        scheme, _, token = auth.partition(" ")
+        if scheme.lower() != "bearer" or not hmac.compare_digest(token.strip(), config.API_AUTH_TOKEN):
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid or missing API token.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+
+app = FastAPI(
+    title="StaminAI Training API",
+    version="2.0.0",
+    lifespan=lifespan,
+    dependencies=[Depends(verify_client)],
 )
-from src.integrations.strava import (
-    StravaAuthRequired,
-    StravaNetworkError,
-    StravaRateLimitError,
-    fetch_activities,
-    fetch_activity_detail,
-    fetch_details_for_activities,
-    get_access_token,
+
+from src.analytics.ai_coach import (
+    generate_weekly_coaching_insights,
+    predict_race_performances,
+    predict_triathlon_performances,
 )
-from src.integrations.garmin import (
-    _load_garmin_cache,
-    compute_biometric_baselines,
-    get_weekly_health_summaries,
+from src.analytics.coach_agent import (
+    CoachUnavailable,
+    extract_session_facts,
+    forget_remembered_fact,
+    list_remembered_facts,
 )
-from src.integrations.sheets import get_planned_workout_for_date, write_to_sheet
-from src.integrations.strava_backfill import backfill_all
-from src.integrations.telegram import format_next_day_brief, send_telegram_message
-from src.storage.activity_store import (
-    count_activities,
-    date_range,
-    get_activities as store_get_activities,
-    get_details,
-    init_db,
-    upsert_activities,
-    upsert_details,
+from src.analytics.coach_agent import (
+    chat as coach_chat,
+)
+from src.analytics.durability import (
+    assess_run_durability,
+    sport_strength_profile,
+    suggest_cross_training,
 )
 from src.analytics.metrics import (
     build_progression_history,
@@ -120,24 +145,51 @@ from src.analytics.metrics import (
     calculate_polarized_distribution,
     process_activities_into_weeks,
 )
-from src.analytics.ai_coach import (
-    generate_weekly_coaching_insights,
-    predict_race_performances,
-    predict_triathlon_performances,
+from src.config import (
+    ACTIVITIES_CACHE_FILE,
+    ACTIVITIES_CACHE_TTL,
+    ALLOWED_ORIGINS,
+    ATHLETE_NOTES_MAX_CHARS,
+    AUTO_SYNC_SHEET_ON_WEBHOOK,
+    CHAT_MESSAGE_MAX_CHARS,
+    CHAT_WEEK_CONTEXT_MAX_CHARS,
+    COMPLIANCE_PLAN_CACHE_TTL_SEC,
+    HR_MAX,
+    HR_REST,
+    STRAVA_DETAIL_DELAY_SEC,
+    STRAVA_WEBHOOK_VERIFY_TOKEN,
+    STRAVA_WEBHOOK_VERIFY_TOKEN_PLACEHOLDER,
+    WEB_DIR,
 )
-from src.analytics.durability import (
-    assess_run_durability,
-    sport_strength_profile,
-    suggest_cross_training,
+from src.integrations.garmin import (
+    _load_garmin_cache,
+    compute_biometric_baselines,
+    get_weekly_health_summaries,
 )
-from src.integrations.weather import get_weather_for_date, get_weather_outlook
-from src.analytics.coach_agent import (
-    CoachUnavailable,
-    chat as coach_chat,
-    extract_session_facts,
-    forget_remembered_fact,
-    list_remembered_facts,
+from src.integrations.sheets import get_planned_workout_for_date, write_to_sheet
+from src.integrations.strava import (
+    StravaAuthRequired,
+    StravaNetworkError,
+    StravaRateLimitError,
+    fetch_activities,
+    fetch_activity_detail,
+    fetch_details_for_activities,
+    get_access_token,
 )
+from src.integrations.strava_backfill import backfill_all
+from src.integrations.weather import get_weather_outlook
+from src.storage.activity_store import (
+    count_activities,
+    date_range,
+    get_details,
+    init_db,
+    upsert_activities,
+    upsert_details,
+)
+from src.storage.activity_store import (
+    get_activities as store_get_activities,
+)
+from src.timeutil import now_local, today_local
 
 # Explicit origins, credentials off: the API is unauthenticated, so a wildcard
 # origin with credentials would let any page the browser visits read this data.
@@ -153,7 +205,7 @@ app.add_middleware(
 class FeedbackRequest(BaseModel):
     week_summary: dict
     garmin_health: dict | None = None
-    athlete_notes: str = ""
+    athlete_notes: str = Field("", max_length=ATHLETE_NOTES_MAX_CHARS)
 
 
 class SyncRequest(BaseModel):
@@ -167,12 +219,20 @@ class BackfillRequest(BaseModel):
 class ChatRequest(BaseModel):
     """One conversational turn. `session_id` is minted server-side on the first."""
 
-    message: str
+    message: str = Field(..., max_length=CHAT_MESSAGE_MAX_CHARS)
     session_id: str | None = None
     # The week the athlete has open on the dashboard, so "how was this week?"
     # resolves without them naming a date. Context only — the agent still calls
     # a tool for authoritative numbers.
     week_context: dict | None = None
+
+    @field_validator("week_context")
+    @classmethod
+    def _cap_week_context(cls, value: dict | None) -> dict | None:
+        # It is pasted into the prompt verbatim, so its size is a token bill.
+        if value is not None and len(json.dumps(value, default=str)) > CHAT_WEEK_CONTEXT_MAX_CHARS:
+            raise ValueError(f"week_context exceeds {CHAT_WEEK_CONTEXT_MAX_CHARS} characters")
+        return value
 
 
 class MemoryExtractRequest(BaseModel):
@@ -185,7 +245,7 @@ def _load_cache() -> dict:
     """Return the activities cache, or an empty skeleton if unreadable."""
     if os.path.exists(ACTIVITIES_CACHE_FILE):
         try:
-            with open(ACTIVITIES_CACHE_FILE, "r") as f:
+            with open(ACTIVITIES_CACHE_FILE) as f:
                 data = json.load(f)
             return {
                 "activities": data.get("activities", []),
@@ -325,7 +385,7 @@ def _get_summaries(count: int) -> tuple[list[dict], dict]:
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "ok", "timestamp": datetime.now().isoformat()}
+    return {"status": "ok", "timestamp": now_local().isoformat()}
 
 
 @app.get("/api/activities")
@@ -378,25 +438,32 @@ def get_dashboard_data(count: int = Query(200, ge=1, le=500)):
         weather_outlook = get_weather_outlook(past_days=2, forecast_days=7)
     except Exception as e:
         server_logger.warning("Weather fetch failed: %s", e)
+        weather_outlook = []
     try:
         biometric_baselines = compute_biometric_baselines(garmin_summaries)
     except Exception as e:
         server_logger.warning("Baselines computation failed: %s", e)
         biometric_baselines = {}
 
-    performance = calculate_fitness_fatigue(summaries)
+    try:
+        analytics = {
+            "performance": calculate_fitness_fatigue(summaries),
+            "hr_zones": calculate_hr_zones(hr_max=HR_MAX, hr_rest=HR_REST),
+            "predictions": predict_race_performances(summaries),
+            "triathlon": predict_triathlon_performances(activities=summaries, use_race_pb=False),
+            "triathlon_pb": predict_triathlon_performances(activities=summaries, use_race_pb=True),
+            "progression": build_progression_history(weeks, acwr_map=acwr_map),
+        }
+    except Exception as e:
+        server_logger.exception("Dashboard analytics failed")
+        raise HTTPException(status_code=500, detail="Dashboard analytics failed.") from e
 
     return {
         "weeks": weeks,
         "garmin": garmin_summaries,
         "baselines": biometric_baselines,
-        "performance": performance,
         "weather": weather_outlook,
-        "hr_zones": calculate_hr_zones(hr_max=HR_MAX, hr_rest=HR_REST),
-        "predictions": predict_race_performances(summaries),
-        "triathlon": predict_triathlon_performances(activities=summaries, use_race_pb=False),
-        "triathlon_pb": predict_triathlon_performances(activities=summaries, use_race_pb=True),
-        "progression": build_progression_history(weeks, acwr_map=acwr_map),
+        **analytics,
         "activities_total": len(summaries),
     }
 
@@ -421,6 +488,13 @@ def strava_webhook_challenge(
     Handle Strava Webhook subscription validation handshake.
     Strava sends GET with hub.mode=subscribe, hub.verify_token, hub.challenge.
     """
+    # The shipped placeholder is public, so accepting it would let anyone
+    # complete a subscription handshake against this server.
+    if not STRAVA_WEBHOOK_VERIFY_TOKEN or STRAVA_WEBHOOK_VERIFY_TOKEN == STRAVA_WEBHOOK_VERIFY_TOKEN_PLACEHOLDER:
+        server_logger.warning(
+            "Rejected Strava webhook handshake: STRAVA_WEBHOOK_VERIFY_TOKEN is unset or the default placeholder."
+        )
+        raise HTTPException(status_code=403, detail="Webhook verify token is not configured.")
     if hub_mode == "subscribe" and hub_verify_token == STRAVA_WEBHOOK_VERIFY_TOKEN:
         return {"hub.challenge": hub_challenge}
     raise HTTPException(status_code=403, detail="Invalid verify token.")
@@ -456,7 +530,12 @@ async def strava_webhook_event(
     """
     from src.config import STRAVA_WEBHOOK_SECRET_PARAM
 
-    if STRAVA_WEBHOOK_SECRET_PARAM and secret != STRAVA_WEBHOOK_SECRET_PARAM:
+    # Fail closed: an unset secret would accept events from anyone.
+    if not STRAVA_WEBHOOK_SECRET_PARAM:
+        server_logger.warning("Rejected Strava webhook event: STRAVA_WEBHOOK_SECRET_PARAM is not configured.")
+        raise HTTPException(status_code=403, detail="Webhook secret is not configured.")
+    if not secret or not hmac.compare_digest(secret, STRAVA_WEBHOOK_SECRET_PARAM):
+        server_logger.warning("Rejected Strava webhook event: invalid secret.")
         raise HTTPException(status_code=403, detail="Invalid webhook secret.")
 
     object_type = event.get("object_type")
@@ -485,9 +564,9 @@ def send_telegram_next_day_workout_notification(req: TelegramNextDayRequest = Te
         try:
             t_date = date.fromisoformat(req.target_date)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.") from None
     else:
-        t_date = date.today() + timedelta(days=1)
+        t_date = today_local() + timedelta(days=1)
 
     from src.integrations.telegram import build_daily_brief, send_telegram_message
 
@@ -528,16 +607,22 @@ async def telegram_webhook_handler(
     Allows instant processing of athlete commands (/today, /tomorrow, /recovery, /coach, etc.).
     """
     from src.config import TELEGRAM_WEBHOOK_SECRET
-    if TELEGRAM_WEBHOOK_SECRET:
-        if not x_telegram_bot_api_secret_token or x_telegram_bot_api_secret_token != TELEGRAM_WEBHOOK_SECRET:
-            server_logger.warning("Rejected Telegram webhook: invalid secret token header.")
-            raise HTTPException(status_code=403, detail="Invalid webhook secret token.")
+
+    # Fail closed: without a secret anyone could drive the bot as the athlete.
+    if not TELEGRAM_WEBHOOK_SECRET:
+        server_logger.warning("Rejected Telegram webhook: TELEGRAM_WEBHOOK_SECRET is not configured.")
+        raise HTTPException(status_code=403, detail="Webhook secret token is not configured.")
+    if not x_telegram_bot_api_secret_token or not hmac.compare_digest(
+        x_telegram_bot_api_secret_token, TELEGRAM_WEBHOOK_SECRET
+    ):
+        server_logger.warning("Rejected Telegram webhook: invalid secret token header.")
+        raise HTTPException(status_code=403, detail="Invalid webhook secret token.")
 
     from src.integrations.telegram import process_incoming_update
     try:
         update_data = await request.json()
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+        raise HTTPException(status_code=400, detail="Invalid JSON payload") from None
 
     if not isinstance(update_data, dict):
         raise HTTPException(status_code=400, detail="Expected JSON object")
@@ -551,7 +636,7 @@ async def telegram_webhook_handler(
 def send_telegram_today_workout_notification(req: TelegramNextDayRequest = TelegramNextDayRequest()):
     """Dispatch today's planned workout brief + weather + coach tip to athlete's Telegram."""
     if not req.target_date:
-        req.target_date = date.today().isoformat()
+        req.target_date = today_local().isoformat()
     return send_telegram_next_day_workout_notification(req)
 
 
@@ -630,7 +715,8 @@ def get_ai_coaching_feedback(req: FeedbackRequest):
             athlete_notes=req.athlete_notes,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        server_logger.exception("AI coaching feedback failed")
+        raise HTTPException(status_code=500, detail="AI coaching feedback is unavailable right now.") from e
 
 
 @app.post("/api/ai/chat")
@@ -706,16 +792,20 @@ def post_coach_memory_extract(req: MemoryExtractRequest):
 @app.get("/api/history/status")
 def history_status():
     """Report what the local history store currently holds."""
-    conn = init_db()
     try:
-        span = date_range(conn)
-        return {
-            "total_activities": count_activities(conn),
-            "oldest": span[0].isoformat() if span else None,
-            "newest": span[1].isoformat() if span else None,
-        }
-    finally:
-        conn.close()
+        conn = init_db()
+        try:
+            span = date_range(conn)
+            return {
+                "total_activities": count_activities(conn),
+                "oldest": span[0].isoformat() if span else None,
+                "newest": span[1].isoformat() if span else None,
+            }
+        finally:
+            conn.close()
+    except Exception as e:
+        server_logger.exception("History status failed")
+        raise HTTPException(status_code=500, detail="History store is unavailable.") from e
 
 
 @app.post("/api/history/backfill")
@@ -771,20 +861,27 @@ def sync_google_sheets(req: SyncRequest):
 
 
 _PLANNED_WORKOUT_CACHE: dict[str, tuple[float, dict]] = {}
-_PLANNED_WORKOUT_TTL = 300.0
 
 
 @app.get("/api/compliance")
-def get_workout_compliance(target_date: str = Query(default_factory=lambda: date.today().isoformat())):
+def get_workout_compliance(target_date: str = Query(default_factory=lambda: today_local().isoformat())):
     """Evaluate plan vs actual workout execution fidelity for target_date."""
     try:
         d = date.fromisoformat(target_date)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date format, expected YYYY-MM-DD")
+        raise HTTPException(status_code=400, detail="Invalid date format, expected YYYY-MM-DD") from None
 
+    try:
+        return _evaluate_compliance(d, target_date)
+    except Exception as e:
+        server_logger.exception("Compliance evaluation failed for %s", target_date)
+        raise HTTPException(status_code=500, detail="Compliance evaluation failed.") from e
+
+
+def _evaluate_compliance(d: date, target_date: str) -> dict:
     now = time.time()
     cached_entry = _PLANNED_WORKOUT_CACHE.get(target_date)
-    if cached_entry and (now - cached_entry[0]) < _PLANNED_WORKOUT_TTL:
+    if cached_entry and (now - cached_entry[0]) < COMPLIANCE_PLAN_CACHE_TTL_SEC:
         planned_info = cached_entry[1]
     else:
         planned_info = get_planned_workout_for_date(d)
@@ -816,6 +913,14 @@ def get_workout_compliance(target_date: str = Query(default_factory=lambda: date
 @app.get("/api/gear")
 def get_gear_tracker():
     """Return equipment and shoe mileage statistics."""
+    try:
+        return {"gear": _gear_summary()}
+    except Exception as e:
+        server_logger.exception("Gear tracker failed")
+        raise HTTPException(status_code=500, detail="Gear tracker is unavailable.") from e
+
+
+def _gear_summary() -> list[dict]:
     cache = _load_cache()
     activities = cache.get("activities", [])
     details = cache.get("details", {})
@@ -828,14 +933,14 @@ def get_gear_tracker():
             conn.close()
 
     from src.analytics.gear import extract_gear_summary
-    return {"gear": extract_gear_summary(activities, details=details)}
+    return extract_gear_summary(activities, details=details)
 
 
 @app.get("/api/workouts/preview")
 def preview_workouts_endpoint(week_offset: int = 0):
     """Preview running and cycling workouts parsed from Google Sheets for Garmin & Tacx with recovery readiness."""
+    from src.integrations.garmin import assess_workout_readiness, get_daily_recovery_metrics
     from src.integrations.garmin_workouts import preview_week_workouts
-    from src.integrations.garmin import get_daily_recovery_metrics, assess_workout_readiness
     try:
         preview = preview_week_workouts(week_offset=week_offset)
         for w in preview.get("workouts", []):

@@ -19,6 +19,8 @@ strava_to_google_sheet/
 ├── src/                          # Core backend package
 │   ├── config.py                 # Centralized configuration & environment variables
 │   ├── formatting.py             # Duration/pace formatting & sport data corrections
+│   ├── status_labels.py          # Display text for analytics status keys (Telegram/coach)
+│   ├── timeutil.py               # Athlete-timezone "now"/"today" helpers
 │   ├── integrations/             # External service APIs
 │   │   ├── strava.py             # Strava OAuth2 & activity fetcher
 │   │   ├── strava_backfill.py    # Paginated full-history import + incremental sync
@@ -38,14 +40,15 @@ strava_to_google_sheet/
 │   │   └── coach_memory.py       # ChromaDB long-term memory (Gemini embeddings)
 │   ├── storage/                  # Local persistence (SQLite, stdlib only)
 │   │   ├── activity_store.py     # Full Strava history + sync watermarks
-│   │   └── chat_store.py         # Chat sessions, transcripts, SqliteMemory
+│   │   ├── chat_store.py         # Chat sessions, transcripts, SqliteMemory
+│   │   └── atomic_file.py        # Atomic 0600 JSON writes for token/cache files
 │   └── api/                      # Web API Server
 │       └── server.py             # FastAPI REST endpoints & static routes
 ├── web/                          # Frontend Single Page App
 │   ├── index.html                # Dashboard + floating AI Coach chat drawer + Garmin modal
 │   ├── styles.css                # Custom glassmorphic design system
 │   └── app.js                    # Chart.js charts, chat drawer & interaction logic
-├── tests/                        # pytest suite (offline, 357+ tests)
+├── tests/                        # pytest suite (offline, 460+ tests)
 │   ├── conftest.py               # Shared synthetic-activity fixtures & tmp_path DB
 │   ├── test_formatting.py        # Unit conversions & sport corrections
 │   ├── test_metrics.py           # Relative effort, weekly rollups, ACWR
@@ -68,11 +71,14 @@ strava_to_google_sheet/
 │   ├── test_predictions.py       # Riegel exponents, PB vs training projection modes
 │   ├── test_chat_store.py        # Session persistence, TTL purge, keyword recall
 │   ├── test_coach_agent.py       # Tool functions & chat loop against a fake client
-│   └── test_coach_memory.py      # Memory interface with a fake embedding function
+│   ├── test_coach_memory.py      # Memory interface with a fake embedding function
+│   ├── test_api.py               # FastAPI routes: CSRF header, auth token, webhook fail-closed
+│   ├── test_atomic_file.py       # Atomic writes & file permissions
+│   └── test_status_labels.py     # Status key → display text mapping
 ├── docs/                         # Modular documentation (setup, config, analytics, coach, api, sheets)
 ├── main.py                       # Root CLI entry point (incl. --backfill)
 ├── server.py                     # Root Web server entry point
-├── pyproject.toml                # Project configuration (deps, pytest)
+├── pyproject.toml                # Project configuration (deps, pytest, ruff)
 ├── README.md                     # Documentation
 ├── .env.example                  # Documented configuration template
 ├── .training_history.db          # SQLite history + chat store (gitignored)
@@ -98,8 +104,11 @@ strava_to_google_sheet/
      activity **and** chat store), `COACH_MEMORY_DIR` (`.coach_memory/`), and
      `WEATHER_CACHE_FILE` (`.weather_cache.json`). All are gitignored; nothing outside
      `config.py` should construct these paths.
-   - `SERVER_HOST` defaults to `127.0.0.1` and `ALLOWED_ORIGINS` to localhost only:
-     the API is unauthenticated, so it must not be exposed to the LAN by default.
+   - `SERVER_HOST` defaults to `127.0.0.1` and `ALLOWED_ORIGINS` to localhost only.
+     The API has no user accounts, so it must not be exposed to the LAN by default;
+     `API_AUTH_TOKEN` adds an optional bearer token for state-changing routes.
+   - New constants go in the themed sections at the bottom (`# --- Integration
+     tunables ---`, `# --- Analytics thresholds ---`, `# --- API & coach tunables ---`).
    - `STRAVA_REDIRECT_PORT` (8123) is deliberately distinct from `SERVER_PORT`
      (8000) — the OAuth callback listener blocks its thread, so sharing the
      dashboard's port deadlocks the flow.
@@ -113,16 +122,22 @@ strava_to_google_sheet/
      are applied: the swim divisor and the indoor-trainer distance estimate. Every
      consumer (CLI, sheets, metrics, AI coach) routes through it so the numbers
      agree everywhere.
+   - `format_mmss` and `parse_pace_to_sec` are the shared `M:SS` render/parse helpers;
+     do not hand-roll `divmod(sec, 60)` pace strings elsewhere.
    - `is_indoor_ride(act)` treats a ride as indoor only when it is trainer-flagged
      *and* reports ~zero distance; a trainer that does report distance keeps it.
 
 3. **[`src/integrations/strava.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/integrations/strava.py)**
    - Manages Strava OAuth2 browser authorization, token caching in `token.json`, and automatic token refreshes.
+     Refresh runs under a lock so concurrent requests don't race and burn the
+     single-use refresh token; the token file is written atomically (`write_json_atomic`).
    - Fetches activity summaries (`fetch_activities`) and detailed metrics (`fetch_activity_detail`).
    - Raises `StravaAuthRequired` and `StravaRateLimitError` rather than returning
      `{}` — a swallowed 429 previously wrote blank cells over real sheet data.
    - `fetch_details_for_activities` throttles by `STRAVA_DETAIL_DELAY_SEC` and
-     retries 429s up to `STRAVA_MAX_RETRIES`, honouring `Retry-After`.
+     retries 429s up to `STRAVA_MAX_RETRIES`, honouring `Retry-After`. It returns a
+     `DetailsResult` (a dict) whose `.incomplete` flag tells the sheet sync not to
+     overwrite cells for activities whose details failed to load.
 
 4. **[`src/integrations/strava_backfill.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/integrations/strava_backfill.py)**
    - `backfill_all` pages `fetch_activities` until a short/empty page, writing each
@@ -141,8 +156,12 @@ strava_to_google_sheet/
      persists results to `.garmin_cache.json`. Finished weeks are cached
      indefinitely; the in-progress week honours `GARMIN_CACHE_TTL`. Prefer it over
      per-week calls — the dashboard used to issue ~210 sequential requests.
+     Empty/partial weeks are cached only for `GARMIN_EMPTY_CACHE_TTL`, and a failed
+     login backs off for `GARMIN_LOGIN_RETRY_COOLDOWN_SEC` instead of retrying per request.
    - `compute_biometric_baselines` calculates rolling athlete normal bands for HRV and RHR
      ($\mu \pm 0.75\sigma$) with `evaluate_biometric_status` detecting autonomic fatigue and stress.
+   - `assess_workout_readiness` returns an `advice_key` and a structured
+     `substitute_option`; the text is rendered by `status_labels`.
 
 6. **[`src/integrations/sheets.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/integrations/sheets.py)**
    - Authenticates via desktop OAuth2 (`credentials.json` -> `gsheets_token.json`).
@@ -151,23 +170,33 @@ strava_to_google_sheet/
    - Populates weekly sport totals and Garmin health tracker in Column A (Old) or Column B of `ΕΒΔΟΜΑΔΑ` (New).
    - Detail lookups accept both int and string activity ids, since cached details
      round-trip through JSON.
-   - Retries transient Google API quota errors using `execute_with_retry` up to `GSHEETS_MAX_RETRIES`.
+   - Retries transient Google API quota **and transport** errors using `execute_with_retry` up to `GSHEETS_MAX_RETRIES`.
+   - Weekly sport totals come from the SQLite store, not just the fetched window,
+     so a partial fetch can't under-report a week. Plan rows are read down to `PLAN_LAST_ROW` (150).
+   - `parse_date_range` handles ranges that cross New Year (e.g. `29/12 - 4/1`).
 
 7. **[`src/analytics/metrics.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/analytics/metrics.py)**
    - Extracts Strava Relative Effort (`suffer_score`) or computes HR-based TRIMP stress from `HR_MAX`/`HR_REST`.
    - Computes **ACWR** as the current week's load over the mean of the
      `ACWR_CHRONIC_WEEKS` weeks *preceding* it. The current week is excluded from
-     its own baseline; with fewer than `ACWR_MIN_CHRONIC_WEEKS` of history, or a
-     zero baseline, `acwr_ratio` is `None` and `zone` is `"unknown"`.
+     its own baseline. Weeks are **calendar** weeks: a week with no training counts as
+     zero load rather than being skipped. With fewer than `ACWR_MIN_CHRONIC_WEEKS` of
+     history, or a zero baseline, `acwr_ratio` is `None`, `zone` is `"unknown"`, and
+     `status` is `insufficient_history` / `no_baseline`. Zone edges are
+     `ACWR_LOW_MAX` / `ACWR_OPTIMAL_MAX` / `ACWR_OVERREACHING_MAX`.
+   - Calories fall back to `kilojoules × KJ_TO_KCAL_FACTOR` when Strava omits them.
    - Computes daily **Fitness, Fatigue & Form (Banister Impulse-Response EWMA)** via
      `calculate_fitness_fatigue`: Chronic Training Load (`CTL`, 42d), Acute Training
      Load (`ATL`, 7d), and Training Stress Balance (`TSB` = CTL - ATL). Uses historical
-     warmup to prevent day-1 cold-start bias and classifies TSB into standard zones.
+     warmup to prevent day-1 cold-start bias and classifies TSB into status keys
+     (`transition` / `fresh` / `neutral` / `optimal` / `high_fatigue`). "Today" is
+     `timeutil.today_local()`, never `date.today()`.
    - Computes Karvonen Heart Rate Reserve 5-Zone boundaries (Z1–Z5) and computes
      weekly polarized 80/20 balance (Low intensity Z1-Z2 vs Moderate Z3 vs High Z4-Z5)
      to detect Zone 3 "tempo traps".
    - Emits machine-readable `zone` strings (`low`/`optimal`/`overreaching`/`spike`/
-     `unknown`) — no colours or UI text. Presentation belongs in `web/app.js`.
+     `unknown`) — no colours or UI text. Presentation belongs in `web/app.js` and
+     `src/status_labels.py`.
    - `build_progression_history(weeks, acwr_map=...)` accepts a precomputed ACWR
      map so callers don't recompute it per request.
    - `calculate_relative_effort_by_sport` splits effort per sport group, and
@@ -178,7 +207,7 @@ strava_to_google_sheet/
 
 8. **[`src/analytics/durability.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/analytics/durability.py)**
    - The run-injury engine, and entirely deterministic: `run_ramp_rate` (week-over-week
-     run km vs `RUN_RAMP_SAFE_PCT`), `run_spacing_profile` (consecutive run days,
+     calendar-week run km vs `RUN_RAMP_SAFE_PCT`), `run_spacing_profile` (consecutive run days,
      longest gap), `long_run_share`, `training_monotony_and_strain` (Foster monotony
      = mean daily load / SD, strain = weekly load × monotony), and
      `assess_run_durability` which folds them into
@@ -242,8 +271,10 @@ strava_to_google_sheet/
       `.coach_memory/`.
     - Stores durable facts and conversation summaries, never activities: numeric
       lookups belong in typed tool calls, not vector search.
-    - `_pad_with_critical_facts` tops up a short recall with injuries and constraints
-      the query didn't happen to match, so a safety-relevant fact isn't crowded out.
+    - Both backends finish recall with `chat_store.pad_with_critical_facts`, which
+      guarantees injuries and constraints (`CRITICAL_FACT_CATEGORIES`) appear even when
+      the query didn't match them — displacing the weakest hits if recall is already
+      full — so a safety-relevant fact is never crowded out.
 
 12. **[`src/storage/activity_store.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/storage/activity_store.py)**
     - SQLite at `HISTORY_DB_FILE`, stdlib only. The full Strava summary is stored as
@@ -276,6 +307,8 @@ strava_to_google_sheet/
     - Connects to Garmin Connect via `get_garmin_client`, uploads the generated workouts,
       and schedules them onto the athlete's Garmin calendar for direct over-the-air sync
       to Garmin watches and the Tacx Training app.
+    - Per-workout results report `skipped_past` / `skipped_duplicate` statuses; if
+      scheduling fails after upload, the orphaned workout is deleted.
 
 15. **[`src/integrations/telegram.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/integrations/telegram.py)**
     - Telegram Bot API integration delivering training alerts, interactive bot commands, daily workout briefs, and weekly executive summaries.
@@ -285,6 +318,10 @@ strava_to_google_sheet/
     - Resilient background dispatch scheduler tracks `last_daily_brief_date` and `last_weekly_brief_date` in SQLite `sync_state` and uses a `>= target_time` comparison, ensuring daily briefs and Sunday evening weekly digests (`TELEGRAM_WEEKLY_DISPATCH_TIME`) are not skipped if the server restarts.
     - `get_telegram_webhook_info()` checks Telegram's server configuration on startup: if an active webhook URL is set, background long-polling is automatically disabled to eliminate 409 Conflict errors.
     - Inbound webhooks enforce strict constant-time verification against `TELEGRAM_WEBHOOK_SECRET` via the `X-Telegram-Bot-Api-Secret-Token` header with fail-closed security.
+    - Outgoing messages are split under `TELEGRAM_MAX_MESSAGE_CHARS`; the bot token is
+      redacted from logged errors; a failed dispatch waits
+      `TELEGRAM_DISPATCH_RETRY_BACKOFF_SEC` before retrying; the polling loop survives
+      per-iteration errors.
     - Includes an interactive command parser (`/today`, `/tomorrow`, `/weekly`, `/form`, `/recovery`, `/compliance`, `/sync`,
       `/stats`, `/gear`, `/coach`) for direct two-way interactions with the athlete.
 
@@ -302,10 +339,15 @@ strava_to_google_sheet/
       target duration, target pace/power).
     - Matches planned targets against completed Strava telemetry logged on that date,
       evaluating volume delta, pace compliance, and overall execution score (0–100%).
+    - One contiguous "spot on" band (`COMPLIANCE_SPOT_ON_MIN_PCT`–`COMPLIANCE_SPOT_ON_MAX_PCT`,
+      88–112%); outside it a match is `underreach` / `overreach`. Swim pace is per 100 m and
+      each match carries `pace_unit` (`per_km` / `per_100m`). No `summary` prose is
+      returned — callers use `status_labels.compliance_summary`.
 
 18. **[`src/analytics/gear.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/analytics/gear.py)**
     - Aggregates cumulative mileage and session counts per `gear_id` from Strava activity
-      histories and details.
+      histories and details. Gear type comes from the Strava id prefix (`g…` shoes,
+      `b…` bikes), not from the activity's sport.
     - Flags running shoes approaching (`warning` at 85%) or exceeding `SHOE_ALERT_KM` (`retire` at 650 km) to
       prevent midsole deadening and related impact injuries.
     - Backs the `GET /api/gear` endpoint and the glassmorphic Equipment Monitor card in the Weekly tab.
@@ -315,6 +357,8 @@ strava_to_google_sheet/
     - Calculates physiological cardiac drift pace penalties above 15°C and headwind
       penalties above 18 km/h, ensuring target Zone 2 metabolic stimulus is maintained
       without cardiovascular overstress.
+    - Returns `heat_impact` / `wind_impact` keys and `advice_keys`; bands are
+      `WEATHER_HEAT_BANDS` / `WEATHER_WIND_BANDS` in config.
 
 20. **[`src/api/server.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/api/server.py)**
     - FastAPI backend exposing REST endpoints:
@@ -340,6 +384,15 @@ strava_to_google_sheet/
       `_cache_satisfies`, which checks the TTL **and** that the cache holds enough
       activities for the requested `count` (a 20-activity cache must not answer a 50
       request).
+    - `verify_client` (a global dependency) requires the `X-StaminAI-Client: web`
+      header on every non-GET `/api/*` route — a custom header can't be sent
+      cross-origin without a preflight, so this blocks CSRF. When `API_AUTH_TOKEN` is
+      set, `Authorization: Bearer <token>` is also required. The two webhook routes are
+      exempt and authenticate with their own secrets. The SPA's `apiFetch` adds both.
+    - Webhooks **fail closed**: Strava POSTs need `STRAVA_WEBHOOK_SECRET_PARAM`, the
+      handshake refuses the placeholder `STRAVA_WEBHOOK_VERIFY_TOKEN`, and Telegram
+      needs `TELEGRAM_WEBHOOK_SECRET`. Unconfigured secret = rejected request.
+    - 500 responses carry a generic message; details go to the server log only.
     - Mounted by `server.py` at the repo root, which only calls `uvicorn.run` with
       `SERVER_HOST`/`SERVER_PORT`.
 
@@ -347,16 +400,18 @@ strava_to_google_sheet/
 
 ## 🔒 Invariants Worth Not Breaking
 
-- **The API is unauthenticated by design.** `SERVER_HOST` stays `127.0.0.1` and
+- **The API is localhost-only by design.** `SERVER_HOST` stays `127.0.0.1` and
   `ALLOWED_ORIGINS` stays localhost-only with credentials off — a wildcard origin
   would let any page the browser visits read this athlete's training and biometric
-  data. Do not expose it to the LAN.
+  data. Do not expose it to the LAN. State-changing routes require the
+  `X-StaminAI-Client` header (CSRF guard) and, if set, `API_AUTH_TOKEN`; any new
+  frontend call must go through `apiFetch`, and any new test POST must send the header.
 - **Webhook tunnel exposure.** If exposing webhooks to the public internet via
   tunnels (Cloudflare Tunnel, ngrok, tailscale funnel), **forward only** the specific
   webhook paths (`/api/strava/webhook` and `/api/notifications/telegram/webhook`) to
-  prevent exposing the unauthenticated dashboard endpoints to the WAN. Protect
-  the routes using `TELEGRAM_WEBHOOK_SECRET` (`X-Telegram-Bot-Api-Secret-Token` header)
-  and `STRAVA_WEBHOOK_SECRET_PARAM`.
+  prevent exposing the dashboard endpoints to the WAN. The webhooks reject every
+  request until `TELEGRAM_WEBHOOK_SECRET` (`X-Telegram-Bot-Api-Secret-Token` header)
+  and `STRAVA_WEBHOOK_SECRET_PARAM` are set — keep them fail-closed.
 - **Secrets stay unread and ungitted:** `.env`, `token.json`, `credentials.json`,
   `gsheets_token.json`, `.garmin_tokens/`. Never echo their contents into logs,
   transcripts, or the memory store.
@@ -367,8 +422,14 @@ strava_to_google_sheet/
 - **One source of truth for numbers.** All distance/speed corrections go through
   `formatting.corrected_distance_and_speed`; all tunables live in `config.py`. A
   literal at a call site is a bug, not a shortcut.
-- **Analytics return data, not presentation.** `zone`, `severity`, `risk_level` —
-  no colours, prose, or emoji outside `web/`.
+- **Analytics return data, not presentation.** `zone`, `status`, `severity`,
+  `risk_level`, `advice_key(s)` — no colours, prose, or emoji in `src/analytics/`.
+  Text lives in `src/status_labels.py` (Python consumers) and `web/app.js` (dashboard).
+- **Athlete-local time.** Use `timeutil.today_local()` / `now_local()`, not
+  `date.today()` / `datetime.now()` (ruff's `DTZ` rules flag the latter).
+- **Calendar weeks for load.** ACWR and ramp rate fill missing weeks with zero; don't
+  compute them over "weeks that have activities".
+- **Secrets on disk are written atomically with `0o600`** via `write_json_atomic`.
 
 ---
 
@@ -399,6 +460,10 @@ uv run python server.py
 # Run the test suite
 uv run pytest
 uv run pytest tests/test_metrics.py -k acwr -v
+
+# Lint (config in pyproject.toml [tool.ruff])
+uv run ruff check
+uv run ruff check --fix   # review the diff: F811 fixes can drop deliberate lazy imports
 
 # Type / compile check
 uv run python -m py_compile main.py server.py src/config.py src/formatting.py src/integrations/*.py src/analytics/*.py src/storage/*.py src/api/*.py
@@ -432,6 +497,10 @@ solely because stale assets were served.
   `requests` for the Strava client and backfill, a fake `client.chats` for the coach
   agent, and a fake embedding function for memory. Add to the fake rather than
   reaching for a real client.
+- `tests/test_api.py` exercises routes with FastAPI's `TestClient`. POST/PUT/DELETE
+  calls must send `X-StaminAI-Client: web`; webhook tests must monkeypatch the secret.
+- Endpoints import `send_telegram_message` and friends lazily inside the function so
+  tests can monkeypatch them on `src.integrations.telegram`; keep it that way.
 - When changing a tunable's default in `config.py`, prefer asserting against the
   imported constant (as the existing tests do) rather than hardcoding the number,
   so the suite tracks configuration instead of duplicating it. This applies to model

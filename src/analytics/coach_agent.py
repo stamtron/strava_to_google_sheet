@@ -36,25 +36,68 @@ from datetime import date, timedelta
 
 logger = logging.getLogger(__name__)
 
+from src.analytics.ai_coach import (
+    format_pace_min_km,
+    format_race_time,
+    planned_run_base_pace_sec,
+    predict_race_performances,
+    predict_triathlon_performances,
+)
+from src.analytics.compliance import evaluate_daily_compliance
+from src.analytics.durability import (
+    assess_run_durability,
+    sport_strength_profile,
+    suggest_cross_training,
+)
+from src.analytics.gear import extract_gear_summary
+from src.analytics.metrics import (
+    EFFORT_KEYS,
+    calculate_acwr,
+    calculate_relative_effort,
+    process_activities_into_weeks,
+    sport_group,
+)
+from src.analytics.weather_pace import calculate_weather_pace_adjustment
 from src.config import (
-    ATHLETE_PB_10K_SEC,
     ATHLETE_PB_5K_SEC,
+    ATHLETE_PB_10K_SEC,
     ATHLETE_PB_HALF_MARATHON_SEC,
     ATHLETE_PB_OLYMPIC_TRI_SEC,
     ATHLETE_PB_SPRINT_TRI_SEC,
     COACH_AUTO_FACT_LIMIT,
     COACH_CHAT_MODELS,
+    COACH_EXTRACT_MAX_CHARS,
+    COACH_EXTRACT_MAX_MESSAGES,
+    COACH_HEALTH_MAX_FETCH,
     COACH_MAX_HISTORY_MESSAGES,
     COACH_MAX_TOOL_CALLS,
     COACH_MEMORY_BACKEND,
     COACH_MEMORY_TOP_K,
     COACH_SESSION_TTL,
+    COACH_STORED_MESSAGE_MAX_CHARS,
     GEMINI_API_KEY,
     HR_MAX,
     HR_REST,
+    SHOE_ALERT_KM,
 )
 from src.formatting import corrected_distance_and_speed, format_duration
-from src.storage.activity_store import get_activities as store_get_activities, init_db
+from src.integrations.garmin import assess_workout_readiness, get_daily_recovery_metrics
+from src.integrations.sheets import get_planned_workout_for_date
+from src.integrations.weather import get_weather_outlook
+from src.status_labels import (
+    HEAT_IMPACT_LABELS,
+    WIND_IMPACT_LABELS,
+    acwr_label,
+    biometric_description,
+    compliance_summary,
+    gear_display_name,
+    readiness_advice,
+    weather_advice,
+    weather_pace_range,
+)
+from src.storage.activity_store import get_activities as store_get_activities
+from src.storage.activity_store import get_details as store_get_details
+from src.storage.activity_store import init_db
 from src.storage.chat_store import (
     SqliteMemory,
     append_message,
@@ -63,32 +106,7 @@ from src.storage.chat_store import (
     new_session_id,
     purge_expired_sessions,
 )
-from src.analytics.metrics import (
-    EFFORT_KEYS,
-    calculate_acwr,
-    calculate_relative_effort,
-    process_activities_into_weeks,
-    sport_group,
-)
-from src.analytics.ai_coach import (
-    format_pace_min_km,
-    format_race_time,
-    predict_race_performances,
-    predict_triathlon_performances,
-)
-from src.analytics.durability import (
-    assess_run_durability,
-    sport_strength_profile,
-    suggest_cross_training,
-)
-from src.analytics.gear import extract_gear_summary
-from src.analytics.compliance import evaluate_daily_compliance
-from src.analytics.weather_pace import calculate_weather_pace_adjustment, parse_pace_string_to_sec
-from src.config import SHOE_ALERT_KM
-from src.integrations.sheets import get_planned_workout_for_date
-from src.integrations.garmin import get_daily_recovery_metrics, assess_workout_readiness
-from src.integrations.weather import get_weather_outlook
-from src.storage.activity_store import get_details as store_get_details
+from src.timeutil import today_local
 
 # How many activities the tools read. Generous because the questions worth asking
 # ("how was my run volume last month?") span far more than a dashboard page, and
@@ -175,7 +193,7 @@ def _get_gemini_client():
         from google import genai
 
         return genai.Client(api_key=GEMINI_API_KEY)
-    except Exception as e:  # noqa: BLE001 - surfaced to the caller as 503
+    except Exception as e:
         raise CoachUnavailable(f"Gemini client initialization failed: {e}") from e
 
 
@@ -194,12 +212,12 @@ def default_activity_provider(limit: int = COACH_ACTIVITY_WINDOW) -> list[dict]:
     """
     try:
         conn = init_db()
-    except Exception as e:  # noqa: BLE001 - a tool must degrade, not explode
+    except Exception as e:
         logger.warning("Coach history store unavailable: %s", e)
         return []
     try:
         return store_get_activities(conn, limit=limit)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning("Coach history read failed: %s", e)
         return []
     finally:
@@ -274,9 +292,10 @@ def _week_brief(week: dict, acwr: dict | None = None) -> dict:
             "ratio": acwr.get("acwr_ratio"),
             "zone": acwr.get("zone"),
             "status": acwr.get("status"),
+            "label": acwr_label(acwr.get("status")),
         }
 
-    today = date.today()
+    today = today_local()
     try:
         mon_str = week.get("week_monday", "")
         sun_str = week.get("week_sunday", "")
@@ -546,8 +565,8 @@ def build_tools(
         try:
             from src.integrations.garmin import get_weekly_health_summaries
 
-            health = get_weekly_health_summaries(ranges)
-        except Exception as e:  # noqa: BLE001 - Garmin is optional, never fatal
+            health = get_weekly_health_summaries(ranges, max_fetch=COACH_HEALTH_MAX_FETCH)
+        except Exception as e:
             return {"error": f"Garmin data is unavailable right now ({e})."}
         if not health:
             return {"error": "No Garmin health data for these weeks."}
@@ -604,7 +623,7 @@ def build_tools(
             entry = memory.remember(fact, category=category, session_id=session_id)
         except ValueError as e:
             return {"stored": False, "error": str(e)}
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             return {"stored": False, "error": f"Memory write failed: {e}"}
         return {"stored": True, "id": entry["id"], "category": entry["category"]}
 
@@ -627,7 +646,7 @@ def build_tools(
                 contents=query,
                 config={"tools": [{"google_search": {}}]},
             )
-        except Exception as e:  # noqa: BLE001 - the model should hear about it
+        except Exception as e:
             return {"error": f"Web search failed: {e}"}
 
         found = _extract_sources(response)
@@ -662,7 +681,7 @@ def build_tools(
                 "days_count": len(outlook),
                 "forecast": outlook,
             }
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             return {"error": f"Weather fetch failed: {e}"}
 
     def get_gear_status() -> dict:
@@ -676,9 +695,14 @@ def build_tools(
         try:
             acts = _activities()
             conn = init_db()
-            details = store_get_details(conn)
-            conn.close()
-            gear_list = extract_gear_summary(acts, details=details, shoe_alert_km=SHOE_ALERT_KM)
+            try:
+                details = store_get_details(conn)
+            finally:
+                conn.close()
+            gear_list = [
+                {**g, "name": gear_display_name(g)}
+                for g in extract_gear_summary(acts, details=details, shoe_alert_km=SHOE_ALERT_KM)
+            ]
             shoes = [g for g in gear_list if g.get("gear_type") == "Shoes"]
             bikes = [g for g in gear_list if g.get("gear_type") == "Bike"]
             alerts = [g for g in gear_list if g.get("alert")]
@@ -703,7 +727,7 @@ def build_tools(
         """
         _used("get_workout_compliance")
         try:
-            t_date = date.fromisoformat(target_date.strip()) if target_date.strip() else date.today()
+            t_date = date.fromisoformat(target_date.strip()) if target_date.strip() else today_local()
             date_str = t_date.isoformat()
             w_info = get_planned_workout_for_date(t_date)
             planned_text = w_info.get("workout_text", "")
@@ -712,6 +736,7 @@ def build_tools(
             res = evaluate_daily_compliance(planned_text, day_acts)
             res["date"] = date_str
             res["planned_text"] = planned_text
+            res["summary"] = compliance_summary(res)
             return res
         except Exception as e:
             return {"error": f"Failed to evaluate workout compliance: {e}"}
@@ -728,7 +753,7 @@ def build_tools(
         """
         _used("preview_next_workout")
         try:
-            t_date = date.fromisoformat(target_date.strip()) if target_date.strip() else (date.today() + timedelta(days=1))
+            t_date = date.fromisoformat(target_date.strip()) if target_date.strip() else (today_local() + timedelta(days=1))
             w_info = get_planned_workout_for_date(t_date)
             workout_text = w_info.get("workout_text", "")
 
@@ -737,15 +762,21 @@ def build_tools(
 
             rec = get_daily_recovery_metrics(t_date)
             readiness = assess_workout_readiness(rec, workout_text=workout_text)
+            readiness["modulation_advice"] = readiness_advice(readiness)
 
             weather_adj = None
-            if day_weath and any(k in workout_text.lower() for k in ("τρεξιμο", "δρομικες", "run")):
-                t_max = day_weath.get("temp_max_c")
-                wind = day_weath.get("wind_speed_max_kmh")
-                import re
-                pace_match = re.search(r"@\s*(\d{1,2}[:,\.]\d{2})", workout_text)
-                base_sec = parse_pace_string_to_sec(pace_match.group(1)) if pace_match else 315.0
-                weather_adj = calculate_weather_pace_adjustment(base_sec, temp_c=t_max, wind_kmh=wind)
+            base_sec = planned_run_base_pace_sec(workout_text)
+            if day_weath and base_sec is not None:
+                weather_adj = calculate_weather_pace_adjustment(
+                    base_sec,
+                    temp_c=day_weath.get("temp_max_c"),
+                    wind_kmh=day_weath.get("wind_speed_max_kmh"),
+                )
+                weather_adj["heat_impact_label"] = HEAT_IMPACT_LABELS.get(weather_adj["heat_impact"])
+                weather_adj["wind_impact_label"] = WIND_IMPACT_LABELS.get(weather_adj["wind_impact"])
+                weather_adj["advice"] = weather_advice(weather_adj)
+                if "adjusted_pace_min_sec" in weather_adj:
+                    weather_adj["adjusted_pace_range"] = weather_pace_range(weather_adj)
 
             return {
                 "target_date": t_date.isoformat(),
@@ -770,8 +801,13 @@ def build_tools(
         """
         _used("get_athlete_recovery")
         try:
-            t_date = date.fromisoformat(target_date.strip()) if target_date.strip() else date.today()
-            return get_daily_recovery_metrics(t_date)
+            t_date = date.fromisoformat(target_date.strip()) if target_date.strip() else today_local()
+            rec = get_daily_recovery_metrics(t_date)
+            for metric in ("hrv", "rhr"):
+                evaluation = rec.get(f"{metric}_baseline_eval")
+                if isinstance(evaluation, dict):
+                    evaluation["description"] = biometric_description(evaluation, metric)
+            return rec
         except Exception as e:
             return {"error": f"Failed to fetch recovery metrics: {e}"}
 
@@ -834,7 +870,7 @@ def build_system_instruction(
     just said, and so they survive every turn of the conversation.
     """
     parts = [SYSTEM_INSTRUCTION]
-    parts.append(f"\nTODAY: {(today or date.today()).isoformat()}")
+    parts.append(f"\nTODAY: {(today or today_local()).isoformat()}")
     parts.append("\nATHLETE PROFILE (verified, from configuration):")
     parts.append(json.dumps(_athlete_profile(), ensure_ascii=False))
 
@@ -893,7 +929,7 @@ def _default_memory(conn):
         from src.analytics.coach_memory import ChromaMemory
 
         return ChromaMemory()
-    except Exception as e:  # noqa: BLE001 - keyword recall still answers the turn
+    except Exception as e:
         logger.info("Vector memory unavailable (%s); using keyword memory.", e)
         return SqliteMemory(conn)
 
@@ -937,7 +973,7 @@ def chat(
 
         try:
             recalled = memory.recall(message, k=COACH_MEMORY_TOP_K)
-        except Exception as e:  # noqa: BLE001 - memory is an enhancement
+        except Exception as e:
             logger.warning("Coach memory recall failed: %s", e)
             recalled = []
 
@@ -966,7 +1002,7 @@ def chat(
                     reply, model_used = text, model_name
                     succeeded = True
                     break
-                except Exception as e:  # noqa: BLE001 - try the next model, then give up
+                except Exception as e:
                     err_msg = str(e)
                     if ("503" in err_msg or "UNAVAILABLE" in err_msg or "429" in err_msg) and attempt == 0:
                         time.sleep(1.5)
@@ -989,8 +1025,8 @@ def chat(
 
         # Persisted after a successful reply, and only then: a half-finished turn
         # in the history would poison every subsequent request in the session.
-        append_message(conn, session_id, "user", message)
-        append_message(conn, session_id, "model", reply)
+        append_message(conn, session_id, "user", message[:COACH_STORED_MESSAGE_MAX_CHARS])
+        append_message(conn, session_id, "model", reply[:COACH_STORED_MESSAGE_MAX_CHARS])
 
         return {
             "reply": reply,
@@ -1064,7 +1100,7 @@ def extract_session_facts(
     conn = conn or init_db()
     try:
         init_chat_tables(conn)
-        transcript = get_messages(conn, session_id)
+        transcript = get_messages(conn, session_id, COACH_EXTRACT_MAX_MESSAGES)
         if not transcript:
             return {"session_id": session_id, "stored": [], "skipped": [], "source_model": None}
 
@@ -1072,6 +1108,8 @@ def extract_session_facts(
         rendered = "\n".join(
             f"{'Athlete' if m['role'] == 'user' else 'Coach'}: {m['content']}" for m in transcript
         )
+        # Keep the tail: the latest turns carry the facts most worth remembering.
+        rendered = rendered[-COACH_EXTRACT_MAX_CHARS:]
         prompt = _FACT_EXTRACTION_PROMPT.format(max_facts=max_facts, transcript=rendered)
 
         client = client or _get_gemini_client()
@@ -1086,14 +1124,14 @@ def extract_session_facts(
                 candidates = json.loads(response.text or "{}").get("facts") or []
                 model_used = model_name
                 break
-            except Exception as e:  # noqa: BLE001 - try the next model, then give up
+            except Exception as e:
                 logger.warning("Fact extraction with %s failed: %s", model_name, e)
 
         # Compared on normalized words so a reworded restatement of a fact already
         # on file doesn't accumulate as a near-duplicate every conversation.
         try:
             known = {_fact_key(f["fact"]) for f in memory.all_facts()}
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("Coach memory read failed during extraction: %s", e)
             known = set()
 
@@ -1116,7 +1154,7 @@ def extract_session_facts(
                     )
                 )
                 known.add(key)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning("Could not store extracted fact: %s", e)
                 skipped.append(text)
 

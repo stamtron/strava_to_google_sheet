@@ -16,7 +16,9 @@ All settings in StaminAI are centralized in [`src/config.py`](../src/config.py) 
 | `GEMINI_API_KEY` | — | Google Gemini API key for AI Coach and workout parsing |
 | `TELEGRAM_BOT_TOKEN` | — | Telegram Bot token from @BotFather for push briefings |
 | `TELEGRAM_CHAT_ID` | — | Telegram recipient user ID for training briefs |
-| `TELEGRAM_WEBHOOK_SECRET` | — | Secret token verified against `X-Telegram-Bot-Api-Secret-Token` |
+| `TELEGRAM_WEBHOOK_SECRET` | — | Secret token verified against `X-Telegram-Bot-Api-Secret-Token`; **required** — the webhook rejects all requests while unset |
+| `STRAVA_WEBHOOK_VERIFY_TOKEN` | placeholder | Strava subscription handshake token; the placeholder `STRAVA_WEBHOOK_SECRET` is rejected |
+| `STRAVA_WEBHOOK_SECRET_PARAM` | — | `?secret=` value required on `POST /api/strava/webhook`; events are rejected while unset |
 
 ---
 
@@ -27,6 +29,7 @@ All settings in StaminAI are centralized in [`src/config.py`](../src/config.py) 
 | `SERVER_HOST` | `127.0.0.1` | Dashboard bind address (loopback only by default for security) |
 | `SERVER_PORT` | `8000` | Web server port |
 | `ALLOWED_ORIGINS` | `http://localhost:8000,...` | Comma-separated CORS origins |
+| `API_AUTH_TOKEN` | — | Optional `Authorization: Bearer` token required on non-GET `/api/*` calls. All such calls also need the `X-StaminAI-Client: web` header (CSRF guard; the web app sends it). For the dashboard, store the token in the browser: `localStorage.setItem("staminaiApiToken", "<token>")` |
 | `STRAVA_REDIRECT_PORT` | `8123` | Local OAuth callback port; **must differ from `SERVER_PORT`** |
 | `STRAVA_DETAIL_DELAY_SEC` | `0.15` | Throttling delay (seconds) between per-activity detail requests |
 | `STRAVA_MAX_RETRIES` | `3` | Maximum retries on HTTP 429 rate limit responses |

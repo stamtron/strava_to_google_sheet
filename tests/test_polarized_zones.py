@@ -3,6 +3,7 @@ Unit tests for Heart Rate Zones and 80/20 Polarized Training metrics.
 """
 
 import pytest
+
 from src.analytics.metrics import (
     calculate_hr_zones,
     calculate_polarized_distribution,

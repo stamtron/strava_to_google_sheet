@@ -39,10 +39,10 @@ uv run python main.py --telegram-next-day  # Dispatch tomorrow's briefing to Tel
 uv run python main.py --telegram-weekly    # Dispatch weekly executive summary to Telegram
 
 # Testing & Code Quality
-uv run pytest                              # Run full test suite (357+ tests, offline)
+uv run pytest                              # Run full test suite (460+ tests, offline)
 uv run pytest tests/test_metrics.py        # Run single test module
 uv run pytest -k "test_classify_tsb"       # Run specific test pattern
-uv run ruff check                          # Lint codebase
+uv run ruff check                          # Lint codebase (config in pyproject.toml)
 node --check web/app.js                    # Validate frontend JavaScript syntax
 ```
 
@@ -55,6 +55,8 @@ strava_to_google_sheet/
 ├── src/
 │   ├── config.py                 # Central configuration, env tunables, path constants
 │   ├── formatting.py             # Duration/pace formatters, corrected_distance_and_speed
+│   ├── status_labels.py          # Display text for analytics status keys (Telegram/coach)
+│   ├── timeutil.py               # Athlete-timezone now_local()/today_local()
 │   ├── integrations/
 │   │   ├── strava.py             # Strava OAuth2 & activity endpoints
 │   │   ├── strava_backfill.py    # Paginated full-history import + resume cursor
@@ -74,14 +76,15 @@ strava_to_google_sheet/
 │   │   └── coach_memory.py       # ChromaDB / SqliteMemory long-term fact store
 │   ├── storage/
 │   │   ├── activity_store.py     # SQLite historical activities + sync watermarks
-│   │   └── chat_store.py         # SQLite chat sessions, transcripts, SqliteMemory
+│   │   ├── chat_store.py         # SQLite chat sessions, transcripts, SqliteMemory
+│   │   └── atomic_file.py        # Atomic 0600 JSON writes (tokens, caches)
 │   └── api/
 │       └── server.py             # FastAPI REST endpoints & static routes
 ├── web/                          # Frontend SPA (HTML5, Vanilla CSS glassmorphic tokens, Chart.js)
 │   ├── index.html                # Dashboard + tabs + floating coach drawer
 │   ├── styles.css                # Glassmorphic dark design system
 │   └── app.js                    # Interaction logic, Chart.js instances, chat client
-├── tests/                        # Offline pytest suite (357+ unit tests)
+├── tests/                        # Offline pytest suite (460+ unit tests)
 ├── docs/                         # Modular documentation (setup, config, analytics, coach, api, sheets)
 ├── main.py                       # CLI root entry point
 ├── server.py                     # Web server root entry point
@@ -98,17 +101,30 @@ strava_to_google_sheet/
    - The LLM coach *explains* metrics; it **never** computes them.
    - All durability, ACWR, Banister EWMA, and biometric baseline maths live in `src/analytics/` so they are 100% unit-testable offline.
 3. **No Presentation Strings in Analytics**:
-   Analytics functions emit machine-readable status keys only (`low`, `optimal`, `overreaching`, `spike`, `fresh`, `neutral`, `high_fatigue`). Presentation labels, colors, and emojis belong strictly in `web/app.js` and `web/styles.css`.
+   Analytics functions emit machine-readable status keys only (`low`, `optimal`, `overreaching`, `spike`, `fresh`, `neutral`, `high_fatigue`, `advice_key`s). Presentation labels, colors, and emojis belong strictly in `src/status_labels.py` (Telegram/coach text) and `web/app.js` / `web/styles.css` (dashboard).
+   - Analytics also return no `summary` prose; callers render it, e.g. `status_labels.compliance_summary`.
 4. **Single Home for Sport Corrections**:
    `corrected_distance_and_speed(act)` in `src/formatting.py` is the **only** place where swim distance divisors and indoor bike distance estimates are applied. Never calculate ad-hoc distance adjustments inline.
 5. **No Magic Numbers**:
    All physiological constants, HR max/rest, time constants, limits, thresholds, and ports live in `src/config.py` backed by `_env_*` helpers.
 6. **ACWR Baseline Invariant**:
    The current week is strictly excluded from its own chronic baseline:
-   `chronic_weeks = preceding_weeks[-chronic_window:]`.
+   `chronic_weeks = preceding_weeks[-chronic_window:]`. Weeks are calendar weeks — a week
+   with no training counts as zero load, never skipped. Missing history yields
+   `acwr_ratio=None` with `status` `insufficient_history` / `no_baseline`.
 7. **Banister EWMA Warm-Up Invariant**:
    `calculate_fitness_fatigue` warms up EWMA starting from the earliest recorded activity in the dataset (or 2×CTL days prior to display) to prevent day-1 cold-start bias, and slices to the visible 90-day window.
 8. **Frontend Cache Busting Invariant**:
    Whenever `web/styles.css` or `web/app.js` is modified, the version query parameter in `web/index.html` (e.g. `styles.css?v=X.Y`, `app.js?v=X.Y`) must be bumped.
 9. **Offline Test Suite Integrity**:
    Every test in `tests/` must run offline with synthetic mock fixtures. Never make live network requests to Strava, Garmin, Google Sheets, or Telegram inside pytest.
+10. **Athlete-Local Time**:
+   Use `src/timeutil.today_local()` / `now_local()` (evaluated in `ATHLETE_TIMEZONE`), never `date.today()` / `datetime.now()`. Ruff's `DTZ` rules enforce this outside `tests/`.
+11. **API Security (CSRF & Webhooks)**:
+   - Every non-GET `/api/*` route requires the `X-StaminAI-Client: web` header (`verify_client`); when `API_AUTH_TOKEN` is set, `Authorization: Bearer <token>` too. Frontend calls go through `apiFetch` in `web/app.js`; test POSTs must send the header.
+   - Webhooks fail closed: `/api/strava/webhook` needs `STRAVA_WEBHOOK_SECRET_PARAM` (and a non-placeholder `STRAVA_WEBHOOK_VERIFY_TOKEN`), `/api/notifications/telegram/webhook` needs `TELEGRAM_WEBHOOK_SECRET`. Never make an unset secret mean "allow".
+   - Keep `SERVER_HOST=127.0.0.1` and `ALLOWED_ORIGINS` localhost-only. 500s return a generic message; details go to the log.
+12. **Secrets on Disk**:
+   Token and cache JSON files are written via `src/storage/atomic_file.write_json_atomic` (temp file + `os.replace`, mode `0o600`).
+13. **Lint Clean**:
+   `uv run ruff check` must pass. After `--fix`, review the diff: F811 can remove deliberate function-local imports (endpoints import `send_telegram_message` lazily so tests can monkeypatch it).

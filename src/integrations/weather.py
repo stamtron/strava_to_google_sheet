@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 import requests
 
@@ -22,7 +22,9 @@ from src.config import (
     ATHLETE_TIMEZONE,
     WEATHER_CACHE_FILE,
     WEATHER_CACHE_TTL,
+    WEATHER_HTTP_TIMEOUT_SEC,
 )
+from src.timeutil import today_local
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +73,7 @@ def _load_weather_cache() -> dict[str, dict]:
     """Load cached daily weather from disk."""
     if os.path.exists(WEATHER_CACHE_FILE):
         try:
-            with open(WEATHER_CACHE_FILE, "r") as f:
+            with open(WEATHER_CACHE_FILE) as f:
                 data = json.load(f)
                 if isinstance(data, dict):
                     return data
@@ -94,7 +96,7 @@ def fetch_weather_from_open_meteo(
     lon: float = ATHLETE_LONGITUDE,
     past_days: int = 7,
     forecast_days: int = 7,
-    timeout_sec: float = 6.0,
+    timeout_sec: float = WEATHER_HTTP_TIMEOUT_SEC,
 ) -> dict:
     """
     Fetch daily weather from Open-Meteo API.
@@ -174,7 +176,9 @@ def get_weather_outlook(
     permanently.
     """
     cache = _load_weather_cache()
-    today_str = date.today().isoformat()
+    # Open-Meteo returns days in ATHLETE_TIMEZONE, so "today" must be the athlete's.
+    today = today_local()
+    today_str = today.isoformat()
     now_ts = time.time()
 
     # Determine if cache is stale for today or near future
@@ -198,8 +202,8 @@ def get_weather_outlook(
             logger.warning("Weather fetch failed; serving cached weather if available: %s", e)
 
     # Filter and sort desired window
-    start_d = date.today() - timedelta(days=past_days)
-    end_d = date.today() + timedelta(days=forecast_days - 1)
+    start_d = today - timedelta(days=past_days)
+    end_d = today + timedelta(days=forecast_days - 1)
 
     result = []
     curr = start_d
@@ -226,10 +230,7 @@ def get_weather_outlook(
 
 def get_weather_for_date(target_date: str | date) -> dict | None:
     """Return weather dict for a specific date (YYYY-MM-DD) if in cache or accessible."""
-    if isinstance(target_date, date):
-        d_str = target_date.isoformat()
-    else:
-        d_str = str(target_date)
+    d_str = target_date.isoformat() if isinstance(target_date, date) else str(target_date)
 
     cache = _load_weather_cache()
     if d_str in cache:

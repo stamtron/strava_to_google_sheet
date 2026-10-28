@@ -1,15 +1,32 @@
 """Training-load metric tests: relative effort, weekly rollups, and ACWR."""
 
-from src.config import ACWR_CHRONIC_WEEKS, HR_MAX, HR_REST
+from datetime import date, timedelta
+from itertools import pairwise
+
+import pytest
+
+import src.analytics.metrics as metrics_mod
 from src.analytics.metrics import (
+    _classify_tsb,
     build_progression_history,
     calculate_acwr,
     calculate_fitness_fatigue,
+    calculate_hr_zones,
+    calculate_polarized_distribution,
     calculate_relative_effort,
+    estimate_activity_zone_times,
     normalize_rpe,
     process_activities_into_weeks,
-    _classify_tsb,
 )
+from src.config import ACWR_CHRONIC_WEEKS, HR_MAX, HR_REST, KJ_TO_KCAL_FACTOR
+
+FIXED_TODAY = date(2026, 10, 28)
+
+
+@pytest.fixture
+def fixed_today(monkeypatch):
+    monkeypatch.setattr(metrics_mod, "today_local", lambda: FIXED_TODAY)
+    return FIXED_TODAY
 
 
 def _act(day: str, sport: str, **kwargs) -> dict:
@@ -93,8 +110,9 @@ def test_week_activities_are_sorted_chronologically():
 
 
 def _weeks(efforts: list[float]) -> tuple[list[str], dict]:
-    """Build N consecutive weeks with the given relative-effort totals."""
-    keys = [f"2026-0{1 + i // 4}-{1 + 7 * (i % 4):02d}" for i in range(len(efforts))]
+    """Build N consecutive calendar weeks (real Mondays) with the given effort totals."""
+    first = date(2026, 1, 5)
+    keys = [(first + timedelta(weeks=i)).isoformat() for i in range(len(efforts))]
     return keys, {k: {"total_relative_effort": e} for k, e in zip(keys, efforts)}
 
 
@@ -138,6 +156,16 @@ def test_acwr_zones():
     assert zone_for(100.0) == "optimal"
     assert zone_for(140.0) == "overreaching"
     assert zone_for(200.0) == "spike"
+
+
+def test_acwr_status_is_a_machine_readable_key():
+    keys, weeks = _weeks([100.0, 100.0, 100.0, 140.0])
+    acwr = calculate_acwr(keys, weeks)
+    assert acwr[keys[0]]["status"] == "insufficient_history"
+    assert acwr[keys[3]]["status"] == "overreaching"
+
+    keys, weeks = _weeks([0.0, 0.0, 0.0, 150.0])
+    assert calculate_acwr(keys, weeks)[keys[3]]["status"] == "no_baseline"
 
 
 def test_zero_chronic_load_yields_no_ratio_instead_of_dividing_by_zero():
@@ -210,42 +238,37 @@ def test_normalize_rpe_fallback_to_moderate():
 
 def test_classify_tsb_bands():
     # Transition / Untrained: > 25
-    status, label = _classify_tsb(30.0)
+    status = _classify_tsb(30.0)
     assert status == "transition"
-    assert "Transition" in label
 
     # Race Ready / Fresh: 10 <= TSB <= 25
-    status, label = _classify_tsb(25.0)
+    status = _classify_tsb(25.0)
     assert status == "fresh"
-    assert "Fresh" in label
 
-    status, label = _classify_tsb(10.0)
+    status = _classify_tsb(10.0)
     assert status == "fresh"
 
     # Neutral / Maintenance: -10 <= TSB < 10
-    status, label = _classify_tsb(0.0)
+    status = _classify_tsb(0.0)
     assert status == "neutral"
-    assert "Neutral" in label
 
-    status, label = _classify_tsb(-10.0)
+    status = _classify_tsb(-10.0)
     assert status == "neutral"
 
     # Optimal Training / Overload: -30 <= TSB < -10
-    status, label = _classify_tsb(-15.0)
+    status = _classify_tsb(-15.0)
     assert status == "optimal"
-    assert "Optimal" in label
 
-    status, label = _classify_tsb(-30.0)
+    status = _classify_tsb(-30.0)
     assert status == "optimal"
 
     # High Fatigue / Overreaching Risk: < -30
-    status, label = _classify_tsb(-35.0)
+    status = _classify_tsb(-35.0)
     assert status == "high_fatigue"
-    assert "High Fatigue" in label
 
 
 
-def test_calculate_fitness_fatigue_empty():
+def test_calculate_fitness_fatigue_empty(fixed_today):
     res = calculate_fitness_fatigue([], display_days=14)
     assert "current" in res
     assert "series" in res
@@ -256,9 +279,8 @@ def test_calculate_fitness_fatigue_empty():
     assert res["current"]["status"] == "neutral"
 
 
-def test_calculate_fitness_fatigue_simulation():
-    from datetime import date, timedelta
-    today = date.today()
+def test_calculate_fitness_fatigue_simulation(fixed_today):
+    today = fixed_today
 
     # Generate daily activities with constant suffer score
     acts = []
@@ -284,10 +306,93 @@ def test_calculate_fitness_fatigue_simulation():
 
 
 def test_calculate_fitness_fatigue_invalid_params():
-    import pytest
     with pytest.raises(ValueError):
         calculate_fitness_fatigue([], ctl_days=0)
     with pytest.raises(ValueError):
         calculate_fitness_fatigue([], atl_days=-5)
 
 
+
+
+def test_fitness_current_is_today_even_with_future_dated_activity(fixed_today):
+    acts = [
+        _act((fixed_today - timedelta(days=1)).isoformat(), "Run", suffer_score=50),
+        _act((fixed_today + timedelta(days=3)).isoformat(), "Run", suffer_score=500),
+    ]
+    res = calculate_fitness_fatigue(acts, display_days=14)
+    assert res["current"]["date"] == fixed_today.isoformat()
+    assert res["series"][-1]["date"] == fixed_today.isoformat()
+    assert len(res["series"]) == 15
+
+
+# ACWR calendar gaps
+
+
+def test_acwr_gap_weeks_count_as_zero_load():
+    """A three-week break must enter the baseline as zeros, exposing the return spike."""
+    keys = ["2026-01-05", "2026-01-12", "2026-02-09"]
+    weeks = {k: {"total_relative_effort": 100.0} for k in keys}
+    acwr = calculate_acwr(keys, weeks)
+    latest = acwr["2026-02-09"]
+    # Preceding 4 calendar weeks: 01-12 (100) plus three empty weeks.
+    assert latest["chronic_weeks"] == ACWR_CHRONIC_WEEKS
+    assert latest["chronic_effort"] == 25.0
+    assert latest["acwr_ratio"] == 4.0
+    assert latest["zone"] == "spike"
+
+
+def test_acwr_history_counts_calendar_weeks_not_entries():
+    # Only two entries, but the second is three calendar weeks after the first.
+    keys = ["2026-01-05", "2026-01-26"]
+    weeks = {"2026-01-05": {"total_relative_effort": 80.0}, "2026-01-26": {"total_relative_effort": 80.0}}
+    acwr = calculate_acwr(keys, weeks)
+    assert acwr["2026-01-26"]["chronic_weeks"] == 3
+    assert acwr["2026-01-26"]["acwr_ratio"] == 3.0
+
+
+# Weekly rollup robustness
+
+
+def test_calories_from_kilojoules_when_calories_missing():
+    weeks = process_activities_into_weeks([_act("2026-08-24", "Ride", kilojoules=800.0)])
+    assert weeks["2026-08-24"]["total_calories"] == pytest.approx(800.0 * KJ_TO_KCAL_FACTOR)
+
+
+def test_calories_prefers_strava_calories_and_tolerates_none_kilojoules():
+    weeks = process_activities_into_weeks([
+        _act("2026-08-24", "Run", calories=None, kilojoules=None),
+        _act("2026-08-25", "Run", calories=650.0, kilojoules=None),
+    ])
+    assert weeks["2026-08-24"]["total_calories"] == 650.0
+
+
+def test_malformed_start_date_is_skipped():
+    weeks = process_activities_into_weeks([
+        _act("2026-08-24", "Run"),
+        {**_act("2026-08-25", "Run"), "start_date_local": "not-a-date"},
+    ])
+    assert list(weeks) == ["2026-08-24"]
+    assert len(weeks["2026-08-24"]["activities"]) == 1
+
+
+# Heart-rate zones
+
+
+def test_hr_zones_are_contiguous():
+    zones = calculate_hr_zones(hr_max=190, hr_rest=50)
+    keys = ["z1", "z2", "z3", "z4", "z5"]
+    for lo, hi in pairwise(keys):
+        assert zones[hi][0] == zones[lo][1] + 1
+    assert zones["z5"][1] == 190
+
+
+def test_zone_time_spread_sums_to_moving_time():
+    for hr in (100, 135, 150, 165, 185):
+        z = estimate_activity_zone_times({"moving_time": 3600, "average_heartrate": hr}, hr_max=190, hr_rest=50)
+        assert sum(z.values()) == pytest.approx(3600)
+
+
+def test_polarized_empty_includes_by_sport():
+    res = calculate_polarized_distribution([])
+    assert res["classification"] == "unknown"
+    assert set(res["by_sport"]) == {"run", "bike", "swim", "strength", "other"}

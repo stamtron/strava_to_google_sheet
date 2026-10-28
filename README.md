@@ -48,6 +48,12 @@ uv run python server.py
 # Open http://127.0.0.1:8000 in your browser
 ```
 
+> 🔒 **Security:** the dashboard binds to `127.0.0.1` only. State-changing API calls require the
+> `X-StaminAI-Client: web` header (sent automatically by the web app) and, optionally, an
+> `API_AUTH_TOKEN` bearer token. The Strava and Telegram webhooks reject all requests until
+> `STRAVA_WEBHOOK_SECRET_PARAM` / `STRAVA_WEBHOOK_VERIFY_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` are set.
+> See [Configuration](docs/configuration.md).
+
 ### CLI Quick Commands
 
 ```bash
@@ -56,7 +62,8 @@ uv run python main.py --sheet             # Sync Strava + Garmin to Google Sheet
 uv run python main.py --backfill          # One-time full Strava history import into SQLite
 uv run python main.py --telegram-next-day # Dispatch tomorrow's brief to Telegram
 uv run python main.py --telegram-weekly   # Dispatch weekly executive summary to Telegram
-uv run pytest                             # Run offline test suite (357+ tests)
+uv run pytest                             # Run offline test suite (460+ tests)
+uv run ruff check                         # Lint
 ```
 
 ---
@@ -83,16 +90,18 @@ strava_to_google_sheet/
 ├── src/                          # Core backend package
 │   ├── config.py                 # Centralized configuration & environment variables
 │   ├── formatting.py             # Duration/pace formatting & sport data corrections
+│   ├── status_labels.py          # Display text for analytics status keys
+│   ├── timeutil.py               # Athlete-timezone clock helpers
 │   ├── integrations/             # External APIs (Strava, Garmin, Sheets, Telegram, Weather)
 │   ├── analytics/                # Data engines (Durability, ACWR, AI Coach, Compliance, Gear)
-│   ├── storage/                  # Local persistence (SQLite activities & chat memory)
+│   ├── storage/                  # Local persistence (SQLite activities, chat memory, atomic token files)
 │   └── api/                      # FastAPI REST server & routing
 ├── docs/                         # Detailed modular documentation
 ├── web/                          # Glassmorphic frontend (HTML/CSS/JS + Chart.js)
-├── tests/                        # Offline pytest test suite (348+ tests)
+├── tests/                        # Offline pytest test suite (460+ tests)
 ├── main.py                       # CLI entry point
 ├── server.py                     # Web server entry point
-├── pyproject.toml                # Project metadata & dependencies
+├── pyproject.toml                # Project metadata, dependencies, pytest & ruff config
 └── .env.example                  # Environment configuration template
 ```
 

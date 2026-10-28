@@ -181,6 +181,18 @@ def test_injuries_ride_along_in_recall_even_without_a_keyword_match(conn):
     assert "constraint" in categories
 
 
+def test_injuries_displace_weak_hits_when_recall_is_full(conn):
+    """With more than k keyword matches there would otherwise be no room for the injury."""
+    memory = SqliteMemory(conn)
+    injury = memory.remember("Left knee ITBS flares above 40 km per week.", category="injury")
+    for i in range(6):
+        memory.remember(f"Prefers the wetsuit brand number {i}.", category="preference")
+
+    hits = memory.recall("which wetsuit brand", k=3)
+    assert len(hits) == 3
+    assert injury["id"] in {h["id"] for h in hits}
+
+
 def test_recall_respects_k(conn):
     memory = SqliteMemory(conn)
     for i in range(6):

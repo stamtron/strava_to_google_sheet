@@ -3,8 +3,8 @@ Tests for Garmin Workouts integration:
 sport classification, pace conversions, structured parsing, and Garmin DTO generation.
 """
 
+from datetime import date
 from unittest.mock import MagicMock, patch
-import pytest
 
 from src.integrations.garmin_workouts import (
     build_garmin_workout_object,
@@ -112,13 +112,13 @@ def test_heuristic_parser_running_pace_and_strides():
     assert steps[0]["condition_value"] == 1200.0  # 20 min
 
     # Main interval 8km with speed target
-    interval_8k = [s for s in steps if s.get("condition_value") == 8000.0][0]
+    interval_8k = next(s for s in steps if s.get("condition_value") == 8000.0)
     assert interval_8k["target_type"] == "speed"
     assert interval_8k["target_value_low"] is not None
     assert interval_8k["target_value_high"] is not None
 
     # Cooldown
-    cooldown = [s for s in steps if s["step_type"] == "cooldown"][0]
+    cooldown = next(s for s in steps if s["step_type"] == "cooldown")
     assert cooldown["condition_value"] == 600.0  # 10 min
 
 
@@ -130,7 +130,7 @@ def test_heuristic_parser_cycling_trainer():
     assert "Tacx" in parsed["workout_name"] or "Trainer" in parsed["workout_name"]
     steps = parsed["steps"]
     # Should have warmup and main trainer interval
-    interval = [s for s in steps if s["step_type"] == "interval"][0]
+    interval = next(s for s in steps if s["step_type"] == "interval")
     assert interval["condition_value"] == 5700.0  # 95 min
 
 
@@ -203,7 +203,8 @@ def test_sync_workouts_dry_run_mode():
 
 def test_sync_workouts_live_mocked():
     with patch("src.integrations.garmin_workouts.preview_week_workouts") as mock_preview, \
-         patch("src.integrations.garmin_workouts.get_garmin_client") as mock_get_client:
+         patch("src.integrations.garmin_workouts.get_garmin_client") as mock_get_client, \
+         patch("src.integrations.garmin_workouts.today_local", return_value=date(2026, 9, 7)):
 
         mock_preview.return_value = {
             "week_start": "2026-09-07",
@@ -242,3 +243,98 @@ def test_sync_workouts_live_mocked():
 
         fake_client.upload_workout.assert_called_once()
         fake_client.schedule_workout.assert_called_once_with(12345, "2026-09-08")
+
+
+# --- Live sync safety: past days, duplicates, orphaned uploads ---
+
+def _week_preview(*dates_and_names):
+    return {
+        "week_start": "2026-09-07",
+        "week_end": "2026-09-13",
+        "workouts_found": len(dates_and_names),
+        "workouts": [
+            {
+                "date": d,
+                "sport": "running",
+                "workout_name": name,
+                "estimated_duration_sec": 1800,
+                "steps": [
+                    {
+                        "step_order": 1,
+                        "step_type": "interval",
+                        "condition_type": "time",
+                        "condition_value": 1800.0,
+                        "target_type": "no_target",
+                    }
+                ],
+            }
+            for d, name in dates_and_names
+        ],
+    }
+
+
+def _run_sync(preview, client, today=date(2026, 9, 9)):
+    with patch("src.integrations.garmin_workouts.preview_week_workouts", return_value=preview), \
+         patch("src.integrations.garmin_workouts.get_garmin_client", return_value=client), \
+         patch("src.integrations.garmin_workouts.today_local", return_value=today):
+        return sync_week_workouts_to_garmin(week_offset=0, dry_run=False)
+
+
+def _client():
+    client = MagicMock()
+    client.get_scheduled_workouts.return_value = {"calendarItems": []}
+    client.upload_workout.return_value = {"workoutId": 1}
+    client.schedule_workout.return_value = {"workoutScheduleId": 2}
+    return client
+
+
+def test_sync_skips_days_already_past():
+    client = _client()
+    res = _run_sync(_week_preview(("2026-09-08", "Easy"), ("2026-09-09", "Tempo")), client)
+
+    assert [r["status"] for r in res["results"]] == ["skipped_past", "scheduled"]
+    client.upload_workout.assert_called_once()
+
+
+def test_sync_skips_workouts_already_on_the_calendar():
+    client = _client()
+    client.get_scheduled_workouts.return_value = {
+        "calendarItems": [
+            {"itemType": "workout", "date": "2026-09-10", "title": "Tempo"},
+            {"itemType": "activity", "date": "2026-09-11", "title": "Long"},
+        ]
+    }
+    res = _run_sync(_week_preview(("2026-09-10", "Tempo"), ("2026-09-11", "Long")), client)
+
+    assert [r["status"] for r in res["results"]] == ["skipped_duplicate", "scheduled"]
+    client.upload_workout.assert_called_once()
+
+
+def test_sync_proceeds_when_calendar_lookup_fails():
+    client = _client()
+    client.get_scheduled_workouts.side_effect = ConnectionError("calendar down")
+    res = _run_sync(_week_preview(("2026-09-10", "Tempo")), client)
+    assert res["results"][0]["status"] == "scheduled"
+
+
+def test_failed_schedule_deletes_the_uploaded_workout():
+    client = _client()
+    client.upload_workout.return_value = {"workoutId": 77}
+    client.schedule_workout.side_effect = RuntimeError("calendar rejected")
+    res = _run_sync(_week_preview(("2026-09-10", "Tempo"), ("2026-09-11", "Long")), client)
+
+    assert [r["status"] for r in res["results"]] == ["error", "error"]
+    assert client.delete_workout.call_count == 2
+    client.delete_workout.assert_called_with(77)
+
+
+def test_build_error_is_reported_per_workout_not_raised():
+    client = _client()
+    with patch(
+        "src.integrations.garmin_workouts.build_garmin_workout_object",
+        side_effect=[ValueError("bad step"), MagicMock(to_dict=lambda: {})],
+    ):
+        res = _run_sync(_week_preview(("2026-09-10", "Broken"), ("2026-09-11", "Fine")), client)
+
+    assert [r["status"] for r in res["results"]] == ["error", "scheduled"]
+    assert "bad step" in res["results"][0]["error"]

@@ -4,6 +4,7 @@ Unit tests for Garmin Health Biometrics & Nap Tracking.
 
 from datetime import date
 from unittest.mock import MagicMock
+
 import pytest
 
 from src.integrations.garmin import get_weekly_health_summary
@@ -168,8 +169,9 @@ def test_assess_workout_readiness_modulates_intervals_on_poor_recovery():
 
     assert readiness["needs_modulation"] is True
     assert readiness["workout_detected_intensity"] == "high"
-    assert "ακύρωση" in readiness["modulation_advice"] or "μείωση" in readiness["modulation_advice"]
-    assert readiness["substitute_option"] is not None
+    assert readiness["advice_key"] == "poor_high_intensity"
+    assert readiness["substitute_option"]["kind"] == "recovery_ride"
+    assert "modulation_advice" not in readiness
 
 
 def test_assess_workout_readiness_clears_rest_and_optimal():
@@ -184,7 +186,7 @@ def test_assess_workout_readiness_clears_rest_and_optimal():
     }
     readiness = assess_workout_readiness(optimal_rec, workout_text="Τρέξιμο 5 χλμ χαλαρό Zone 2")
     assert readiness["needs_modulation"] is False
-    assert "Βέλτιστη Ετοιμότητα" in readiness["modulation_advice"]
+    assert readiness["advice_key"] == "optimal"
 
 
 def test_compute_biometric_baselines_and_evaluate():
@@ -199,7 +201,7 @@ def test_compute_biometric_baselines_and_evaluate():
     assert base["hrv"]["weeks_used"] == 2
     assert base["hrv"]["normal_range"] is None
 
-    stat, _ = evaluate_biometric_status(55, base["hrv"], "hrv")
+    stat = evaluate_biometric_status(55, base["hrv"], "hrv")
     assert stat == "unknown"
 
     # 4 weeks of history: Mean HRV = 60, Mean RHR = 50
@@ -218,16 +220,174 @@ def test_compute_biometric_baselines_and_evaluate():
     assert baselines["hrv"]["normal_range"][1] > 60.0
 
     # Normal day (within normal_range)
-    hrv_stat, _ = evaluate_biometric_status(60, baselines["hrv"], "hrv")
-    rhr_stat, _ = evaluate_biometric_status(50, baselines["rhr"], "rhr")
+    hrv_stat = evaluate_biometric_status(60, baselines["hrv"], "hrv")
+    rhr_stat = evaluate_biometric_status(50, baselines["rhr"], "rhr")
     assert hrv_stat == "optimal"
     assert rhr_stat == "optimal"
 
     # Suppressed HRV & Elevated RHR
-    low_hrv, _ = evaluate_biometric_status(45, baselines["hrv"], "hrv")
-    high_rhr, _ = evaluate_biometric_status(60, baselines["rhr"], "rhr")
+    low_hrv = evaluate_biometric_status(45, baselines["hrv"], "hrv")
+    high_rhr = evaluate_biometric_status(60, baselines["rhr"], "rhr")
     assert low_hrv == "low"
     assert high_rhr == "elevated"
 
 
 
+
+
+# --- Weekly cache: failures vs genuinely empty weeks ---
+
+import json
+
+from src.integrations import garmin
+from src.integrations.garmin import assess_workout_readiness, get_weekly_health_summaries
+
+
+def _empty_client():
+    client = MagicMock()
+    for name in (
+        "get_sleep_data", "get_user_summary", "get_rhr_day", "get_hrv_data",
+        "get_stress_data", "get_body_battery", "get_training_readiness",
+    ):
+        getattr(client, name).return_value = None
+    return client
+
+
+@pytest.fixture
+def garmin_cache(tmp_path, monkeypatch):
+    path = tmp_path / "garmin_cache.json"
+    monkeypatch.setattr(garmin, "GARMIN_CACHE_FILE", str(path))
+    monkeypatch.setattr(garmin, "today_local", lambda: date(2026, 10, 28))
+    return path
+
+
+WEEK = {"2026-09-07": (date(2026, 9, 7), date(2026, 9, 13))}
+
+
+def test_failed_week_is_not_cached_as_empty(garmin_cache, monkeypatch):
+    client = _empty_client()
+    client.get_sleep_data.side_effect = ConnectionError("garmin down")
+    monkeypatch.setattr(garmin, "get_garmin_client", lambda: client)
+
+    assert get_weekly_health_summaries(WEEK) == {}
+    assert not garmin_cache.exists() or "2026-09-07" not in json.loads(garmin_cache.read_text())
+
+
+def test_empty_week_is_cached_only_for_the_short_ttl(garmin_cache, monkeypatch):
+    client = _empty_client()
+    monkeypatch.setattr(garmin, "get_garmin_client", lambda: client)
+    clock = {"now": 1_000_000.0}
+    monkeypatch.setattr(garmin.time, "time", lambda: clock["now"])
+
+    get_weekly_health_summaries(WEEK)
+    assert json.loads(garmin_cache.read_text())["2026-09-07"]["summary"] is None
+    calls = client.get_sleep_data.call_count
+
+    get_weekly_health_summaries(WEEK)  # still fresh: no refetch
+    assert client.get_sleep_data.call_count == calls
+
+    clock["now"] += garmin.GARMIN_EMPTY_CACHE_TTL + 1
+    get_weekly_health_summaries(WEEK)  # finished week, but empty: re-checked
+    assert client.get_sleep_data.call_count > calls
+
+
+def test_partial_week_is_flagged_and_rechecked(garmin_cache, monkeypatch):
+    client = _empty_client()
+    client.get_hrv_data.return_value = {"hrvSummary": {"lastNightAvg": 70}}
+    client.get_stress_data.side_effect = TimeoutError("slow")
+    monkeypatch.setattr(garmin, "get_garmin_client", lambda: client)
+
+    res = get_weekly_health_summaries(WEEK)
+    assert res["2026-09-07"]["avg_hrv"] == 70
+    entry = json.loads(garmin_cache.read_text())["2026-09-07"]
+    assert entry["partial"] is True
+    assert garmin._cache_entry_is_fresh(entry, date(2026, 9, 13), date(2026, 10, 28))
+    entry["fetched_at"] -= garmin.GARMIN_EMPTY_CACHE_TTL + 1
+    assert not garmin._cache_entry_is_fresh(entry, date(2026, 9, 13), date(2026, 10, 28))
+
+
+def test_complete_finished_week_stays_cached(garmin_cache):
+    entry = {"summary": {"avg_hrv": 70}, "fetched_at": 0}
+    assert garmin._cache_entry_is_fresh(entry, date(2026, 9, 13), date(2026, 10, 28))
+
+
+# --- Login cooldown & auth invalidation ---
+
+@pytest.fixture
+def garmin_login(monkeypatch):
+    monkeypatch.setattr(garmin, "GARMIN_EMAIL", "a@b.c")
+    monkeypatch.setattr(garmin, "GARMIN_PASSWORD", "pw")
+    monkeypatch.setattr(garmin, "_client", None)
+    monkeypatch.setattr(garmin, "_client_failed_at", None)
+    monkeypatch.setattr(garmin.os, "makedirs", lambda *a, **k: None)
+    clock = {"now": 5_000.0}
+    monkeypatch.setattr(garmin.time, "time", lambda: clock["now"])
+    attempts = []
+
+    class FakeGarmin:
+        fail = True
+
+        def __init__(self, *args):
+            attempts.append(1)
+
+        def login(self, tokenstore=None):
+            if FakeGarmin.fail:
+                raise ConnectionError("no network")
+
+    monkeypatch.setattr(garmin, "Garmin", FakeGarmin)
+    return FakeGarmin, attempts, clock
+
+
+def test_failed_login_is_retried_after_cooldown(garmin_login):
+    fake, attempts, clock = garmin_login
+
+    assert garmin.get_garmin_client() is None
+    assert garmin.get_garmin_client() is None  # within cooldown: no new attempt
+    assert len(attempts) == 1
+
+    clock["now"] += garmin.GARMIN_LOGIN_RETRY_COOLDOWN_SEC + 1
+    fake.fail = False
+    assert isinstance(garmin.get_garmin_client(), fake)
+    assert len(attempts) == 2
+
+
+def test_auth_error_invalidates_cached_client(garmin_login):
+    from garminconnect import GarminConnectAuthenticationError
+
+    fake, attempts, _ = garmin_login
+    fake.fail = False
+    client = garmin.get_garmin_client()
+    assert garmin.get_garmin_client() is client
+
+    garmin._record_call_error([], "sleep", "2026-10-28", GarminConnectAuthenticationError("expired"))
+    assert garmin._client is None
+    assert garmin.get_garmin_client() is not client
+    assert len(attempts) == 2
+
+
+# --- Readiness: rest-day detection ---
+
+def test_interval_session_with_rest_between_reps_is_not_a_rest_day():
+    poor = {"recovery_status": "poor", "recovery_score": 30, "flags": ["low_sleep"]}
+    res = assess_workout_readiness(poor, "Τρέξιμο: 8x200m με 90'' rest")
+    assert res["workout_detected_intensity"] == "high"
+    assert res["needs_modulation"] is True
+
+
+def test_rest_keyword_inside_other_words_is_not_a_rest_day():
+    ok = {"recovery_status": "adequate", "recovery_score": 70}
+    res = assess_workout_readiness(ok, "Offroad trail run, χαλαρό")
+    assert res["workout_detected_intensity"] == "moderate"
+
+
+def test_accented_greek_rest_day_is_detected():
+    ok = {"recovery_status": "adequate", "recovery_score": 70}
+    assert assess_workout_readiness(ok, "Ξεκούραση")["workout_detected_intensity"] == "rest"
+    assert assess_workout_readiness(ok, "Day off")["workout_detected_intensity"] == "rest"
+    assert assess_workout_readiness(ok, "")["workout_detected_intensity"] == "rest"
+
+
+def test_accented_greek_interval_keyword_is_high_intensity():
+    ok = {"recovery_status": "adequate", "recovery_score": 70}
+    res = assess_workout_readiness(ok, "Διαλειμματική προπόνηση στο στίβο")
+    assert res["workout_detected_intensity"] == "high"

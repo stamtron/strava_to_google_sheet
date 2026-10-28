@@ -4,6 +4,7 @@ Centralized Configuration and Settings.
 
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 # Project Root Directory
@@ -257,3 +258,222 @@ TSB_FRESH_MAX = _env_float("TSB_FRESH_MAX", 25.0)
 # Weekly Telegram Dispatch Time (e.g. Sunday evening 21:00)
 TELEGRAM_WEEKLY_DISPATCH_TIME = os.getenv("TELEGRAM_WEEKLY_DISPATCH_TIME", "21:00").strip()
 
+
+# --- Integration tunables ---
+# HTTP timeouts and retry backoff for external services
+STRAVA_HTTP_TIMEOUT_SEC = _env_float("STRAVA_HTTP_TIMEOUT_SEC", 30.0)
+STRAVA_BACKOFF_BASE_SEC = _env_float("STRAVA_BACKOFF_BASE_SEC", 2.0)
+STRAVA_BACKOFF_CAP_SEC = _env_float("STRAVA_BACKOFF_CAP_SEC", 30.0)
+WEATHER_HTTP_TIMEOUT_SEC = _env_float("WEATHER_HTTP_TIMEOUT_SEC", 6.0)
+GSHEETS_RETRY_DELAY_SEC = _env_float("GSHEETS_RETRY_DELAY_SEC", 1.5)
+TELEGRAM_HTTP_TIMEOUT_SEC = _env_float("TELEGRAM_HTTP_TIMEOUT_SEC", 10.0)
+
+# Telegram message limits & bot loop
+TELEGRAM_MAX_MESSAGE_CHARS = _env_int("TELEGRAM_MAX_MESSAGE_CHARS", 4000)  # API hard limit is 4096
+TELEGRAM_POLL_TIMEOUT_SEC = _env_int("TELEGRAM_POLL_TIMEOUT_SEC", 10)
+TELEGRAM_BOT_LOOP_SLEEP_SEC = _env_float("TELEGRAM_BOT_LOOP_SLEEP_SEC", 0.5)
+TELEGRAM_BOT_ERROR_SLEEP_SEC = _env_float("TELEGRAM_BOT_ERROR_SLEEP_SEC", 5.0)
+TELEGRAM_DISPATCH_RETRY_BACKOFF_SEC = _env_int("TELEGRAM_DISPATCH_RETRY_BACKOFF_SEC", 900)
+TELEGRAM_DAILY_DISPATCH_FALLBACK = "20:30"
+TELEGRAM_WEEKLY_DISPATCH_FALLBACK = "21:00"
+
+# Google Sheets plan layout (first row reuses FIRST_WEEK_ROW)
+PLAN_LAST_ROW = _env_int("PLAN_LAST_ROW", 150)
+
+# Garmin client & cache
+GARMIN_LOGIN_RETRY_COOLDOWN_SEC = _env_int("GARMIN_LOGIN_RETRY_COOLDOWN_SEC", 900)
+GARMIN_EMPTY_CACHE_TTL = _env_int("GARMIN_EMPTY_CACHE_TTL", 3600)  # null/partial weeks
+
+# Garmin biometric baselines (mean ± factor * std)
+BASELINE_STD_FACTOR = _env_float("BASELINE_STD_FACTOR", 0.75)
+BASELINE_STD_FLOOR = _env_float("BASELINE_STD_FLOOR", 2.0)
+BASELINE_LOW_FLOOR = _env_float("BASELINE_LOW_FLOOR", 10.0)
+BASELINE_MIN_WEEKS = _env_int("BASELINE_MIN_WEEKS", 3)
+
+# Garmin daily recovery score thresholds
+RECOVERY_BASE_SCORE = _env_int("RECOVERY_BASE_SCORE", 80)
+RECOVERY_SCORE_MIN = _env_int("RECOVERY_SCORE_MIN", 10)
+RECOVERY_SCORE_MAX = _env_int("RECOVERY_SCORE_MAX", 100)
+RECOVERY_OPTIMAL_MIN = _env_int("RECOVERY_OPTIMAL_MIN", 80)
+RECOVERY_ADEQUATE_MIN = _env_int("RECOVERY_ADEQUATE_MIN", 65)
+RECOVERY_COMPROMISED_MIN = _env_int("RECOVERY_COMPROMISED_MIN", 45)
+RECOVERY_SLEEP_CRITICAL_H = _env_float("RECOVERY_SLEEP_CRITICAL_H", 5.5)
+RECOVERY_SLEEP_LOW_H = _env_float("RECOVERY_SLEEP_LOW_H", 6.5)
+RECOVERY_SLEEP_GOOD_H = _env_float("RECOVERY_SLEEP_GOOD_H", 7.5)
+RECOVERY_RHR_HIGH_BPM = _env_int("RECOVERY_RHR_HIGH_BPM", 60)
+RECOVERY_RHR_LOW_BPM = _env_int("RECOVERY_RHR_LOW_BPM", 50)
+RECOVERY_BB_DEPLETED = _env_int("RECOVERY_BB_DEPLETED", 30)
+RECOVERY_BB_MODERATE = _env_int("RECOVERY_BB_MODERATE", 50)
+RECOVERY_BB_HIGH = _env_int("RECOVERY_BB_HIGH", 75)
+RECOVERY_UNKNOWN_SCORE = _env_int("RECOVERY_UNKNOWN_SCORE", 75)  # shown when Garmin has no data
+
+# Structured workout generation
+DEFAULT_RUN_PACE_SEC_PER_KM = _env_float("DEFAULT_RUN_PACE_SEC_PER_KM", 315.0)  # 5:15/km
+WORKOUT_SPEED_TOLERANCE_MS = _env_float("WORKOUT_SPEED_TOLERANCE_MS", 0.10)
+GARMIN_WORKOUT_NAME_MAX_CHARS = _env_int("GARMIN_WORKOUT_NAME_MAX_CHARS", 35)
+
+# --- Analytics thresholds ---
+# Strava's `kilojoules` is mechanical work at the pedals. Human gross efficiency
+# (~20-25%) cancels the 4.184 kJ/kcal conversion almost exactly, so the
+# convention is kcal ≈ kJ. Applied only when Strava reports no `calories`.
+KJ_TO_KCAL_FACTOR = _env_float("KJ_TO_KCAL_FACTOR", 1.0)
+
+# ACWR band upper edges (inclusive): low ≤ LOW_MAX < optimal ≤ OPTIMAL_MAX <
+# overreaching ≤ OVERREACHING_MAX < spike.
+ACWR_LOW_MAX = _env_float("ACWR_LOW_MAX", 0.8)
+ACWR_OPTIMAL_MAX = _env_float("ACWR_OPTIMAL_MAX", 1.3)
+ACWR_OVERREACHING_MAX = _env_float("ACWR_OVERREACHING_MAX", 1.5)
+
+# Banister TRIMP estimate used when Strava has no suffer score:
+# load/min = hrr · WEIGHT · e^(EXPONENT · hrr), with hrr clamped to ≥ HRR_FLOOR.
+# Without heart rate, load falls back to DURATION_ONLY_PER_MIN per minute.
+TRIMP_HRR_FLOOR = _env_float("TRIMP_HRR_FLOOR", 0.4)
+TRIMP_WEIGHT = _env_float("TRIMP_WEIGHT", 0.64)
+TRIMP_EXPONENT = _env_float("TRIMP_EXPONENT", 1.92)
+TRIMP_DURATION_ONLY_PER_MIN = _env_float("TRIMP_DURATION_ONLY_PER_MIN", 0.5)
+
+# Floor on heart-rate reserve (bpm) so a misconfigured HR_MAX/HR_REST pair
+# cannot produce a near-zero denominator.
+MIN_HRR_BPM = _env_int("MIN_HRR_BPM", 20)
+
+# RPE (Borg CR10) estimation anchors: (input, rpe) points, linearly
+# interpolated and clamped at both ends. Input is %HRR for the heart-rate path
+# and suffer score per minute for the fallback path.
+RPE_HRR_ANCHORS = (
+    (0.0, 1.0),
+    (_env_float("RPE_HRR_EASY", 0.40), 2.0),
+    (_env_float("RPE_HRR_MODERATE", 0.60), 4.0),
+    (_env_float("RPE_HRR_TEMPO", 0.75), 6.0),
+    (_env_float("RPE_HRR_THRESHOLD", 0.85), 8.0),
+    (1.0, 10.0),
+)
+RPE_SUFFER_PER_MIN_ANCHORS = (
+    (0.0, 1.0),
+    (_env_float("RPE_SUFFER_EASY", 0.25), 3.0),
+    (_env_float("RPE_SUFFER_MODERATE", 0.50), 5.0),
+    (_env_float("RPE_SUFFER_HARD", 0.80), 7.0),
+    (_env_float("RPE_SUFFER_VERY_HARD", 1.20), 9.0),
+    (_env_float("RPE_SUFFER_MAX", 2.00), 10.0),
+)
+
+# Karvonen zone lower edges as %HRR: Z1 starts at the first, Z5 at the last.
+HR_ZONE_HRR_EDGES = (
+    _env_float("HR_Z1_HRR", 0.50),
+    _env_float("HR_Z2_HRR", 0.60),
+    _env_float("HR_Z3_HRR", 0.72),
+    _env_float("HR_Z4_HRR", 0.82),
+    _env_float("HR_Z5_HRR", 0.90),
+)
+# How a session's time is spread across Z1-Z5 given which zone its average HR
+# falls in (row = zone of the average, Z1 row also covers anything below Z2).
+HR_ZONE_TIME_SPREAD = (
+    (0.75, 0.25, 0.00, 0.00, 0.00),
+    (0.20, 0.70, 0.10, 0.00, 0.00),
+    (0.10, 0.25, 0.55, 0.10, 0.00),
+    (0.00, 0.10, 0.25, 0.55, 0.10),
+    (0.00, 0.00, 0.10, 0.30, 0.60),
+)
+
+# Seiler intensity-distribution classification (percent of time).
+POLARIZED_LOW_MIN_PCT = _env_float("POLARIZED_LOW_MIN_PCT", 75.0)
+POLARIZED_MODERATE_MAX_PCT = _env_float("POLARIZED_MODERATE_MAX_PCT", 15.0)
+PYRAMIDAL_LOW_MIN_PCT = _env_float("PYRAMIDAL_LOW_MIN_PCT", 70.0)
+GREY_ZONE_MODERATE_MIN_PCT = _env_float("GREY_ZONE_MODERATE_MIN_PCT", 25.0)
+HIGH_INTENSITY_HEAVY_MIN_PCT = _env_float("HIGH_INTENSITY_HEAVY_MIN_PCT", 25.0)
+
+# Days of CTL/ATL/TSB history returned for display.
+FITNESS_DISPLAY_DAYS = _env_int("FITNESS_DISPLAY_DAYS", 90)
+
+# Single-leg strength sessions prescribed per week by durability risk.
+STRENGTH_SESSIONS_HIGH_RISK = _env_int("STRENGTH_SESSIONS_HIGH_RISK", 3)
+STRENGTH_SESSIONS_DEFAULT = _env_int("STRENGTH_SESSIONS_DEFAULT", 2)
+
+# Plan-vs-actual compliance. Volume within [MIN, MAX] percent of the target is
+# spot on; above MAX is overreach, below MIN underreach.
+COMPLIANCE_SPOT_ON_MIN_PCT = _env_float("COMPLIANCE_SPOT_ON_MIN_PCT", 88.0)
+COMPLIANCE_SPOT_ON_MAX_PCT = _env_float("COMPLIANCE_SPOT_ON_MAX_PCT", 112.0)
+COMPLIANCE_SCORE_FULL = _env_int("COMPLIANCE_SCORE_FULL", 100)
+COMPLIANCE_SCORE_COMPLETED = _env_int("COMPLIANCE_SCORE_COMPLETED", 90)
+COMPLIANCE_SCORE_UNPLANNED = _env_int("COMPLIANCE_SCORE_UNPLANNED", 80)
+COMPLIANCE_SCORE_OTHER = _env_int("COMPLIANCE_SCORE_OTHER", 70)
+COMPLIANCE_SCORE_DEVIATION_FLOOR = _env_int("COMPLIANCE_SCORE_DEVIATION_FLOOR", 40)
+COMPLIANCE_SCORE_REST_BROKEN_SHORT = _env_int("COMPLIANCE_SCORE_REST_BROKEN_SHORT", 50)
+COMPLIANCE_SCORE_REST_BROKEN_LONG = _env_int("COMPLIANCE_SCORE_REST_BROKEN_LONG", 30)
+COMPLIANCE_REST_BROKEN_SHORT_MIN = _env_float("COMPLIANCE_REST_BROKEN_SHORT_MIN", 30.0)
+
+# Gear wear. Bikes have no cushioning to wear out, so their threshold is a
+# service reminder; gear enters "warning" at WARNING_FRACTION of its threshold.
+GEAR_BIKE_ALERT_KM = _env_float("GEAR_BIKE_ALERT_KM", 5000.0)
+GEAR_WARNING_FRACTION = _env_float("GEAR_WARNING_FRACTION", 0.85)
+
+# Weather pace slowdown: (lower bound exclusive, slowdown fraction), hottest /
+# windiest first. Wind's lowest band is inclusive of its bound.
+WEATHER_HEAT_BANDS = (
+    (_env_float("WEATHER_HEAT_EXTREME_C", 35.0), _env_float("WEATHER_HEAT_EXTREME_PCT", 0.12)),
+    (_env_float("WEATHER_HEAT_HIGH_C", 30.0), _env_float("WEATHER_HEAT_HIGH_PCT", 0.085)),
+    (_env_float("WEATHER_HEAT_MODERATE_C", 25.0), _env_float("WEATHER_HEAT_MODERATE_PCT", 0.055)),
+    (_env_float("WEATHER_HEAT_MILD_C", 20.0), _env_float("WEATHER_HEAT_MILD_PCT", 0.03)),
+    (_env_float("WEATHER_HEAT_SLIGHT_C", 15.0), _env_float("WEATHER_HEAT_SLIGHT_PCT", 0.01)),
+)
+WEATHER_WIND_BANDS = (
+    (_env_float("WEATHER_WIND_GALE_KMH", 35.0), _env_float("WEATHER_WIND_GALE_PCT", 0.05)),
+    (_env_float("WEATHER_WIND_MODERATE_KMH", 25.0), _env_float("WEATHER_WIND_MODERATE_PCT", 0.03)),
+    (_env_float("WEATHER_WIND_BREEZY_KMH", 18.0), _env_float("WEATHER_WIND_BREEZY_PCT", 0.015)),
+)
+
+
+# --- API & coach tunables ---
+# Mutating /api routes (everything but GET and the webhooks) require this header.
+# A browser cannot attach a custom header cross-origin without a CORS preflight,
+# which ALLOWED_ORIGINS refuses, so the header doubles as CSRF protection.
+API_CLIENT_HEADER = "X-StaminAI-Client"
+API_CLIENT_HEADER_VALUE = os.getenv("API_CLIENT_HEADER_VALUE", "web").strip()
+# Optional shared secret. When set, mutating routes also require
+# `Authorization: Bearer <API_AUTH_TOKEN>`.
+API_AUTH_TOKEN = os.getenv("API_AUTH_TOKEN", "").strip()
+# The shipped default of STRAVA_WEBHOOK_VERIFY_TOKEN. A handshake answered with
+# it would let anyone who read the source register a subscription, so it is refused.
+STRAVA_WEBHOOK_VERIFY_TOKEN_PLACEHOLDER = "STRAVA_WEBHOOK_SECRET"
+
+# Request & transcript size limits (characters)
+CHAT_MESSAGE_MAX_CHARS = _env_int("CHAT_MESSAGE_MAX_CHARS", 4000)
+CHAT_WEEK_CONTEXT_MAX_CHARS = _env_int("CHAT_WEEK_CONTEXT_MAX_CHARS", 100000)  # serialized JSON
+ATHLETE_NOTES_MAX_CHARS = _env_int("ATHLETE_NOTES_MAX_CHARS", 4000)
+COACH_STORED_MESSAGE_MAX_CHARS = _env_int("COACH_STORED_MESSAGE_MAX_CHARS", 8000)
+COACH_EXTRACT_MAX_MESSAGES = _env_int("COACH_EXTRACT_MAX_MESSAGES", 40)
+COACH_EXTRACT_MAX_CHARS = _env_int("COACH_EXTRACT_MAX_CHARS", 20000)
+# Garmin weeks a single get_health_metrics tool call may fetch live.
+COACH_HEALTH_MAX_FETCH = _env_int("COACH_HEALTH_MAX_FETCH", 4)
+# Planned-workout sheet reads are cached this long by /api/compliance.
+COMPLIANCE_PLAN_CACHE_TTL_SEC = _env_float("COMPLIANCE_PLAN_CACHE_TTL_SEC", 300.0)
+
+# Prediction baselines used when no qualifying activity exists.
+DEFAULT_5K_PACE_SEC_PER_KM = _env_float("DEFAULT_5K_PACE_SEC_PER_KM", 300.0)  # 5:00/km
+DEFAULT_SWIM_100M_SEC = _env_float("DEFAULT_SWIM_100M_SEC", 105.0)            # 1:45/100m
+DEFAULT_BIKE_SPEED_KMH = _env_float("DEFAULT_BIKE_SPEED_KMH", 28.0)
+
+# Weekly readiness heuristic (ai_coach): base score adjusted by nightly sleep
+# average and overnight HRV, then clamped.
+READINESS_BASE_SCORE = _env_int("READINESS_BASE_SCORE", 80)
+READINESS_SLEEP_LOW_H = _env_float("READINESS_SLEEP_LOW_H", 6.5)
+READINESS_SLEEP_GOOD_H = _env_float("READINESS_SLEEP_GOOD_H", 7.5)
+READINESS_HRV_HIGH_MS = _env_float("READINESS_HRV_HIGH_MS", 70.0)
+READINESS_HRV_LOW_MS = _env_float("READINESS_HRV_LOW_MS", 50.0)
+READINESS_HRV_RECOVERED_MS = _env_float("READINESS_HRV_RECOVERED_MS", 60.0)
+READINESS_SLEEP_LOW_PENALTY = _env_int("READINESS_SLEEP_LOW_PENALTY", 15)
+READINESS_SLEEP_GOOD_BONUS = _env_int("READINESS_SLEEP_GOOD_BONUS", 10)
+READINESS_HRV_HIGH_BONUS = _env_int("READINESS_HRV_HIGH_BONUS", 10)
+READINESS_HRV_LOW_PENALTY = _env_int("READINESS_HRV_LOW_PENALTY", 15)
+READINESS_SCORE_MIN = _env_int("READINESS_SCORE_MIN", 30)
+READINESS_SCORE_MAX = _env_int("READINESS_SCORE_MAX", 98)
+
+# Triathlon projection: per-distance pace multipliers on the base swim pace,
+# bike speed and run pace (multi-sport fatigue), and transition seconds as
+# (race_pb, training) pairs.
+TRI_LEG_FACTORS = {
+    "super_sprint": {"swim": 1.00, "bike": 1.03, "run": 1.02, "t1_sec": (60, 75), "t2_sec": (40, 45)},
+    "sprint": {"swim": 1.02, "bike": 1.00, "run": 1.05, "t1_sec": (75, 105), "t2_sec": (50, 75)},
+    "olympic": {"swim": 1.05, "bike": 0.96, "run": 1.12, "t1_sec": (90, 135), "t2_sec": (60, 90)},
+    "half_ironman": {"swim": 1.08, "bike": 0.91, "run": 1.22, "t1_sec": (135, 180), "t2_sec": (90, 120)},
+    "full_ironman": {"swim": 1.12, "bike": 0.84, "run": 1.38, "t1_sec": (210, 270), "t2_sec": (150, 180)},
+}

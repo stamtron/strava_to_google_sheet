@@ -20,9 +20,9 @@ from src.analytics import coach_agent
 from src.analytics.coach_agent import (
     MEDICAL_DISCLAIMER,
     CoachUnavailable,
+    _fact_key,
     build_system_instruction,
     build_tools,
-    _fact_key,
     chat,
     extract_session_facts,
     get_session_transcript,
@@ -31,11 +31,11 @@ from src.analytics.coach_agent import (
 from src.config import (
     ATHLETE_PB_10K_SEC,
     COACH_CHAT_MODELS,
+    COACH_HEALTH_MAX_FETCH,
     COACH_MAX_TOOL_CALLS,
     RUN_SPORTS,
 )
 from src.storage.chat_store import SqliteMemory, append_message, init_chat_tables
-
 
 # --------------------------------------------------------------------------- #
 # Fakes
@@ -344,7 +344,7 @@ def test_health_metrics_degrade_to_an_error_when_garmin_is_unreachable(tools, mo
     """Garmin is optional: a login failure must not take down the whole answer."""
     import src.integrations.garmin as garmin
 
-    def boom(week_ranges):
+    def boom(week_ranges, max_fetch=None):
         raise RuntimeError("garmin login failed")
 
     monkeypatch.setattr(garmin, "get_weekly_health_summaries", boom)
@@ -358,13 +358,17 @@ def test_health_metrics_passes_monday_sunday_ranges_per_week(tools, monkeypatch)
 
     seen = {}
 
-    def capture(week_ranges):
+    def capture(week_ranges, max_fetch=None):
         seen.update(week_ranges)
+        seen["max_fetch"] = max_fetch
         return {k: {"sleep_hours": 7.5} for k in week_ranges}
 
     monkeypatch.setattr(garmin, "get_weekly_health_summaries", capture)
     by_name, _, _ = tools
-    result = by_name["get_health_metrics"](weeks=1)
+    by_name["get_health_metrics"](weeks=1)
+    # The live fetch is bounded so a "last 12 weeks" question can't block the
+    # chat on minutes of sequential Garmin calls.
+    assert seen.pop("max_fetch") == COACH_HEALTH_MAX_FETCH
     assert list(seen) == ["2026-08-10"]
     assert seen["2026-08-10"][0].isoformat() == "2026-08-10"
     assert seen["2026-08-10"][1].isoformat() == "2026-08-16"
@@ -890,7 +894,7 @@ def test_the_whole_conversation_is_shown_to_the_extractor(conn):
 def test_extraction_is_capped_so_a_transcript_is_not_filed_wholesale(conn):
     """A model asked for durable facts will happily return the whole conversation."""
     session = _transcript(conn)
-    words = "shoes bike pool wetsuit watts cadence hills track sauna gels".split()
+    words = ["shoes", "bike", "pool", "wetsuit", "watts", "cadence", "hills", "track", "sauna", "gels"]
     facts = [{"fact": f"Owns {w}.", "category": "equipment"} for w in words]
     client = ExtractingClient(json.dumps({"facts": facts}))
 

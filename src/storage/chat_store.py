@@ -46,6 +46,8 @@ CREATE INDEX IF NOT EXISTS idx_coach_facts_created
 # Categories the coach may file a durable fact under. Free-form strings would
 # make the memory unqueryable within a few weeks of use.
 FACT_CATEGORIES = ("injury", "preference", "goal", "equipment", "constraint", "other")
+# Facts whose absence produces bad advice, so recall always carries them along.
+CRITICAL_FACT_CATEGORIES = ("injury", "constraint")
 
 
 def init_chat_tables(conn: sqlite3.Connection) -> sqlite3.Connection:
@@ -146,9 +148,7 @@ class SqliteMemory:
 
     # Words too common to carry any signal in a query about training.
     _STOPWORDS = frozenset(
-        "a an and are as at be but by can do does for from had has have how i if in "
-        "is it me my of on or should that the to was what when where which why will "
-        "with you your".split()
+        ["a", "an", "and", "are", "as", "at", "be", "but", "by", "can", "do", "does", "for", "from", "had", "has", "have", "how", "i", "if", "in", "is", "it", "me", "my", "of", "on", "or", "should", "that", "the", "to", "was", "what", "when", "where", "which", "why", "will", "with", "you", "your"]
     )
 
     def __init__(self, conn: sqlite3.Connection):
@@ -187,7 +187,7 @@ class SqliteMemory:
         facts = self.all_facts()
         terms = {w for w in _words(query) if w not in self._STOPWORDS}
         if not terms:
-            return facts[:k]
+            return pad_with_critical_facts(facts[:k], facts, k)
 
         scored = []
         for fact in facts:
@@ -197,16 +197,7 @@ class SqliteMemory:
         scored.sort(key=lambda s: (s[0], s[1]), reverse=True)
 
         hits = [f for _, _, f in scored[:k]]
-        # Injuries and hard constraints are the facts whose absence produces bad
-        # advice, so they ride along even when the wording doesn't overlap.
-        if len(hits) < k:
-            ids = {f["id"] for f in hits}
-            for fact in facts:
-                if len(hits) >= k:
-                    break
-                if fact["id"] not in ids and fact["category"] in ("injury", "constraint"):
-                    hits.append(fact)
-        return hits
+        return pad_with_critical_facts(hits, facts, k)
 
     def all_facts(self) -> list[dict]:
         """Every stored fact, newest first."""
@@ -227,3 +218,30 @@ def _words(text: str) -> list[str]:
     """Lowercase alphanumeric words, so punctuation never blocks a match."""
     cleaned = "".join(c.lower() if c.isalnum() else " " for c in text or "")
     return [w for w in cleaned.split() if len(w) > 2]
+
+
+def pad_with_critical_facts(hits: list[dict], facts: list[dict], k: int) -> list[dict]:
+    """
+    Make sure injuries and constraints ride along with a recall, even when full.
+
+    Critical facts the query didn't match displace the weakest non-critical hits
+    rather than only filling empty slots: with `k` semantic hits there would
+    otherwise never be room for them. Relevance order is kept for the hits.
+    """
+    seen = {h["id"] for h in hits}
+    missing = [f for f in facts if f["id"] not in seen and f["category"] in CRITICAL_FACT_CATEGORIES]
+    critical_hits = sum(1 for h in hits if h["category"] in CRITICAL_FACT_CATEGORIES)
+    critical_total = min(k, critical_hits + len(missing))
+    room_for_other = k - critical_total
+
+    kept, critical_kept = [], 0
+    for hit in hits:
+        if hit["category"] in CRITICAL_FACT_CATEGORIES:
+            if critical_kept < critical_total:
+                kept.append(hit)
+                critical_kept += 1
+        elif room_for_other > 0:
+            kept.append(hit)
+            room_for_other -= 1
+    kept.extend(missing[: critical_total - critical_kept])
+    return kept[:k]

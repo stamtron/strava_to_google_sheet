@@ -7,6 +7,8 @@ indoor-trainer distance estimate) also live here so every consumer applies them
 identically.
 """
 
+import re
+
 from src.config import (
     BIKE_SPORTS,
     INDOOR_BIKE_SPEED_KMH,
@@ -16,7 +18,7 @@ from src.config import (
 )
 
 # Sports whose pace reads as min/km rather than km/h.
-_PACE_SPORTS = RUN_SPORTS + ("Walk", "Hike")
+_PACE_SPORTS = (*RUN_SPORTS, "Walk", "Hike")
 
 
 def format_duration(seconds: int) -> str:
@@ -60,10 +62,29 @@ def format_duration_short_el(seconds: int) -> str:
     return f"{mins}λ"
 
 
-def _pace_mmss(seconds: float) -> str:
-    """Render a seconds-per-unit value as 'M:SS'."""
-    mins, secs = divmod(int(round(seconds)), 60)
+# Shared by the weather-pace calculator and the plan parser.
+_PACE_RE = re.compile(r"(\d{1,2})[:,\.](\d{2})")
+
+
+def format_mmss(seconds: float) -> str:
+    """Render a seconds-per-unit value as 'M:SS' (negatives clamp to 0:00)."""
+    mins, secs = divmod(max(0, round(seconds)), 60)
     return f"{mins}:{secs:02d}"
+
+
+def parse_pace_to_sec(text: str) -> float | None:
+    """
+    Parse the first 'M:SS' / 'M,SS' / 'M.SS' pace in `text` into seconds per unit.
+
+    Units and trailing marks ('/km', "''") are ignored, so "5,15''" and
+    "5:15/km" both give 315.0. Returns None when no pace is present.
+    """
+    if not text:
+        return None
+    match = _PACE_RE.search(str(text))
+    if not match:
+        return None
+    return float(int(match.group(1)) * 60 + int(match.group(2)))
 
 
 def format_pace(speed_mps: float, sport_type: str = "", greek: bool = False) -> str:
@@ -79,11 +100,11 @@ def format_pace(speed_mps: float, sport_type: str = "", greek: bool = False) -> 
 
     if sport_type in SWIM_SPORTS:
         unit = "/100μ" if greek else "/100m"
-        return f"{_pace_mmss(100.0 / speed_mps)} {unit}"
+        return f"{format_mmss(100.0 / speed_mps)} {unit}"
 
     if sport_type in _PACE_SPORTS:
         unit = "/χλμ" if greek else "/km"
-        return f"{_pace_mmss(1000.0 / speed_mps)} {unit}"
+        return f"{format_mmss(1000.0 / speed_mps)} {unit}"
 
     unit = "χλμ/ω" if greek else "km/h"
     return f"{speed_mps * 3.6:.1f} {unit}"

@@ -4,6 +4,7 @@ Unit tests for Telegram Dispatcher and Next-Day Briefing.
 
 from datetime import date
 from unittest.mock import MagicMock, patch
+
 import pytest
 
 from src.integrations.telegram import format_next_day_brief, send_telegram_message
@@ -167,10 +168,11 @@ def test_genuinely_empty_plan_still_reads_as_a_rest_day():
 
 def test_telegram_api_endpoint_dry_run():
     from fastapi.testclient import TestClient
+
     from src.api.server import app
 
     client = TestClient(app)
-    resp = client.post("/api/notifications/telegram/next-day", json={"dry_run": True})
+    resp = client.post("/api/notifications/telegram/next-day", json={"dry_run": True}, headers={"X-StaminAI-Client": "web"})
     assert resp.status_code == 200
     data = resp.json()
     assert data["success"] is True
@@ -180,6 +182,7 @@ def test_telegram_api_endpoint_dry_run():
 
 def test_telegram_webhook_secret_token_validation(monkeypatch):
     from fastapi.testclient import TestClient
+
     from src.api.server import app
 
     monkeypatch.setattr("src.config.TELEGRAM_WEBHOOK_SECRET", "super_secret_token_123")
@@ -206,6 +209,23 @@ def test_telegram_webhook_secret_token_validation(monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
+
+
+def test_telegram_webhook_rejects_when_secret_unset(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from src.api.server import app
+
+    # Fail closed: no configured secret means nobody may drive the bot.
+    monkeypatch.setattr("src.config.TELEGRAM_WEBHOOK_SECRET", "")
+    client = TestClient(app)
+    resp = client.post(
+        "/api/notifications/telegram/webhook",
+        json={"update_id": 1},
+        headers={"X-Telegram-Bot-Api-Secret-Token": "anything"},
+    )
+    assert resp.status_code == 403
+    assert "not configured" in resp.json()["detail"]
 
 
 def test_handle_telegram_command_help():
@@ -235,10 +255,11 @@ def test_handle_telegram_command_unauthorized(monkeypatch):
 
 def test_telegram_today_api_endpoint_dry_run():
     from fastapi.testclient import TestClient
+
     from src.api.server import app
 
     client = TestClient(app)
-    resp = client.post("/api/notifications/telegram/today", json={"dry_run": True})
+    resp = client.post("/api/notifications/telegram/today", json={"dry_run": True}, headers={"X-StaminAI-Client": "web"})
     assert resp.status_code == 200
     data = resp.json()
     assert data["success"] is True
@@ -248,13 +269,14 @@ def test_telegram_today_api_endpoint_dry_run():
 
 def test_telegram_weekly_endpoint(monkeypatch):
     from fastapi.testclient import TestClient
+
     from src.api.server import app
 
     monkeypatch.setattr("src.integrations.telegram.build_weekly_summary", lambda week_key=None: ("Weekly Report Preview", {"week_key": "2026-W41"}))
     monkeypatch.setattr("src.integrations.telegram.send_telegram_message", lambda text: {"success": True, "provider": "dry-run"})
 
     client = TestClient(app)
-    resp = client.post("/api/notifications/telegram/weekly")
+    resp = client.post("/api/notifications/telegram/weekly", headers={"X-StaminAI-Client": "web"})
     assert resp.status_code == 200
     data = resp.json()
     assert data["success"] is True
@@ -276,7 +298,8 @@ def test_format_next_day_brief_with_recovery():
     }
     readiness = {
         "needs_modulation": True,
-        "modulation_advice": "Συνιστάται μείωση της έντασης κατά 10s/χλμ.",
+        "advice_key": "compromised_high_intensity",
+        "flags": ["low_sleep"],
     }
     brief = format_next_day_brief(
         target_date=t_date,
@@ -290,11 +313,12 @@ def test_format_next_day_brief_with_recovery():
     assert "58 bpm" in brief
     assert "35%" in brief
     assert "Συνιστάται μείωση της έντασης" in brief
+    assert "(low_sleep)" in brief
 
 
 def test_handle_telegram_command_recovery(monkeypatch):
-    from src.integrations.telegram import handle_telegram_command
     import src.integrations.garmin as garmin_mod
+    from src.integrations.telegram import handle_telegram_command
 
     fake_rec = {
         "available": True,
@@ -320,15 +344,15 @@ def test_handle_telegram_command_recovery(monkeypatch):
 
 
 def test_handle_telegram_command_compliance(monkeypatch):
-    from src.integrations.telegram import handle_telegram_command
     import src.analytics.compliance as comp_mod
+    from src.integrations.telegram import handle_telegram_command
 
     fake_comp = {
         "compliance_score": 95,
-        "status": "fully_compliant",
+        "status": "evaluated",
         "planned_text": "Τρέξιμο 10 χλμ",
-        "matches": [{"sport": "Run", "actual_distance_km": 10.2, "actual_pace": "5:12/χλμ", "status": "fully_compliant"}],
-        "summary": "100% adherence to planned distance and pace.",
+        "matches": [{"sport": "Run", "status": "spot_on", "planned_km": 10.0, "actual_km": 10.2,
+                     "actual_pace_sec": 312.0, "pace_unit": "per_km"}],
     }
     monkeypatch.setattr(comp_mod, "evaluate_daily_compliance", lambda planned, acts: fake_comp)
 
@@ -336,13 +360,16 @@ def test_handle_telegram_command_compliance(monkeypatch):
     assert "Συμμόρφωση Προπόνησης" in res
     assert "95%" in res
     assert "10.2km" in res
+    assert "5:12/χλμ" in res
 
 
-def test_telegram_webhook_endpoint():
+def test_telegram_webhook_endpoint(monkeypatch):
     from fastapi.testclient import TestClient
+
     from src.api.server import app
 
-    client = TestClient(app)
+    monkeypatch.setattr("src.config.TELEGRAM_WEBHOOK_SECRET", "hook_secret")
+    client = TestClient(app, headers={"X-Telegram-Bot-Api-Secret-Token": "hook_secret"})
     payload = {
         "update_id": 123456,
         "message": {
@@ -358,10 +385,11 @@ def test_telegram_webhook_endpoint():
 
 def test_build_daily_brief_and_metadata(monkeypatch):
     from datetime import date
-    from src.integrations.telegram import build_daily_brief
+
+    import src.integrations.garmin as garmin_mod
     import src.integrations.sheets as sheets_mod
     import src.integrations.weather as weather_mod
-    import src.integrations.garmin as garmin_mod
+    from src.integrations.telegram import build_daily_brief
 
     monkeypatch.setattr(
         sheets_mod,
@@ -388,8 +416,9 @@ def test_build_daily_brief_and_metadata(monkeypatch):
 
 def test_run_daily_dispatch_check_persists(monkeypatch, tmp_path):
     from datetime import date, datetime
+
     import src.integrations.telegram as tel_mod
-    from src.storage.activity_store import init_db, get_sync_state
+    from src.storage.activity_store import get_sync_state, init_db
 
     db_path = str(tmp_path / "test_history.db")
     conn = init_db(db_path)
@@ -401,14 +430,13 @@ def test_run_daily_dispatch_check_persists(monkeypatch, tmp_path):
     monkeypatch.setattr(tel_mod, "send_telegram_message", lambda brief: {"success": True})
     monkeypatch.setattr(tel_mod, "build_daily_brief", lambda d: ("Brief text", {}))
 
-    # Mock time so it is past dispatch time e.g. 21:00 >= 20:30
-    fake_now = datetime(2026, 10, 6, 21, 0, 0)
-    class FakeDateTime(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return fake_now
+    monkeypatch.setattr(tel_mod, "_LAST_DISPATCH_FAILURE", {})
+    monkeypatch.setattr("src.config.TELEGRAM_DAILY_DISPATCH_TIME", "20:30")
 
-    monkeypatch.setattr(tel_mod, "datetime", FakeDateTime)
+    # Mock time so it is past dispatch time e.g. 21:00 >= 20:30 (a Tuesday)
+    fake_now = datetime(2026, 10, 6, 21, 0, 0)
+    monkeypatch.setattr(tel_mod, "now_local", lambda: fake_now)
+    monkeypatch.setattr(tel_mod, "today_local", lambda: date(2026, 10, 6))
 
     # First run should send and persist
     sent = tel_mod.run_daily_dispatch_check()
@@ -453,3 +481,156 @@ def test_build_weekly_summary(monkeypatch):
 
 
 
+
+
+def _setup_dispatch(monkeypatch, tmp_path, send_fn):
+    from datetime import datetime
+
+    import src.integrations.telegram as tel_mod
+    from src.storage.activity_store import init_db
+
+    db_path = str(tmp_path / "dispatch.db")
+    init_db(db_path).close()
+    monkeypatch.setattr("src.storage.activity_store.HISTORY_DB_FILE", db_path)
+    monkeypatch.setattr("src.config.HISTORY_DB_FILE", db_path)
+    monkeypatch.setattr("src.config.TELEGRAM_DAILY_DISPATCH_TIME", "20:30")
+    monkeypatch.setattr(tel_mod, "_LAST_DISPATCHED_DATE", None)
+    monkeypatch.setattr(tel_mod, "_LAST_DISPATCH_FAILURE", {})
+    monkeypatch.setattr(tel_mod, "send_telegram_message", send_fn)
+    monkeypatch.setattr(tel_mod, "build_daily_brief", lambda d: ("Brief text", {}))
+    monkeypatch.setattr(tel_mod, "now_local", lambda: datetime(2026, 10, 6, 21, 0, 0))
+    monkeypatch.setattr(tel_mod, "today_local", lambda: date(2026, 10, 6))
+    return tel_mod
+
+
+def test_dispatch_failure_backs_off_instead_of_retrying_every_loop(monkeypatch, tmp_path):
+    calls = []
+
+    def failing_send(brief):
+        calls.append(brief)
+        return {"success": False, "detail": "HTTP 500"}
+
+    tel_mod = _setup_dispatch(monkeypatch, tmp_path, failing_send)
+    clock = [1_000_000.0]
+    monkeypatch.setattr(tel_mod.time, "time", lambda: clock[0])
+
+    assert tel_mod.run_daily_dispatch_check() is False
+    assert len(calls) == 1
+
+    # Within the backoff window: no new attempt.
+    clock[0] += tel_mod.TELEGRAM_DISPATCH_RETRY_BACKOFF_SEC - 1
+    assert tel_mod.run_daily_dispatch_check() is False
+    assert len(calls) == 1
+
+    # After the window: retried, and success clears the failure marker.
+    clock[0] += 2
+    monkeypatch.setattr(tel_mod, "send_telegram_message", lambda brief: {"success": True})
+    assert tel_mod.run_daily_dispatch_check() is True
+    assert "daily" not in tel_mod._LAST_DISPATCH_FAILURE
+
+
+def test_dispatch_exception_while_building_is_contained(monkeypatch, tmp_path):
+    tel_mod = _setup_dispatch(monkeypatch, tmp_path, lambda brief: {"success": True})
+
+    def boom(d):
+        raise RuntimeError("sheet down")
+
+    monkeypatch.setattr(tel_mod, "build_daily_brief", boom)
+    assert tel_mod.run_daily_dispatch_check() is False
+    assert "daily" in tel_mod._LAST_DISPATCH_FAILURE
+
+
+def test_request_exception_detail_redacts_bot_token(monkeypatch):
+    token = "123456:SECRET-token_value"
+    monkeypatch.setattr("src.integrations.telegram.TELEGRAM_BOT_TOKEN", token)
+    err = ConnectionError(f"Max retries exceeded with url: /bot{token}/sendMessage")
+
+    with patch("requests.post", side_effect=err):
+        res = send_telegram_message("Workout alert!")
+
+    assert res["success"] is False
+    assert token not in res["detail"]
+    assert "SECRET" not in res["detail"]
+    assert "<redacted>" in res["detail"]
+
+
+def test_redact_token_strips_bot_url_even_for_unknown_token():
+    from src.integrations.telegram import redact_token
+
+    out = redact_token("https://api.telegram.org/bot999:abc/getUpdates failed")
+    assert "999:abc" not in out
+    assert "/bot<redacted>/getUpdates" in out
+
+
+def test_poll_logs_redacted_errors(monkeypatch, caplog):
+    import logging
+
+    from src.integrations.telegram import poll_telegram_updates
+
+    token = "777:POLLSECRET"
+    monkeypatch.setattr("src.integrations.telegram.TELEGRAM_BOT_TOKEN", token)
+    with caplog.at_level(logging.WARNING), patch(
+        "requests.get", side_effect=ConnectionError(f"url: /bot{token}/getUpdates")
+    ):
+        offset, updates = poll_telegram_updates(offset=5, timeout=1)
+
+    assert (offset, updates) == (5, [])
+    assert "POLLSECRET" not in caplog.text
+
+
+def test_split_message_breaks_at_newlines_within_limit():
+    from src.integrations.telegram import split_message
+
+    lines = [f"line {i:03d} " + "x" * 40 for i in range(100)]
+    text = "\n".join(lines)
+    chunks = split_message(text, limit=500)
+
+    assert len(chunks) > 1
+    assert all(len(c) <= 500 for c in chunks)
+    # Every chunk boundary falls on a line boundary: nothing lost or merged.
+    assert "\n".join(chunks).split("\n") == lines
+
+
+def test_split_message_hard_splits_long_line_outside_tags():
+    from src.integrations.telegram import split_message
+
+    # "<b>" straddles the 100-char limit (indices 98-100).
+    text = "a" * 98 + "<b>bold</b>" + "c" * 100
+    chunks = split_message(text, limit=100)
+
+    assert all(len(c) <= 100 for c in chunks)
+    assert "".join(chunks) == text
+    # The cut moved before "<b>" rather than splitting the tag.
+    assert chunks[0] == "a" * 98
+    assert chunks[1].startswith("<b>bold</b>")
+
+
+def test_long_message_is_sent_in_ordered_parts(monkeypatch):
+    monkeypatch.setattr("src.integrations.telegram.TELEGRAM_BOT_TOKEN", "fake_bot_token")
+    mock_post = MagicMock()
+    mock_post.return_value.status_code = 200
+    # Force a split on every newline so the ordering of parts is observable.
+    monkeypatch.setattr("src.integrations.telegram.split_message", lambda t: t.split("\n"))
+
+    with patch("requests.post", mock_post):
+        res = send_telegram_message("part one\npart two\npart three")
+
+    assert res["success"] is True
+    assert res["detail"] == "Message delivered in 3 parts."
+    sent = [c[1]["json"]["text"] for c in mock_post.call_args_list]
+    assert sent == ["part one", "part two", "part three"]
+
+
+def test_process_incoming_update_ignores_edits_and_strangers(monkeypatch):
+    import src.integrations.telegram as tel_mod
+
+    handled = []
+    monkeypatch.setattr(tel_mod, "handle_telegram_command", lambda text, chat_id=None: handled.append(text) or "ok")
+    monkeypatch.setattr(tel_mod, "send_telegram_message", lambda reply, chat_id=None: {"success": True})
+
+    tel_mod.process_incoming_update({"edited_message": {"chat": {"id": 12345678}, "text": "/sync"}})
+    tel_mod.process_incoming_update({"message": {"chat": {"id": 999}, "text": "/help"}})
+    assert handled == []
+
+    tel_mod.process_incoming_update({"message": {"chat": {"id": 12345678}, "text": "/help"}})
+    assert handled == ["/help"]
