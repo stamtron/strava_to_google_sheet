@@ -199,6 +199,15 @@ BIKE_SPORTS = ("Ride", "VirtualRide", "GravelRide", "MountainBikeRide")
 SWIM_SPORTS = ("Swim",)
 STRENGTH_SPORTS = ("WeightTraining", "Workout")
 
+# Athlete Season Phase & Goal Races
+TRAINING_PHASE = os.getenv("TRAINING_PHASE", "Off-Season / Base Building").strip()
+ATHLETE_GOAL_RACES = os.getenv(
+    "ATHLETE_GOAL_RACES",
+    "Half Marathon (End of March 2027) & potential Ironman 70.3 (09/05/2027)",
+).strip()
+GOAL_HALF_MARATHON_DATE = os.getenv("GOAL_HALF_MARATHON_DATE", "2027-03-28").strip()
+GOAL_70_3_DATE = os.getenv("GOAL_70_3_DATE", "2027-05-09").strip()
+
 # Athlete Verified Personal Bests (PBs)
 ATHLETE_PB_HALF_MARATHON_SEC = _env_int("ATHLETE_PB_HALF_MARATHON_SEC", 6415) # 1h 46m 55s (Athens Half Marathon 2026)
 ATHLETE_PB_10K_SEC = _env_int("ATHLETE_PB_10K_SEC", 3015)                     # 50m 15s (Kapodistrias 2026)

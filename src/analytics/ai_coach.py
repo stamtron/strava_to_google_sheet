@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 from src.analytics.weather_pace import parse_pace_string_to_sec
 from src.config import (
+    ATHLETE_GOAL_RACES,
     ATHLETE_NOTES_MAX_CHARS,
     ATHLETE_PB_5K_SEC,
     ATHLETE_PB_10K_SEC,
@@ -47,6 +48,7 @@ from src.config import (
     READINESS_SLEEP_LOW_PENALTY,
     RUN_SPORTS,
     SWIM_SPORTS,
+    TRAINING_PHASE,
     TRI_LEG_FACTORS,
 )
 from src.formatting import corrected_distance_and_speed
@@ -451,7 +453,9 @@ CRITICAL TEMPORAL CONTEXT — THIS TRAINING WEEK IS CURRENTLY IN PROGRESS:
         notes_block = (athlete_notes or "No additional notes")[:ATHLETE_NOTES_MAX_CHARS]
         notes_block = notes_block.replace("</athlete_notes>", "")
         prompt = f"""
-You are StaminAI, an elite triathlon and endurance coach. The athlete's primary target race is Ironman 70.3 (Half Ironman). Always format dates in day/month/year format.
+You are StaminAI, an elite triathlon and endurance coach. Always format dates in day/month/year format.
+- Current Training Phase: {TRAINING_PHASE}
+- Target Races / Goals: {ATHLETE_GOAL_RACES}
 Analyze the following athlete training and biometrics data:
 
 {progress_note}

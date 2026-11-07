@@ -149,16 +149,20 @@ from src.config import (
     ACTIVITIES_CACHE_FILE,
     ACTIVITIES_CACHE_TTL,
     ALLOWED_ORIGINS,
+    ATHLETE_GOAL_RACES,
     ATHLETE_NOTES_MAX_CHARS,
     AUTO_SYNC_SHEET_ON_WEBHOOK,
     CHAT_MESSAGE_MAX_CHARS,
     CHAT_WEEK_CONTEXT_MAX_CHARS,
     COMPLIANCE_PLAN_CACHE_TTL_SEC,
+    GOAL_70_3_DATE,
+    GOAL_HALF_MARATHON_DATE,
     HR_MAX,
     HR_REST,
     STRAVA_DETAIL_DELAY_SEC,
     STRAVA_WEBHOOK_VERIFY_TOKEN,
     STRAVA_WEBHOOK_VERIFY_TOKEN_PLACEHOLDER,
+    TRAINING_PHASE,
     WEB_DIR,
 )
 from src.integrations.garmin import (
@@ -463,6 +467,12 @@ def get_dashboard_data(count: int = Query(200, ge=1, le=500)):
         "garmin": garmin_summaries,
         "baselines": biometric_baselines,
         "weather": weather_outlook,
+        "season": {
+            "training_phase": TRAINING_PHASE,
+            "goal_races": ATHLETE_GOAL_RACES,
+            "half_marathon_date": GOAL_HALF_MARATHON_DATE,
+            "half_ironman_date": GOAL_70_3_DATE,
+        },
         **analytics,
         "activities_total": len(summaries),
     }

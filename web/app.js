@@ -157,6 +157,7 @@ async function initApp() {
     dashboardData = await res.json();
 
     populateWeekSelector();
+    renderSeasonContext(dashboardData.season);
     initCharts();
     initProgressionCharts();
 
@@ -498,9 +499,47 @@ function setupNotesAutosave() {
   window.addEventListener("pagehide", flushNotesSave);
 }
 
+function renderSeasonContext(season) {
+  if (!season) return;
+  const phaseBadge = document.getElementById("seasonPhaseBadge");
+  const goalsBadge = document.getElementById("seasonGoalsBadge");
+  const targetRaceBadge = document.getElementById("targetRaceBadge");
+  const countdownBadge = document.getElementById("raceCountdownBadge");
+
+  if (phaseBadge && season.training_phase) {
+    phaseBadge.textContent = `🌱 Phase: ${season.training_phase}`;
+  }
+  if (goalsBadge && season.goal_races) {
+    goalsBadge.textContent = `🎯 Goals: ${season.goal_races}`;
+  }
+  if (targetRaceBadge && season.goal_races) {
+    targetRaceBadge.textContent = `🎯 ${season.goal_races}`;
+  }
+  if (countdownBadge && season.training_phase) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const parts = [`🌱 ${season.training_phase}`];
+    if (season.half_marathon_date) {
+      const hmDate = new Date(season.half_marathon_date + "T00:00:00");
+      const hmWeeks = Math.ceil((hmDate - today) / (7 * 86400000));
+      if (hmWeeks > 0) parts.push(`HM: ${hmWeeks}w`);
+    }
+    if (season.half_ironman_date) {
+      const imDate = new Date(season.half_ironman_date + "T00:00:00");
+      const imWeeks = Math.ceil((imDate - today) / (7 * 86400000));
+      if (imWeeks > 0) parts.push(`70.3 (09/05): ${imWeeks}w`);
+    }
+    countdownBadge.textContent = parts.join(" • ");
+  }
+}
+
 function populateWeekSelector() {
   const selector = document.getElementById("weekSelector");
   selector.innerHTML = "";
+
+  const season = (dashboardData && dashboardData.season) || {};
+  const hmDateStr = season.half_marathon_date || "2027-03-28";
+  const imDateStr = season.half_ironman_date || "2027-05-09";
 
   const weekKeys = Object.keys(dashboardData.weeks || {}).sort().reverse();
   weekKeys.forEach((key, idx) => {
@@ -510,13 +549,21 @@ function populateWeekSelector() {
     const opt = document.createElement("option");
     opt.value = key;
 
-    // 18-week countdown to Ironman 70.3 on 25/10/2026 (starts Monday 22/06/2026)
     let countdownLabel = "";
     if (w.week_monday >= "2026-06-22" && w.week_monday <= "2026-10-25") {
       const msDiff = new Date(w.week_monday + "T00:00:00") - new Date("2026-06-22T00:00:00");
       const weekNum = Math.round(msDiff / (7 * 86400000)) + 1;
       const weeksOut = 18 - weekNum + 1;
       countdownLabel = ` [IM 70.3 W${weekNum} • ${weeksOut}w to go]`;
+    } else if (w.week_monday > "2026-10-25" && w.week_monday <= imDateStr) {
+      const hmWeeks = Math.ceil((new Date(hmDateStr + "T00:00:00") - mDate) / (7 * 86400000));
+      const imWeeks = Math.ceil((new Date(imDateStr + "T00:00:00") - mDate) / (7 * 86400000));
+      const phaseShort = season.training_phase || "Off-Season / Base";
+      if (hmWeeks > 0) {
+        countdownLabel = ` [${phaseShort} • ${hmWeeks}w to HM / ${imWeeks}w to 70.3]`;
+      } else if (imWeeks >= 0) {
+        countdownLabel = ` [${imWeeks}w to 70.3 (09/05)]`;
+      }
     }
 
     opt.textContent = `${formatDateDMY(mDate)} – ${formatDateDMY(sDate)}${countdownLabel} ${idx === 0 ? "(Current)" : ""}`;

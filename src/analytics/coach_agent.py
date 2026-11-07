@@ -59,6 +59,7 @@ from src.analytics.metrics import (
 )
 from src.analytics.weather_pace import calculate_weather_pace_adjustment
 from src.config import (
+    ATHLETE_GOAL_RACES,
     ATHLETE_PB_5K_SEC,
     ATHLETE_PB_10K_SEC,
     ATHLETE_PB_HALF_MARATHON_SEC,
@@ -76,9 +77,12 @@ from src.config import (
     COACH_SESSION_TTL,
     COACH_STORED_MESSAGE_MAX_CHARS,
     GEMINI_API_KEY,
+    GOAL_70_3_DATE,
+    GOAL_HALF_MARATHON_DATE,
     HR_MAX,
     HR_REST,
     SHOE_ALERT_KM,
+    TRAINING_PHASE,
 )
 from src.formatting import corrected_distance_and_speed, format_duration
 from src.integrations.garmin import assess_workout_readiness, get_daily_recovery_metrics
@@ -147,7 +151,7 @@ the data.
 actual paces, actual sessions. No filler, no restating the question.
 - When you use search results, name the source in the text.
 - Units are metric and English throughout: km, /km, /100m, km/h.
-- Target race: The athlete's primary target race is Ironman 70.3 (Half Ironman: 1.9km swim, 90km bike, 21.1km run).
+- Current training phase & goals: The athlete is currently in Off-Season / Base Building mode, targeting a Half Marathon at the end of March 2027 and potentially an Ironman 70.3 (Half Ironman: 1.9km swim, 90km bike, 21.1km run) on 09/05/2027. Emphasise aerobic base building (Zone 1-2 consistency), durable and progressive running load, strength/mobility, and recovery without premature peak-season intensity.
 - Dates: Always communicate dates in day/month/year (DD/MM/YYYY) format.
 
 WHAT YOU DO
@@ -330,9 +334,14 @@ def _week_brief(week: dict, acwr: dict | None = None) -> dict:
 
 
 def _athlete_profile() -> dict:
-    """The configured PBs and physiology, for the system instruction."""
+    """The configured PBs, season phase, goals, and physiology, for the system instruction."""
     return {
-        "target_race": "Ironman 70.3 (Half Ironman: 1.9k swim / 90k bike / 21.1k run)",
+        "training_phase": TRAINING_PHASE,
+        "target_race": ATHLETE_GOAL_RACES,
+        "upcoming_goals": [
+            {"event": "Half Marathon (21.1km)", "target_date": GOAL_HALF_MARATHON_DATE, "status": "confirmed"},
+            {"event": "Ironman 70.3 (1.9k swim / 90k bike / 21.1k run)", "target_date": GOAL_70_3_DATE, "status": "tentative"},
+        ],
         "hr_max": HR_MAX,
         "hr_rest": HR_REST,
         "personal_bests": {

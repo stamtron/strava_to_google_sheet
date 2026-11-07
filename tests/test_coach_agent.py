@@ -577,6 +577,10 @@ def test_the_system_instruction_carries_the_scope_limit_and_the_pbs():
     # The configured 10k PB, not a number the model remembers.
     assert "50m 15s" in instruction
     assert str(ATHLETE_PB_10K_SEC) not in instruction  # formatted, not raw seconds
+    # Season phase and upcoming race goals are included in the system instruction.
+    assert "Off-Season / Base Building" in instruction
+    assert "Half Marathon" in instruction
+    assert "2027-05-09" in instruction
 
 
 def test_recalled_memories_are_injected_with_their_category():
