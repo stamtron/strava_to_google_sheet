@@ -170,7 +170,8 @@ from src.integrations.garmin import (
     compute_biometric_baselines,
     get_weekly_health_summaries,
 )
-from src.integrations.sheets import get_planned_workout_for_date, write_to_sheet
+from src.integrations.plan_source import get_planned_workout_for_date
+from src.integrations.sheets import write_to_sheet
 from src.integrations.strava import (
     StravaAuthRequired,
     StravaNetworkError,

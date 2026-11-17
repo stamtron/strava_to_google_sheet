@@ -331,7 +331,7 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
     """
     from src.config import TELEGRAM_CHAT_ID
     from src.integrations.garmin import assess_workout_readiness, get_daily_recovery_metrics
-    from src.integrations.sheets import get_planned_workout_for_date
+    from src.integrations.plan_source import get_planned_workout_for_date
     from src.integrations.weather import get_weather_for_date
 
     clean_text = (command_text or "").strip()
@@ -528,7 +528,7 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
 
         try:
             from src.analytics.compliance import evaluate_daily_compliance
-            from src.integrations.sheets import get_planned_workout_for_date
+            from src.integrations.plan_source import get_planned_workout_for_date
             from src.storage.activity_store import get_activities, init_db
 
             w_info = get_planned_workout_for_date(t_date)
@@ -808,7 +808,7 @@ def build_daily_brief(
         DEFAULT_RAIN_TIP,
     )
     from src.integrations.garmin import assess_workout_readiness, get_daily_recovery_metrics
-    from src.integrations.sheets import get_planned_workout_for_date
+    from src.integrations.plan_source import get_planned_workout_for_date
     from src.integrations.weather import get_weather_for_date
 
     workout_info = get_planned_workout_for_date(target_date)

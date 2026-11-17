@@ -20,6 +20,7 @@ credentials.json
 .activities_cache.json
 .garmin_cache.json
 .weather_cache.json
+.final_surge_cache.json
 .training_history.db
 .training_history.db-journal
 .training_history.db-wal

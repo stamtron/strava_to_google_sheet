@@ -1078,6 +1078,20 @@ wheels = [
 ]
 
 [[package]]
+name = "icalendar"
+version = "7.3.0"
+source = { registry = "https://pypi.apple.com/simple" }
+dependencies = [
+    { name = "python-dateutil" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "tzdata" },
+]
+sdist = { url = "https://pypi.apple.com/packages/packages/47/2b/1bbf82d316df18c3331d9a06228819c8a5814ceda545a3e9980e52ffce1b/icalendar-7.3.0.tar.gz", hash = "sha256:7bd001c8e648205e1bde5c6a5b77096598e8d0893dcf57755c6c597635620132", size = 525811 }
+wheels = [
+    { url = "https://pypi.apple.com/packages/packages/bb/82/50bff78b0bb0c7d7c0cb39e0ee189b92f611fff6bd7cf57f25e92d5a7551/icalendar-7.3.0-py3-none-any.whl", hash = "sha256:8355acfe17be81b368f0b1e3740817cea9b56ea889931f8f1a87c62f2d28db0b", size = 542540 },
+]
+
+[[package]]
 name = "idna"
 version = "3.11"
 source = { registry = "https://pypi.apple.com/simple" }
@@ -2655,6 +2669,7 @@ dependencies = [
     { name = "google-auth-httplib2" },
     { name = "google-auth-oauthlib" },
     { name = "google-genai" },
+    { name = "icalendar" },
     { name = "python-dotenv" },
     { name = "requests", version = "2.32.5", source = { registry = "https://pypi.apple.com/simple" }, marker = "python_full_version < '3.12'" },
     { name = "requests", version = "2.34.2", source = { registry = "https://pypi.apple.com/simple" }, marker = "python_full_version >= '3.12'" },
@@ -2676,6 +2691,7 @@ requires-dist = [
     { name = "google-auth-httplib2", specifier = ">=0.1.1" },
     { name = "google-auth-oauthlib", specifier = ">=1.1.0" },
     { name = "google-genai", specifier = ">=2.20.0" },
+    { name = "icalendar", specifier = ">=7.3.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "requests", specifier = ">=2.31.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.4" },
@@ -2782,6 +2798,15 @@ dependencies = [
 sdist = { url = "https://pypi.apple.com/packages/packages/a3/26/b09b8010994eccc3c09092e6b34058f36a460eea2d4c3e8b910c695975a0/typing_inspection-0.4.4.tar.gz", hash = "sha256:547274fa6b0a561ccf549cc9524b999a578e737d015d8709d021f9d0d13bea47", size = 76928 }
 wheels = [
     { url = "https://pypi.apple.com/packages/packages/67/81/4add07e5172b7ac40d8ed5ff580409a7801a4fe26d529bdd915401dabfbe/typing_inspection-0.4.4-py3-none-any.whl", hash = "sha256:65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147", size = 14750 },
+]
+
+[[package]]
+name = "tzdata"
+version = "2026.6"
+source = { registry = "https://pypi.apple.com/simple" }
+sdist = { url = "https://pypi.apple.com/packages/packages/7a/29/6a1391d31cd00ff9e927215a224a880e1e84e826b64ba80a499e51c074d8/tzdata-2026.6.tar.gz", hash = "sha256:85d2cd9c09f81f0bb29db27759fc83af4f1e620efb814f8c5bf8b4cc4feece6d", size = 201017 }
+wheels = [
+    { url = "https://pypi.apple.com/packages/packages/0a/66/9a06c2227fedfd4919f0eaaa8b94377d9730882a7e4f95823c9a331ab5e1/tzdata-2026.6-py2.py3-none-any.whl", hash = "sha256:0a10eec6e13ef16b627fabed9a5f2ba61a62b1c67f327305f4e7e412a70b4aec", size = 348210 },
 ]
 
 [[package]]

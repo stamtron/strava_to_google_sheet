@@ -37,6 +37,7 @@ from src.config import (
     WORKOUT_SPEED_TOLERANCE_MS,
 )
 from src.integrations.garmin import get_garmin_client
+from src.integrations.plan_source import final_surge_enabled
 from src.integrations.sheets import (
     execute_with_retry,
     get_sheets_service,
@@ -48,6 +49,8 @@ from src.timeutil import today_local
 logger = logging.getLogger(__name__)
 
 _PLAN_COL_A_RANGE = f"A{FIRST_WEEK_ROW}:A{PLAN_LAST_ROW}"
+_GARMIN_PUSH_SPORTS = frozenset({"running", "cycling", "brick"})
+_DAY_NAMES_EL = ["Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο", "Κυριακή"]
 
 # Keywords for sport detection
 SWIM_KEYWORDS = [
@@ -188,6 +191,9 @@ def extract_week_coach_workouts(week_offset: int = 0) -> dict[str, Any]:
         'days': list[dict] # {date, day_name, raw_text, is_target, sport_type}
     }
     """
+    if final_surge_enabled():
+        return _extract_week_final_surge_workouts(week_offset)
+
     if not GOOGLE_SHEET_ID:
         raise ValueError("GOOGLE_SHEET_ID is not configured in .env")
 
@@ -248,7 +254,6 @@ def extract_week_coach_workouts(week_offset: int = 0) -> dict[str, Any]:
     )
     raw_cells = row_data.get("values", [[]])[0] if row_data.get("values") else []
 
-    day_names_el = ["Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο", "Κυριακή"]
     days = []
 
     for i in range(7):
@@ -264,7 +269,7 @@ def extract_week_coach_workouts(week_offset: int = 0) -> dict[str, Any]:
 
         days.append({
             "date": day_date.isoformat(),
-            "day_name": day_names_el[i],
+            "day_name": _DAY_NAMES_EL[i],
             "raw_text": coach_text.strip(),
             "is_target": is_target,
             "sport_type": sport_type,
@@ -276,6 +281,48 @@ def extract_week_coach_workouts(week_offset: int = 0) -> dict[str, Any]:
         "row_number": target_row,
         "workout_row": workout_row,
         "layout": "new" if is_new_layout else "old",
+        "days": days,
+    }
+
+
+def _extract_week_final_surge_workouts(week_offset: int = 0) -> dict[str, Any]:
+    """Same structure as extract_week_coach_workouts, sourced from the Final Surge feed."""
+    from src.integrations import final_surge
+
+    today = today_local()
+    week_start = today - timedelta(days=today.weekday()) + timedelta(weeks=week_offset)
+    week_end = week_start + timedelta(days=6)
+    by_date = final_surge.get_workouts_by_date()
+
+    # One entry per sport per day, each carrying only that sport's events, so a
+    # swim + bike double day never feeds swim sets into the bike workout parser.
+    # Final Surge titles name the sport; the text heuristic is only a fallback.
+    days = []
+    for i in range(7):
+        day_date = week_start + timedelta(days=i)
+        events = [w for w in by_date.get(day_date, []) if final_surge.has_plan_details(w)]
+        by_sport: dict[str, list[dict[str, Any]]] = {}
+        for w in events:
+            sport = final_surge.event_sport(w) or classify_coach_day_text(w["text"])[1]
+            by_sport.setdefault(sport, []).append(w)
+        if not by_sport:
+            by_sport = {"rest": []}
+
+        for sport, sport_events in by_sport.items():
+            days.append({
+                "date": day_date.isoformat(),
+                "day_name": _DAY_NAMES_EL[i],
+                "raw_text": final_surge.day_workout_text(sport_events),
+                "is_target": sport in _GARMIN_PUSH_SPORTS,
+                "sport_type": sport,
+            })
+
+    return {
+        "week_start": week_start.isoformat(),
+        "week_end": week_end.isoformat(),
+        "row_number": None,
+        "workout_row": None,
+        "layout": "final_surge",
         "days": days,
     }
 

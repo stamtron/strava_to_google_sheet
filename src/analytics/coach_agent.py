@@ -86,7 +86,7 @@ from src.config import (
 )
 from src.formatting import corrected_distance_and_speed, format_duration
 from src.integrations.garmin import assess_workout_readiness, get_daily_recovery_metrics
-from src.integrations.sheets import get_planned_workout_for_date
+from src.integrations.plan_source import get_planned_workout_for_date
 from src.integrations.weather import get_weather_outlook
 from src.status_labels import (
     HEAT_IMPACT_LABELS,

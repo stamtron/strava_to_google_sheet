@@ -108,6 +108,14 @@ ATHLETE_LONGITUDE = _env_float("ATHLETE_LONGITUDE", 23.7275)
 ATHLETE_TIMEZONE = os.getenv("ATHLETE_TIMEZONE", "Europe/Athens").strip()
 WEATHER_CACHE_FILE = os.path.join(PROJECT_ROOT, ".weather_cache.json")
 
+# Final Surge training plan (private iCal calendar feed).
+# When set, Final Surge replaces the Google Sheet as the source of planned
+# workouts (compliance, Telegram briefs, coach, Garmin workout push).
+# The URL embeds a private key, so treat it as a secret.
+FINAL_SURGE_ICAL_URL = os.getenv("FINAL_SURGE_ICAL_URL", "").strip()
+FINAL_SURGE_CACHE_TTL = _env_int("FINAL_SURGE_CACHE_TTL", 900)  # 15 min
+FINAL_SURGE_CACHE_FILE = str(PROJECT_ROOT / ".final_surge_cache.json")
+
 # Athlete physiology — used by the TRIMP relative-effort estimate.
 HR_MAX = _env_int("HR_MAX", 185)
 HR_REST = _env_int("HR_REST", 50)
@@ -276,6 +284,7 @@ STRAVA_BACKOFF_CAP_SEC = _env_float("STRAVA_BACKOFF_CAP_SEC", 30.0)
 WEATHER_HTTP_TIMEOUT_SEC = _env_float("WEATHER_HTTP_TIMEOUT_SEC", 6.0)
 GSHEETS_RETRY_DELAY_SEC = _env_float("GSHEETS_RETRY_DELAY_SEC", 1.5)
 TELEGRAM_HTTP_TIMEOUT_SEC = _env_float("TELEGRAM_HTTP_TIMEOUT_SEC", 10.0)
+FINAL_SURGE_HTTP_TIMEOUT_SEC = _env_float("FINAL_SURGE_HTTP_TIMEOUT_SEC", 15.0)
 
 # Telegram message limits & bot loop
 TELEGRAM_MAX_MESSAGE_CHARS = _env_int("TELEGRAM_MAX_MESSAGE_CHARS", 4000)  # API hard limit is 4096

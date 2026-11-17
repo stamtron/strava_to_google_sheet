@@ -2,7 +2,14 @@
 
 import pytest
 
+from src import config
 from src.storage.activity_store import init_db
+
+
+@pytest.fixture(autouse=True)
+def _no_final_surge(monkeypatch):
+    """Keep the Google Sheet as plan source even if a real feed URL is in .env."""
+    monkeypatch.setattr(config, "FINAL_SURGE_ICAL_URL", "")
 
 
 def make_activity(act_id: int, date: str, sport: str = "Run", **extra) -> dict:

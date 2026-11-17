@@ -15,6 +15,7 @@ dependencies = [
     "uvicorn[standard]>=0.52.4",
     "google-genai>=2.20.0",
     "chromadb>=1.5.9",
+    "icalendar>=7.3.0",
 ]
 
 [dependency-groups]
