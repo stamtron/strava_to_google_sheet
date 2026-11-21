@@ -15,7 +15,7 @@ This file provides guidance and key instructions for Claude (and Claude Code CLI
 - **Race-Day Taper & Strategy Protocols** and Peter Riegel race finish predictions
 - **Over-the-Air Workout Push** to Garmin watches and the Tacx Training app
 - **Telegram Bot & Dispatcher** (morning/evening briefs, Sunday executive weekly digests, `/today`, `/tomorrow`, `/weekly`, `/form`, `/recovery`, `/stats`, `/gear`, `/coach`)
-- **Conversational AI Coach** (Gemini LLM) with 14 tools, grounded search, and persistent memory (SQLite/ChromaDB).
+- **Conversational AI Data Assistant** (Gemini LLM) with 14 tools, grounded search, and persistent memory (SQLite/ChromaDB). It complements the athlete's human coach; it is not a coach and must not be framed as one (prompts, UI, docs).
 
 ---
 
@@ -38,7 +38,7 @@ uv run python main.py --telegram-next-day  # Dispatch tomorrow's briefing to Tel
 uv run python main.py --telegram-weekly    # Dispatch weekly executive summary to Telegram
 
 # Testing & Code Quality
-uv run pytest                              # Run full test suite (452 tests, offline)
+uv run pytest                              # Run full test suite (456 tests, offline)
 uv run pytest tests/test_metrics.py        # Run single test module
 uv run pytest -k "test_classify_tsb"       # Run specific test pattern
 uv run ruff check                          # Lint codebase (config in pyproject.toml)
@@ -81,11 +81,11 @@ strava_to_google_sheet/
 │   └── api/
 │       └── server.py             # FastAPI REST endpoints & static routes
 ├── web/                          # Frontend SPA (HTML5, Vanilla CSS glassmorphic tokens, Chart.js)
-│   ├── index.html                # Dashboard + tabs + floating coach drawer
+│   ├── index.html                # Dashboard + tabs + floating assistant chat drawer
 │   ├── styles.css                # Glassmorphic dark design system
 │   └── app.js                    # Interaction logic, Chart.js instances, chat client
-├── tests/                        # Offline pytest suite (452 unit tests)
-├── docs/                         # Modular documentation (setup, config, analytics, coach, api)
+├── tests/                        # Offline pytest suite (456 unit tests)
+├── docs/                         # Modular documentation (setup, config, analytics, AI assistant, api)
 ├── main.py                       # CLI root entry point
 ├── server.py                     # Web server root entry point
 └── pyproject.toml                # Dependencies, project metadata (staminai)
@@ -98,7 +98,7 @@ strava_to_google_sheet/
 1. **Bare Python is NOT on PATH**:
    Always execute through `uv run pytest` or `uv run python`.
 2. **Deterministic Mathematics in Analytics**:
-   - The LLM coach *explains* metrics; it **never** computes them.
+   - The LLM assistant *explains* metrics; it **never** computes them.
    - All durability, ACWR, Banister EWMA, and biometric baseline maths live in `src/analytics/` so they are 100% unit-testable offline.
 3. **No Presentation Strings in Analytics**:
    Analytics functions emit machine-readable status keys only (`low`, `optimal`, `overreaching`, `spike`, `fresh`, `neutral`, `high_fatigue`, `advice_key`s). Presentation labels, colors, and emojis belong strictly in `src/status_labels.py` (Telegram/coach text) and `web/app.js` / `web/styles.css` (dashboard).

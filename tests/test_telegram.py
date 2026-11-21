@@ -634,3 +634,39 @@ def test_process_incoming_update_ignores_edits_and_strangers(monkeypatch):
 
     tel_mod.process_incoming_update({"message": {"chat": {"id": 12345678}, "text": "/help"}})
     assert handled == ["/help"]
+
+
+def test_command_failure_does_not_send_exception_text(monkeypatch):
+    from src.integrations.telegram import handle_telegram_command
+
+    def boom(*_a, **_k):
+        raise RuntimeError("db at /secret/path locked")
+
+    monkeypatch.setattr("src.storage.activity_store.init_db", boom)
+    res = handle_telegram_command("/gear", chat_id="12345678")
+    assert "Σφάλμα εξοπλισμού" in res
+    assert "/secret/path" not in res
+
+
+def test_coach_command_failure_does_not_send_exception_text(monkeypatch):
+    from src.integrations.telegram import handle_telegram_command
+
+    def boom(**_k):
+        raise RuntimeError("api key AQ.secret rejected")
+
+    monkeypatch.setattr("src.analytics.coach_agent.chat", boom)
+    res = handle_telegram_command("/coach how was my week?", chat_id="12345678")
+    assert "δεν είναι διαθέσιμος" in res
+    assert "AQ.secret" not in res
+
+
+def test_coach_command_shows_coach_unavailable_reason(monkeypatch):
+    from src.analytics.coach_agent import CoachUnavailable
+    from src.integrations.telegram import handle_telegram_command
+
+    def unavailable(**_k):
+        raise CoachUnavailable("GEMINI_API_KEY is not set")
+
+    monkeypatch.setattr("src.analytics.coach_agent.chat", unavailable)
+    res = handle_telegram_command("/coach hi", chat_id="12345678")
+    assert "GEMINI_API_KEY is not set" in res

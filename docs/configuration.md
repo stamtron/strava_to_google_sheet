@@ -13,7 +13,7 @@ All settings in StaminAI are centralized in [`src/config.py`](../src/config.py) 
 | `FINAL_SURGE_ICAL_URL` | — | Private Final Surge iCal feed (Settings → Calendar Sync); the only plan source. **Secret.** Unset = plan lookups report "not configured" |
 | `GARMIN_EMAIL` | — | Garmin Connect login email address |
 | `GARMIN_PASSWORD` | — | Garmin Connect login password |
-| `GEMINI_API_KEY` | — | Google Gemini API key for AI Coach and workout parsing |
+| `GEMINI_API_KEY` | — | Google Gemini API key for AI insights, the chat assistant and workout parsing |
 | `TELEGRAM_BOT_TOKEN` | — | Telegram Bot token from @BotFather for push briefings |
 | `TELEGRAM_CHAT_ID` | — | Telegram recipient user ID for training briefs |
 | `TELEGRAM_WEBHOOK_SECRET` | — | Secret token verified against `X-Telegram-Bot-Api-Secret-Token`; **required** — the webhook rejects all requests while unset |
@@ -94,11 +94,11 @@ All settings in StaminAI are centralized in [`src/config.py`](../src/config.py) 
 
 ---
 
-## 🤖 AI Coach & Persistent Memory
+## 🤖 AI Assistant & Persistent Memory
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `GEMINI_MODELS` | `gemini-3.6-flash,gemini-3.7-flash,gemini-3.8-flash,gemini-flash-latest` | Fallback chain for the one-shot weekly coaching panel |
+| `GEMINI_MODELS` | `gemini-3.6-flash,gemini-3.7-flash,gemini-3.8-flash,gemini-flash-latest` | Fallback chain for the one-shot weekly insights panel |
 | `COACH_CHAT_MODELS` | `gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-flash-latest` | Fallback chain for conversational agent (must support function calling) |
 | `COACH_MAX_TOOL_CALLS` | `8` | Ceiling on tool invocations per conversational turn |
 | `COACH_SESSION_TTL` | `604800` | Idle conversation lifetime in seconds (7 days) |
@@ -113,7 +113,7 @@ All settings in StaminAI are centralized in [`src/config.py`](../src/config.py) 
 
 ## ⏱️ Athlete Race PBs & Baselines
 
-These values calibrate the **Peter Riegel race predictor** and define the athlete baseline profile for the conversational coach.
+These values calibrate the **Peter Riegel race predictor** and define the athlete baseline profile for the conversational assistant.
 
 > [!IMPORTANT]
 > The `ATHLETE_PB_*` values should be **official race results, not training bests**. Default values represent the repository author's official race times. Update these in your `.env` with your personal verified race times:

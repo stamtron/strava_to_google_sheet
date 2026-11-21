@@ -1510,7 +1510,7 @@ function handleCopyReport() {
 
 😴 Garmin Health: Sleep ${sleepStr} • HRrest ${rhrStr} • HRV ${hrvStr}
 ──────────────────────────────
-🤖 AI Coach Status: Readiness ${document.getElementById("readinessScore").textContent}`;
+🤖 StaminAI Readiness: ${document.getElementById("readinessScore").textContent}`;
 
   navigator.clipboard.writeText(reportText).then(() => {
     showToast("📋 Report copied to clipboard (ready for Telegram/Coach)!", "success");
@@ -1812,10 +1812,10 @@ async function handleGenerateAiFeedback() {
       body: JSON.stringify(payload),
     });
 
-    if (!res.ok) throw new Error("AI Coaching API error");
+    if (!res.ok) throw new Error("AI feedback API error");
     const data = await res.json();
 
-    let fullText = data.feedback + "\n\n📌 Coach Recommendations:\n";
+    let fullText = data.feedback + "\n\n📌 Points to consider / discuss with your coach:\n";
     (data.recommendations || []).forEach((r, idx) => {
       fullText += `${idx + 1}. ${r}\n`;
     });
@@ -1829,7 +1829,7 @@ async function handleGenerateAiFeedback() {
       document.getElementById("aiSourceBadge").textContent = data.source.includes("gemini") ? data.source : "AI Heuristics";
     }
 
-    showToast("✨ AI Coaching analysis generated successfully!", "success");
+    showToast("✨ AI analysis generated successfully!", "success");
   } catch (err) {
     console.error("AI feedback error:", err);
     outputBox.textContent = "Error during analysis: " + err.message;
@@ -2171,7 +2171,7 @@ async function sendChatMessage() {
   } catch (err) {
     console.error("Chat error:", err);
     thinking.remove();
-    appendChatMessage("error", `Couldn't reach the coach: ${err.message}`);
+    appendChatMessage("error", `Couldn't reach the assistant: ${err.message}`);
     badge.textContent = "unavailable";
   } finally {
     chatBusy = false;

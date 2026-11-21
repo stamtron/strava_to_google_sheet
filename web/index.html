@@ -223,12 +223,12 @@
         </div>
       </div>
 
-      <!-- Right Column: AI Coach Assistant & Predictions -->
+      <!-- Right Column: AI Insights & Predictions -->
       <div class="content-right ai-coach-panel">
-        <!-- AI Coach Card -->
+        <!-- AI Insights Card -->
         <div class="glass-panel ai-card">
           <div class="ai-header">
-            <h2 class="section-title">🤖 StaminAI Coach</h2>
+            <h2 class="section-title">🤖 StaminAI Insights</h2>
             <span id="aiSourceBadge" class="ai-badge">Gemini Powered</span>
           </div>
 
@@ -245,7 +245,7 @@
 
           <!-- AI Output & Advice -->
           <div id="aiOutputBox" class="ai-output-box">
-Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
+Click "Generate AI Feedback" for an analysis of your week's data, with points worth raising with your coach.
           </div>
 
           <div style="margin-top: 16px;">
@@ -656,21 +656,21 @@ Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
   <div id="toastContainer" class="toast-container"></div>
 
   <!--
-    AI Coach chat. Outside .container on purpose: it overlays the page rather
+    AI assistant chat. Outside .container on purpose: it overlays the page rather
     than participating in the dashboard grid.
   -->
-  <button id="chatLauncher" class="chat-launcher" title="Ask StaminAI Coach" aria-label="Open StaminAI Coach chat">
+  <button id="chatLauncher" class="chat-launcher" title="Ask StaminAI about your data" aria-label="Open StaminAI assistant chat">
     <span>💬</span>
   </button>
 
   <div id="chatDrawer" class="chat-drawer glass-panel" aria-hidden="true">
     <div class="chat-drawer-header">
       <div>
-        <h3>🤖 StaminAI Coach</h3>
+        <h3>🤖 StaminAI Assistant</h3>
         <span id="chatModelBadge" class="chat-badge">ready</span>
       </div>
       <div class="chat-header-actions">
-        <button id="chatMemoryBtn" class="chat-icon-btn" title="What the coach remembers">🧠</button>
+        <button id="chatMemoryBtn" class="chat-icon-btn" title="What StaminAI remembers">🧠</button>
         <button id="chatResetBtn" class="chat-icon-btn" title="Start a new conversation">✨</button>
         <button id="chatCloseBtn" class="chat-icon-btn" title="Close">✕</button>
       </div>
@@ -693,6 +693,6 @@ Click "Generate AI Feedback" for smart coaching analysis and tips for your week.
     </div>
   </div>
 
-  <script src="/static/app.js?v=4.9"></script>
+  <script src="/static/app.js?v=4.10"></script>
 </body>
 </html>

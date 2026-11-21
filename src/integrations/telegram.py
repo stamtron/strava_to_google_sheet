@@ -43,6 +43,16 @@ from src.timeutil import now_local, today_local
 
 logger = logging.getLogger(__name__)
 
+
+def _command_error(label: str) -> str:
+    """Log the active exception and build a generic Telegram reply.
+
+    Exception text can carry tokens, file paths or feed URLs, and Telegram is
+    an external service, so only the log gets the details.
+    """
+    logger.exception("Telegram command failed: %s", label)
+    return f"❌ {label}. Δες το log του server."
+
 GREEK_DAY_NAMES = {
     0: "Δευτέρα",
     1: "Τρίτη",
@@ -316,7 +326,7 @@ def format_next_day_brief(
 
     # Coach Tip
     if coach_tip:
-        lines.append(f"\n💡 *AI Coach Tip:* {coach_tip.strip()}")
+        lines.append(f"\n💡 *AI Tip:* {coach_tip.strip()}")
 
     lines.append("\n━━━━━━━━━━━━━━━━━━━━")
     lines.append("🚀 Καλή προπόνηση!")
@@ -364,7 +374,7 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
             "• `/sync` — Συγχρονισμός πρόσφατων δραστηριοτήτων Strava στο τοπικό ιστορικό\n"
             "• `/stats` — Εβδομαδιαίος όγκος προπόνησης & δείκτης ACWR\n"
             "• `/gear` — Χιλιόμετρα παπουτσιών & ποδηλάτων\n"
-            "• `/coach <ερώτηση>` — Συνομιλία με τον conversational AI Coach\n"
+            "• `/coach <ερώτηση>` — Ερωτήσεις για τα δεδομένα σου στον βοηθό StaminAI\n"
         )
 
     if cmd in ("/today", "today", "σημερα", "/simera"):
@@ -438,8 +448,8 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
             lines.append("━━━━━━━━━━━━━━━━━━━━")
             lines.append(f"💡 *Οδηγία Προπόνησης:*\n{readiness_advice(readiness)}")
             return "\n".join(lines)
-        except Exception as e:
-            return f"❌ Σφάλμα ανάκτησης αποκατάστασης: `{e}`"
+        except Exception:
+            return _command_error("Σφάλμα ανάκτησης αποκατάστασης")
 
     if cmd in ("/form", "/tsb", "form", "tsb", "/fitness", "fitness"):
         try:
@@ -508,15 +518,15 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
                 lines.append("💡 *Ερμηνεία:* Ισορροπημένη κατάσταση συντήρησης.")
 
             return "\n".join(lines)
-        except Exception as e:
-            return f"❌ Σφάλμα υπολογισμού φόρμας: `{e}`"
+        except Exception:
+            return _command_error("Σφάλμα υπολογισμού φόρμας")
 
     if cmd in ("/weekly", "weekly", "/week", "week"):
         try:
             summary_text, _ = build_weekly_summary()
             return summary_text
-        except Exception as e:
-            return f"❌ Σφάλμα δημιουργίας εβδομαδιαίας ανασκόπησης: `{e}`"
+        except Exception:
+            return _command_error("Σφάλμα δημιουργίας εβδομαδιαίας ανασκόπησης")
 
     if cmd in ("/compliance", "compliance", "/execution"):
         try:
@@ -566,8 +576,8 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
             lines.append("━━━━━━━━━━━━━━━━━━━━")
             lines.append(f"📝 {compliance_summary(comp)}")
             return "\n".join(lines)
-        except Exception as e:
-            return f"❌ Σφάλμα αξιολόγησης συμμόρφωσης: `{e}`"
+        except Exception:
+            return _command_error("Σφάλμα αξιολόγησης συμμόρφωσης")
 
     if cmd in ("/sync", "sync"):
         try:
@@ -646,8 +656,8 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
                 f"• ⚡ ACWR Ratio: *{ratio_str}* ({zone_str})\n"
                 "━━━━━━━━━━━━━━━━━━━━"
             )
-        except Exception as e:
-            return f"❌ Σφάλμα στατιστικών: `{e}`"
+        except Exception:
+            return _command_error("Σφάλμα στατιστικών")
 
     if cmd in ("/gear", "/shoes", "shoes", "gear"):
         try:
@@ -686,8 +696,8 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
                 )
             lines.append("━━━━━━━━━━━━━━━━━━━━")
             return "\n".join(lines)
-        except Exception as e:
-            return f"❌ Σφάλμα εξοπλισμού: `{e}`"
+        except Exception:
+            return _command_error("Σφάλμα εξοπλισμού")
 
     # Conversational AI Coach
     prompt = clean_text
@@ -695,18 +705,23 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
         prompt = clean_text[len(cmd):].strip()
 
     if not prompt:
-        return "🤖 Στείλε `/coach <η ερώτησή σου>` για να μιλήσεις με τον AI Coach!"
+        return "🤖 Στείλε `/coach <η ερώτησή σου>` για να ρωτήσεις τον βοηθό StaminAI για τα δεδομένα σου!"
+
+    from src.analytics.coach_agent import CoachUnavailable
+    from src.analytics.coach_agent import chat as coach_chat
 
     try:
-        from src.analytics.coach_agent import chat as coach_chat
-
         res = coach_chat(
             message=prompt,
             session_id="telegram_athlete_chat",
         )
-        return res.get("reply", "Δεν έλαβα απάντηση από τον AI Coach.")
-    except Exception as e:
-        return f"⚠️ Ο AI Coach δεν είναι διαθέσιμος αυτή τη στιγμή: `{e}`"
+        return res.get("reply", "Δεν έλαβα απάντηση από τον βοηθό StaminAI.")
+    except CoachUnavailable as e:
+        # CoachUnavailable messages are written to be shown (no raw SDK text).
+        return f"⚠️ Ο βοηθός StaminAI δεν είναι διαθέσιμος αυτή τη στιγμή: `{e}`"
+    except Exception:
+        logger.exception("Telegram /coach turn failed")
+        return "⚠️ Ο βοηθός StaminAI δεν είναι διαθέσιμος αυτή τη στιγμή. Δες το log του server."
 
 
 def get_telegram_webhook_info() -> dict | None:

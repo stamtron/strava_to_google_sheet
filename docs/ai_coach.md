@@ -1,14 +1,14 @@
-# 🤖 StaminAI Coach & Conversational Agent
+# 🤖 StaminAI AI Insights & Conversational Assistant
 
-StaminAI features an intelligent AI coaching architecture powered by Google Gemini, combining:
+StaminAI is not a coach and does not replace one: the plan comes from the athlete's human coach. The AI layer, powered by Google Gemini, explains the athlete's own data and flags risks worth raising with that coach. It combines:
 1. **One-shot Weekly Analysis** (`POST /api/ai/coach`): Heuristic and LLM evaluation of weekly volume, ACWR readiness, and multi-sport balance.
-2. **Conversational StaminAI Coach** (`POST /api/ai/chat`): A persistent, tool-augmented chat agent accessible via the 💬 floating drawer in the web dashboard.
+2. **Conversational StaminAI Assistant** (`POST /api/ai/chat`): A persistent, tool-augmented chat agent accessible via the 💬 floating drawer in the web dashboard.
 
 ---
 
 ## 🏗️ Architecture
 
-The conversational coach is built on `google-genai` with automatic function calling (`automatic_function_calling=True`), accessing 14 typed backend tools.
+The conversational assistant is built on `google-genai` with automatic function calling (`automatic_function_calling=True`), accessing 14 typed backend tools.
 
 ```mermaid
 graph TD
@@ -67,7 +67,7 @@ Configurable via `COACH_MEMORY_BACKEND`:
    - Recalls facts based on conceptual meaning.
 
 ### Inspecting & Pruning Memory
-Athletes have full transparency over what the AI coach remembers:
+Athletes have full transparency over what the AI assistant remembers:
 - Open the 🧠 **Memory** tab inside the web drawer.
 - View all stored facts with IDs and timestamps.
 - Delete outdated or incorrect facts with one click (`DELETE /api/coach/memory/{id}`).
@@ -78,5 +78,5 @@ Athletes have full transparency over what the AI coach remembers:
 ## ⚕️ Non-Diagnostic Injury Scope & Safety
 
 To protect the athlete's physical health, StaminAI enforces strict safety boundaries:
-1. **System Prompt Constraint**: The AI Coach is instructed that it is an endurance performance assistant, not a doctor or physiotherapist. It never provides definitive medical diagnoses or advises running through sharp/acute pain.
+1. **System Prompt Constraint**: The assistant is instructed that it is a training-data assistant, not a coach, doctor or physiotherapist. It never provides definitive medical diagnoses or advises running through sharp/acute pain.
 2. **Deterministic Server-Side Disclaimer**: If an athlete asks about pain, injury, Achilles soreness, shin splints, or plantar fasciitis, the server automatically appends a formal non-diagnostic disclaimer and physio referral at the API boundary, regardless of model output.

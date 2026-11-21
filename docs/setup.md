@@ -68,7 +68,7 @@ Your Final Surge calendar is the plan source for compliance, Telegram briefs, th
 2. StaminAI automatically logs in, handles MFA if prompted, and caches session tokens in the `.garmin_tokens/` directory to prevent repeated logins.
 3. Health metrics (Sleep duration, Resting Heart Rate, overnight HRV, Body Battery, and Stress) are automatically queried and cached in `.garmin_cache.json`.
 
-### 4. Gemini AI (StaminAI Coach)
+### 4. Gemini AI (StaminAI Assistant)
 1. Get a free API key from [Google AI Studio](https://aistudio.google.com/).
 2. Add your key to `.env`:
    ```env
@@ -130,7 +130,7 @@ uv run python main.py --sync-workouts
 uv run python server.py
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your browser to view the interactive glassmorphic dashboard, 7-day calendar, volume progression, durability assessment, and the conversational AI Coach drawer.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your browser to view the interactive glassmorphic dashboard, 7-day calendar, volume progression, durability assessment, and the conversational AI assistant drawer.
 
 ### Running Tests
 

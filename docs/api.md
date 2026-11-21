@@ -1,6 +1,6 @@
 # 🌐 REST API Reference
 
-StaminAI provides a complete FastAPI REST backend (`server.py`) serving dashboard data, telemetry analytics, AI coaching, webhooks, and device sync.
+StaminAI provides a complete FastAPI REST backend (`server.py`) serving dashboard data, telemetry analytics, AI insights, webhooks, and device sync.
 
 Base URL: `http://127.0.0.1:8000`
 
@@ -62,7 +62,7 @@ Generates and uploads structured workouts to Garmin Connect, scheduling them ont
 
 ---
 
-## 🤖 AI Coach & Conversational Memory
+## 🤖 AI Assistant & Conversational Memory
 
 ### `POST /api/ai/coach`
 Runs a qualitative evaluation of the week's training load and readiness.
@@ -70,7 +70,7 @@ Runs a qualitative evaluation of the week's training load and readiness.
 - **Response**: `{ advice, readiness_score, focus_areas }`.
 
 ### `POST /api/ai/chat`
-Sends a conversational turn to the StaminAI Coach agent with automatic tool calling.
+Sends a conversational turn to the StaminAI assistant agent with automatic tool calling.
 - **Payload**: `{ message: string, session_id?: string, week_context?: number }`.
 - **Response**: `{ reply: string, session_id: string, tools_used: [ string ] }`.
 
@@ -116,7 +116,7 @@ Ingests real-time activity creation and update events from Strava and stores the
 ## 📱 Telegram Notifications
 
 ### `POST /api/notifications/telegram/next-day`
-Dispatches tomorrow's workout brief, Athens weather, recovery status, and coach advice to Telegram.
+Dispatches tomorrow's workout brief, Athens weather, recovery status, and an AI tip to Telegram.
 
 ### `POST /api/notifications/telegram/today`
 Dispatches today's training brief to Telegram.

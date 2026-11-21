@@ -1,10 +1,10 @@
 # ⚡ StaminAI — Adaptive Endurance & Recovery Platform
 
-> Intelligent multi-sport analytics, biometrics synchronization, and conversational AI coaching for runners, cyclists, and triathletes.
+> Intelligent multi-sport analytics, biometrics synchronization, and a conversational AI data assistant for runners, cyclists, and triathletes.
 
 [![CI](https://github.com/stamtron/strava_to_google_sheet/actions/workflows/ci.yml/badge.svg)](https://github.com/stamtron/strava_to_google_sheet/actions/workflows/ci.yml)
 
-**StaminAI** automatically unifies workout telemetry from **Strava** and 24/7 health biometrics from **Garmin Connect** (Sleep, Resting HR, overnight HRV, Body Battery) with your **Final Surge** training plan and a local **SQLite** activity history, while providing a modern glassmorphic **FastAPI + Chart.js web dashboard** and a conversational **StaminAI Coach (Gemini)** with sports-science durability tools, weather-aware pacing, grounded web search, and persistent memory.
+**StaminAI** automatically unifies workout telemetry from **Strava** and 24/7 health biometrics from **Garmin Connect** (Sleep, Resting HR, overnight HRV, Body Battery) with your **Final Surge** training plan and a local **SQLite** activity history, while providing a modern glassmorphic **FastAPI + Chart.js web dashboard** and a conversational **StaminAI Assistant (Gemini)** that helps you understand your data, with sports-science durability tools, weather-aware pacing, grounded web search, and persistent memory.
 
 ---
 
@@ -19,8 +19,8 @@
 - **Sports-Science Durability Engine**: ACWR (Acute:Chronic Workload Ratio), week-over-week run ramp rate, run spacing, Foster monotony & strain, and non-impact cross-training substitutions.
 - **80/20 Polarized HR Zones**: Karvonen Heart Rate Reserve 5-Zone boundaries (Z1–Z5) tracking low vs tempo trap vs high-intensity balance.
 - **Weather-Adjusted Pacing**: Real-time Open-Meteo Athens weather factoring thermal penalties (>15°C) and aerodynamic wind drag into workout targets.
-- **Conversational AI Coach**: Floating chat drawer powered by Gemini with 14 tools, long-term memory (SQLite/ChromaDB), web search, and server-enforced injury disclaimers.
-- **Final Surge Plan Source**: Reads planned workouts from your private Final Surge iCal feed to drive compliance, Telegram briefs, the coach, and the Garmin workout push.
+- **Conversational Data Assistant**: Ask questions about your own training data in a floating chat drawer powered by Gemini with 14 tools, long-term memory (SQLite/ChromaDB), web search, and server-enforced injury disclaimers.
+- **Final Surge Plan Source**: Reads planned workouts from your private Final Surge iCal feed to drive compliance, Telegram briefs, the assistant, and the Garmin workout push.
 - **Daily & Weekly Telegram Briefings**: Automated morning/evening briefs, Sunday executive weekly digests (`/weekly`, `/form`), and interactive two-way bot (`/today`, `/tomorrow`, `/recovery`, `/stats`, `/gear`, `/coach`).
 
 ---
@@ -91,7 +91,7 @@ strava_to_google_sheet/
 │   ├── status_labels.py          # Display text for analytics status keys
 │   ├── timeutil.py               # Athlete-timezone clock helpers
 │   ├── integrations/             # External APIs (Strava, Garmin, Final Surge, Telegram, Weather)
-│   ├── analytics/                # Data engines (Durability, ACWR, AI Coach, Compliance, Gear)
+│   ├── analytics/                # Data engines (Durability, ACWR, AI insights, Compliance, Gear)
 │   ├── storage/                  # Local persistence (SQLite activities, chat memory, atomic token files)
 │   └── api/                      # FastAPI REST server & routing
 ├── docs/                         # Detailed modular documentation

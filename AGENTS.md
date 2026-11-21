@@ -6,7 +6,7 @@ This document serves as the primary technical guide for AI agents and developers
 
 ## 📌 Project Overview
 
-**StaminAI** is an automated multi-sport endurance training platform that unifies workout telemetry from **Strava** and 24/7 health biometrics (Sleep, Resting Heart Rate, overnight HRV, Body Battery) from **Garmin Connect** with the athlete's **Final Surge** training plan (private iCal feed), while providing a modern **FastAPI + Chart.js** analytics web app with **AI Coaching (Gemini)** and **Acute:Chronic Workload Ratio (ACWR)** tracking.
+**StaminAI** is an automated multi-sport endurance training platform that unifies workout telemetry from **Strava** and 24/7 health biometrics (Sleep, Resting Heart Rate, overnight HRV, Body Battery) from **Garmin Connect** with the athlete's **Final Surge** training plan (private iCal feed), while providing a modern **FastAPI + Chart.js** analytics web app with **AI-generated insights and a conversational data assistant (Gemini)** and **Acute:Chronic Workload Ratio (ACWR)** tracking.
 
 It carries a **local SQLite history store** (paginated Strava backfill), a **run-durability & cross-training engine**, **over-the-air workout push to Garmin watches/Tacx**, **proactive daily push notifications via Telegram**, and a **conversational Gemini coach** (`coach_agent.py`) with function-calling tools, grounded web search, and persistent memory.
 
@@ -46,10 +46,10 @@ strava_to_google_sheet/
 │   └── api/                      # Web API Server
 │       └── server.py             # FastAPI REST endpoints & static routes
 ├── web/                          # Frontend Single Page App
-│   ├── index.html                # Dashboard + floating AI Coach chat drawer + Garmin modal
+│   ├── index.html                # Dashboard + floating AI assistant chat drawer + Garmin modal
 │   ├── styles.css                # Custom glassmorphic design system
 │   └── app.js                    # Chart.js charts, chat drawer & interaction logic
-├── tests/                        # pytest suite (offline, 452 tests)
+├── tests/                        # pytest suite (offline, 456 tests)
 │   ├── conftest.py               # Shared synthetic-activity fixtures & tmp_path DB
 │   ├── test_formatting.py        # Unit conversions & sport corrections
 │   ├── test_metrics.py           # Relative effort, weekly rollups, ACWR
@@ -75,7 +75,7 @@ strava_to_google_sheet/
 │   ├── test_api.py               # FastAPI routes: CSRF header, auth token, webhook fail-closed
 │   ├── test_atomic_file.py       # Atomic writes & file permissions
 │   └── test_status_labels.py     # Status key → display text mapping
-├── docs/                         # Modular documentation (setup, config, analytics, coach, api)
+├── docs/                         # Modular documentation (setup, config, analytics, AI assistant, api)
 ├── main.py                       # Root CLI entry point (incl. --backfill)
 ├── server.py                     # Root Web server entry point
 ├── pyproject.toml                # Project configuration (deps, pytest, ruff)
@@ -216,13 +216,13 @@ strava_to_google_sheet/
      `suggest_cross_training` converts a target run stimulus into bike / aqua-jog
      minutes via `BIKE_RUN_LOAD_FACTOR` / `AQUA_JOG_LOAD_FACTOR` plus a single-leg
      strength prescription.
-   - The LLM coach *explains* these numbers; it never computes them. Keep the maths
+   - The LLM assistant *explains* these numbers; it never computes them. Keep the maths
      here so it is unit-testable offline and identical between the panel and the chat.
    - Same presentation invariant as `metrics.py`: machine-readable `severity`,
      `risk_level`, and `key` strings only — no colours, prose, or emoji.
 
 9. **[`src/analytics/ai_coach.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/analytics/ai_coach.py)**
-   - Generates qualitative coach feedback and readiness scoring, trying each entry of `GEMINI_MODELS` in order, with sports-science heuristic fallbacks.
+   - Generates qualitative AI feedback and readiness scoring, trying each entry of `GEMINI_MODELS` in order, with sports-science heuristic fallbacks.
    - Computes Peter Riegel race finish time predictions for 5K, 10K, 21.1K, and 42.2K,
      in two modes: `pb` calibrates from the `ATHLETE_PB_*` race results, `training`
      from recent training paces. The Riegel exponent is a distance-dependent ladder
@@ -233,7 +233,7 @@ strava_to_google_sheet/
      `GEMINI_MODELS` in `.env`, not by editing code.
 
 10. **[`src/analytics/coach_agent.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/analytics/coach_agent.py)**
-    - The conversational coach behind `POST /api/ai/chat`, built on plain
+    - The conversational assistant behind `POST /api/ai/chat`, built on plain
       `google-genai` `client.chats` with `automatic_function_calling` — deliberately
       **not** Google ADK, whose session service and dev UI duplicate what the
       dashboard already provides.
@@ -312,7 +312,7 @@ strava_to_google_sheet/
 
 15. **[`src/integrations/telegram.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/integrations/telegram.py)**
     - Telegram Bot API integration delivering training alerts, interactive bot commands, daily workout briefs, and weekly executive summaries.
-    - `build_daily_brief`: centralized daily brief compiler shared across Telegram dispatch, REST preview endpoints, and the CLI. Reads coach prescriptions from the Final Surge plan (`plan_source`), enriches them with Open-Meteo Athens weather, computes thermal/wind pace adjustments, pairs with daily Garmin recovery biometrics and an AI coach tip, and formats a clean Markdown brief.
+    - `build_daily_brief`: centralized daily brief compiler shared across Telegram dispatch, REST preview endpoints, and the CLI. Reads coach prescriptions from the Final Surge plan (`plan_source`), enriches them with Open-Meteo Athens weather, computes thermal/wind pace adjustments, pairs with daily Garmin recovery biometrics and an AI tip, and formats a clean Markdown brief.
     - `build_weekly_summary`: executive weekly summary compiler aggregating multi-sport volumes, ACWR sweet-spot status, Banister CTL/ATL/TSB form, Garmin health averages & baseline deviations, and shoe wear retirement warnings.
     - `dispatch_next_day_workout` / `dispatch_today_workout`: sends the formatted brief via Telegram Markdown messaging.
     - Resilient background dispatch scheduler tracks `last_daily_brief_date` and `last_weekly_brief_date` in SQLite `sync_state` and uses a `>= target_time` comparison, ensuring daily briefs and Sunday evening weekly digests (`TELEGRAM_WEEKLY_DISPATCH_TIME`) are not skipped if the server restarts.
