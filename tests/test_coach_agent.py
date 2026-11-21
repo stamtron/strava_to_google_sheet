@@ -350,7 +350,9 @@ def test_health_metrics_degrade_to_an_error_when_garmin_is_unreachable(tools, mo
     monkeypatch.setattr(garmin, "get_weekly_health_summaries", boom)
     by_name, _, _ = tools
     result = by_name["get_health_metrics"](weeks=2)
-    assert "garmin login failed" in result["error"]
+    assert "Garmin data lookup failed" in result["error"]
+    # Raw exception text never reaches the model, which could quote it in chat.
+    assert "garmin login failed" not in result["error"]
 
 
 def test_health_metrics_passes_monday_sunday_ranges_per_week(tools, monkeypatch):

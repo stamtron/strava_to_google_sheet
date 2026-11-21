@@ -149,11 +149,11 @@ def test_brief_survives_null_weather_values():
 
 
 def test_unreadable_plan_is_not_reported_as_a_rest_day():
-    """A swallowed sheet error must never tell the athlete to rest."""
+    """A swallowed plan-read error must never tell the athlete to rest."""
     brief = format_next_day_brief(
         target_date=date(2026, 9, 1),
         workout_text="",
-        lookup_error="Failed to read Google Sheet: [Errno 1] Operation not permitted",
+        lookup_error="Failed to read Final Surge plan: [Errno 1] Operation not permitted",
     )
     assert "Rest Day" not in brief
     assert "⚠️" in brief

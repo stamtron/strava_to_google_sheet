@@ -791,7 +791,10 @@ def sync_week_workouts_to_garmin(week_offset: int = 0, dry_run: bool = False) ->
                 "sport": w["sport"],
                 "workout_name": w["workout_name"],
                 "status": "error",
-                "error": str(e),
+                # ValueErrors are our own workout-building messages and safe to show;
+                # anything from the Garmin client can echo request details, so only
+                # its type reaches the response and the full text stays in the log.
+                "error": str(e) if isinstance(e, ValueError) else f"Garmin request failed ({type(e).__name__}).",
             })
 
     return {

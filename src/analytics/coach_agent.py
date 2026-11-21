@@ -186,6 +186,18 @@ class CoachUnavailable(RuntimeError):
     """Raised when no Gemini client can be built — no API key, or SDK missing."""
 
 
+def _tool_error(action: str, exc: Exception) -> dict[str, str]:
+    """
+    Error payload for a failed coach tool.
+
+    The model reads tool results and can quote them back in chat, so raw
+    exception text (URLs, tokens, paths) stays in the log and the model only
+    learns which action failed and the exception type.
+    """
+    logger.warning("Coach tool: %s failed: %s", action, exc)
+    return {"error": f"{action} failed ({type(exc).__name__})."}
+
+
 def _get_gemini_client():
     """Return a configured Gemini client, or raise `CoachUnavailable`."""
     if not GEMINI_API_KEY:
@@ -579,7 +591,7 @@ def build_tools(
 
             health = get_weekly_health_summaries(ranges, max_fetch=COACH_HEALTH_MAX_FETCH)
         except Exception as e:
-            return {"error": f"Garmin data is unavailable right now ({e})."}
+            return _tool_error("Garmin data lookup", e)
         if not health:
             return {"error": "No Garmin health data for these weeks."}
         return {"weeks": {k: health[k] for k in window if k in health}}
@@ -636,7 +648,7 @@ def build_tools(
         except ValueError as e:
             return {"stored": False, "error": str(e)}
         except Exception as e:
-            return {"stored": False, "error": f"Memory write failed: {e}"}
+            return {"stored": False, **_tool_error("Memory write", e)}
         return {"stored": True, "id": entry["id"], "category": entry["category"]}
 
     def _grounded_search(query: str, prefer_domain: str | None = None) -> dict:
@@ -659,7 +671,7 @@ def build_tools(
                 config={"tools": [{"google_search": {}}]},
             )
         except Exception as e:
-            return {"error": f"Web search failed: {e}"}
+            return _tool_error("Web search", e)
 
         found = _extract_sources(response)
         if prefer_domain:
@@ -694,7 +706,7 @@ def build_tools(
                 "forecast": outlook,
             }
         except Exception as e:
-            return {"error": f"Weather fetch failed: {e}"}
+            return _tool_error("Weather fetch", e)
 
     def get_gear_status() -> dict:
         """Report cumulative mileage, wear status, and replacement alerts for running shoes and bicycles.
@@ -725,7 +737,7 @@ def build_tools(
                 "replacement_alerts": alerts,
             }
         except Exception as e:
-            return {"error": f"Failed to retrieve gear status: {e}"}
+            return _tool_error("Gear status lookup", e)
 
     def get_workout_compliance(target_date: str = "") -> dict:
         """Compare coach's prescribed workout against actual Strava activity execution.
@@ -751,7 +763,7 @@ def build_tools(
             res["summary"] = compliance_summary(res)
             return res
         except Exception as e:
-            return {"error": f"Failed to evaluate workout compliance: {e}"}
+            return _tool_error("Workout compliance check", e)
 
     def preview_next_workout(target_date: str = "") -> dict:
         """Read coach's prescribed workout from the Final Surge plan with weather adjustments and recovery readiness.
@@ -799,7 +811,7 @@ def build_tools(
                 "readiness": readiness,
             }
         except Exception as e:
-            return {"error": f"Failed to preview workout: {e}"}
+            return _tool_error("Workout preview", e)
 
     def get_athlete_recovery(target_date: str = "") -> dict:
         """Fetch Garmin 24/7 recovery biometrics: sleep hours, overnight HRV, resting HR, and Body Battery.
@@ -821,7 +833,7 @@ def build_tools(
                     evaluation["description"] = biometric_description(evaluation, metric)
             return rec
         except Exception as e:
-            return {"error": f"Failed to fetch recovery metrics: {e}"}
+            return _tool_error("Recovery metrics lookup", e)
 
     tools = [
         get_week_summary,

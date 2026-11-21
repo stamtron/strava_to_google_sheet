@@ -338,3 +338,13 @@ def test_build_error_is_reported_per_workout_not_raised():
 
     assert [r["status"] for r in res["results"]] == ["error", "scheduled"]
     assert "bad step" in res["results"][0]["error"]
+
+
+def test_garmin_client_error_text_is_not_returned():
+    client = _client()
+    client.upload_workout.side_effect = RuntimeError("GET https://connect.garmin.com/?ticket=SECRET123")
+    res = _run_sync(_week_preview(("2026-09-10", "Easy")), client)
+
+    assert res["results"][0]["status"] == "error"
+    assert "SECRET123" not in res["results"][0]["error"]
+    assert "RuntimeError" in res["results"][0]["error"]
