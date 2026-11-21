@@ -8,7 +8,7 @@ from src.storage.activity_store import init_db
 
 @pytest.fixture(autouse=True)
 def _no_final_surge(monkeypatch):
-    """Keep the Google Sheet as plan source even if a real feed URL is in .env."""
+    """Never hit a real Final Surge feed even if its URL is in .env."""
     monkeypatch.setattr(config, "FINAL_SURGE_ICAL_URL", "")
 
 

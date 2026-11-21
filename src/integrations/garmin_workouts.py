@@ -1,7 +1,7 @@
 """
 Garmin Workouts Integration Module.
 
-Extracts coach training plans from Google Sheets, filters exclusively
+Extracts coach training plans from the Final Surge iCal feed, filters exclusively
 for Running and Cycling workouts, parses them into structured Garmin Workout
 steps (warmup, intervals, pace/power targets, cooldown) using Gemini AI
 (with heuristic fallback), and uploads/schedules them onto Garmin Connect
@@ -27,28 +27,16 @@ from garminconnect.workout import (
 
 from src.config import (
     DEFAULT_RUN_PACE_SEC_PER_KM,
-    FIRST_WEEK_ROW,
     GARMIN_WORKOUT_NAME_MAX_CHARS,
     GEMINI_API_KEY,
     GEMINI_MODELS,
-    GOOGLE_SHEET_ID,
-    PLAN_LAST_ROW,
-    SHEET_NAME,
     WORKOUT_SPEED_TOLERANCE_MS,
 )
 from src.integrations.garmin import get_garmin_client
-from src.integrations.plan_source import final_surge_enabled
-from src.integrations.sheets import (
-    execute_with_retry,
-    get_sheets_service,
-    inspect_week_blocks,
-    parse_date_range,
-)
 from src.timeutil import today_local
 
 logger = logging.getLogger(__name__)
 
-_PLAN_COL_A_RANGE = f"A{FIRST_WEEK_ROW}:A{PLAN_LAST_ROW}"
 _GARMIN_PUSH_SPORTS = frozenset({"running", "cycling", "brick"})
 _DAY_NAMES_EL = ["Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο", "Κυριακή"]
 
@@ -181,112 +169,13 @@ def classify_coach_day_text(text: str) -> tuple[bool, str]:
 
 def extract_week_coach_workouts(week_offset: int = 0) -> dict[str, Any]:
     """
-    Extract the week's coach workouts from Google Sheets.
-    Finds the target week by week_offset (0 = current week, 1 = next week, etc.).
+    Extract the week's coach workouts from the Final Surge feed.
+    week_offset selects the calendar week (0 = current week, 1 = next week, etc.).
     Returns {
-        'week_start': date,
-        'week_end': date,
-        'row_number': int,
-        'layout': 'new' | 'old',
+        'week_start': str, 'week_end': str, 'layout': 'final_surge',
         'days': list[dict] # {date, day_name, raw_text, is_target, sport_type}
     }
     """
-    if final_surge_enabled():
-        return _extract_week_final_surge_workouts(week_offset)
-
-    if not GOOGLE_SHEET_ID:
-        raise ValueError("GOOGLE_SHEET_ID is not configured in .env")
-
-    service = get_sheets_service(interactive=False)
-    sheet = service.spreadsheets()
-
-    # 1. Fetch Column A to locate date ranges
-    res = execute_with_retry(
-        sheet.values().get(
-            spreadsheetId=GOOGLE_SHEET_ID,
-            range=f"'{SHEET_NAME}'!{_PLAN_COL_A_RANGE}",
-        )
-    )
-    col_a = res.get("values", [])
-
-    weeks: list[tuple[int, date, date]] = []
-    for idx, row in enumerate(col_a):
-        row_num = FIRST_WEEK_ROW + idx
-        val = row[0] if row else ""
-        date_range = parse_date_range(val)
-        if date_range:
-            weeks.append((row_num, date_range[0], date_range[1]))
-
-    if not weeks:
-        raise ValueError(f"No week date ranges found in sheet '{SHEET_NAME}'!{_PLAN_COL_A_RANGE}")
-
-    today = today_local()
-
-    # Find the current week index
-    current_idx = None
-    for idx, (_row, w_start, w_end) in enumerate(weeks):
-        if w_start <= today <= w_end:
-            current_idx = idx
-            break
-
-    if current_idx is None:
-        # Fallback to closest week (or last week if today is past all weeks)
-        future_weeks = [i for i, (_, w_s, _) in enumerate(weeks) if w_s >= today]
-        current_idx = future_weeks[0] if future_weeks else (len(weeks) - 1)
-
-    target_idx = max(0, min(len(weeks) - 1, current_idx + week_offset))
-    target_row, week_start, week_end = weeks[target_idx]
-
-    # 2. Find the workout row:
-    # In New block layout: Column A contains 'ΠΡΟΓΡΑΜΜΑ'.
-    # In Old single-row layout: target_row itself contains the workouts.
-    week_blocks = inspect_week_blocks(col_a, start_row=FIRST_WEEK_ROW)
-    block = week_blocks.get(target_row, {"layout": "old", "program_row": target_row})
-    is_new_layout = block["layout"] == "new"
-    workout_row = block["program_row"] if is_new_layout else target_row
-
-    # 3. Read the workouts across columns B to H (7 days)
-    row_data = execute_with_retry(
-        sheet.values().get(
-            spreadsheetId=GOOGLE_SHEET_ID,
-            range=f"'{SHEET_NAME}'!B{workout_row}:H{workout_row}",
-        )
-    )
-    raw_cells = row_data.get("values", [[]])[0] if row_data.get("values") else []
-
-    days = []
-
-    for i in range(7):
-        day_date = week_start + timedelta(days=i)
-        cell_raw = raw_cells[i] if i < len(raw_cells) else ""
-
-        # Clean coach cell: strip any Strava sync appended section
-        coach_text = cell_raw
-        if "── Strava Data ──" in coach_text:
-            coach_text = coach_text.split("── Strava Data ──")[0].rstrip()
-
-        is_target, sport_type = classify_coach_day_text(coach_text)
-
-        days.append({
-            "date": day_date.isoformat(),
-            "day_name": _DAY_NAMES_EL[i],
-            "raw_text": coach_text.strip(),
-            "is_target": is_target,
-            "sport_type": sport_type,
-        })
-
-    return {
-        "week_start": week_start.isoformat(),
-        "week_end": week_end.isoformat(),
-        "row_number": target_row,
-        "workout_row": workout_row,
-        "layout": "new" if is_new_layout else "old",
-        "days": days,
-    }
-
-
-def _extract_week_final_surge_workouts(week_offset: int = 0) -> dict[str, Any]:
-    """Same structure as extract_week_coach_workouts, sourced from the Final Surge feed."""
     from src.integrations import final_surge
 
     today = today_local()

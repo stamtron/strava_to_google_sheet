@@ -49,27 +49,18 @@ def _env_bool(name: str, default: bool = False) -> bool:
 # API Keys & Credentials
 STRAVA_CLIENT_ID = os.getenv("STRAVA_CLIENT_ID")
 STRAVA_CLIENT_SECRET = os.getenv("STRAVA_CLIENT_SECRET")
-GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 GARMIN_EMAIL = os.getenv("GARMIN_EMAIL")
 GARMIN_PASSWORD = os.getenv("GARMIN_PASSWORD")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
 # File Paths
 TOKEN_FILE = str(PROJECT_ROOT / "token.json")
-CREDENTIALS_FILE = str(PROJECT_ROOT / "credentials.json")
-GSHEETS_TOKEN_FILE = str(PROJECT_ROOT / "gsheets_token.json")
 GARMIN_TOKEN_DIR = str(PROJECT_ROOT / ".garmin_tokens")
 ACTIVITIES_CACHE_FILE = str(PROJECT_ROOT / ".activities_cache.json")
 GARMIN_CACHE_FILE = str(PROJECT_ROOT / ".garmin_cache.json")
 HISTORY_DB_FILE = str(PROJECT_ROOT / ".training_history.db")
 COACH_MEMORY_DIR = str(PROJECT_ROOT / ".coach_memory")
 WEB_DIR = str(PROJECT_ROOT / "web")
-
-# Google Sheets Configuration
-SHEET_NAME = "Προπόνηση-Ανατροφοδότηση"
-FIRST_WEEK_ROW = 13
-ROWS_PER_WEEK = 1
-GSHEETS_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 # Web Server.
 # Bound to loopback by default: the API serves training and biometric data with
@@ -109,8 +100,8 @@ ATHLETE_TIMEZONE = os.getenv("ATHLETE_TIMEZONE", "Europe/Athens").strip()
 WEATHER_CACHE_FILE = os.path.join(PROJECT_ROOT, ".weather_cache.json")
 
 # Final Surge training plan (private iCal calendar feed).
-# When set, Final Surge replaces the Google Sheet as the source of planned
-# workouts (compliance, Telegram briefs, coach, Garmin workout push).
+# The single source of planned workouts (compliance, Telegram briefs, coach,
+# Garmin workout push).
 # The URL embeds a private key, so treat it as a secret.
 FINAL_SURGE_ICAL_URL = os.getenv("FINAL_SURGE_ICAL_URL", "").strip()
 FINAL_SURGE_CACHE_TTL = _env_int("FINAL_SURGE_CACHE_TTL", 900)  # 15 min
@@ -234,7 +225,6 @@ ATHLETE_RACE_BIKE_SPEED_KMH = _env_float("ATHLETE_RACE_BIKE_SPEED_KMH", 32.5)
 # Strava Webhook Real-Time Sync
 STRAVA_WEBHOOK_VERIFY_TOKEN = os.getenv("STRAVA_WEBHOOK_VERIFY_TOKEN", "STRAVA_WEBHOOK_SECRET").strip()
 STRAVA_WEBHOOK_SECRET_PARAM = os.getenv("STRAVA_WEBHOOK_SECRET_PARAM", "").strip()
-AUTO_SYNC_SHEET_ON_WEBHOOK = _env_bool("AUTO_SYNC_SHEET_ON_WEBHOOK", False)
 
 # Telegram Notifications & Next-Day Workout Dispatcher
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -258,9 +248,6 @@ DEFAULT_HEAT_TIP = os.getenv(
     "High heat expected; hydrate well and start early morning.",
 ).strip()
 
-# Google Sheets API resilience
-GSHEETS_MAX_RETRIES = _env_int("GSHEETS_MAX_RETRIES", 3)
-
 # Gear & shoe alerts
 SHOE_ALERT_KM = _env_int("SHOE_ALERT_KM", 650)
 
@@ -282,7 +269,6 @@ STRAVA_HTTP_TIMEOUT_SEC = _env_float("STRAVA_HTTP_TIMEOUT_SEC", 30.0)
 STRAVA_BACKOFF_BASE_SEC = _env_float("STRAVA_BACKOFF_BASE_SEC", 2.0)
 STRAVA_BACKOFF_CAP_SEC = _env_float("STRAVA_BACKOFF_CAP_SEC", 30.0)
 WEATHER_HTTP_TIMEOUT_SEC = _env_float("WEATHER_HTTP_TIMEOUT_SEC", 6.0)
-GSHEETS_RETRY_DELAY_SEC = _env_float("GSHEETS_RETRY_DELAY_SEC", 1.5)
 TELEGRAM_HTTP_TIMEOUT_SEC = _env_float("TELEGRAM_HTTP_TIMEOUT_SEC", 10.0)
 FINAL_SURGE_HTTP_TIMEOUT_SEC = _env_float("FINAL_SURGE_HTTP_TIMEOUT_SEC", 15.0)
 
@@ -294,9 +280,6 @@ TELEGRAM_BOT_ERROR_SLEEP_SEC = _env_float("TELEGRAM_BOT_ERROR_SLEEP_SEC", 5.0)
 TELEGRAM_DISPATCH_RETRY_BACKOFF_SEC = _env_int("TELEGRAM_DISPATCH_RETRY_BACKOFF_SEC", 900)
 TELEGRAM_DAILY_DISPATCH_FALLBACK = "20:30"
 TELEGRAM_WEEKLY_DISPATCH_FALLBACK = "21:00"
-
-# Google Sheets plan layout (first row reuses FIRST_WEEK_ROW)
-PLAN_LAST_ROW = _env_int("PLAN_LAST_ROW", 150)
 
 # Garmin client & cache
 GARMIN_LOGIN_RETRY_COOLDOWN_SEC = _env_int("GARMIN_LOGIN_RETRY_COOLDOWN_SEC", 900)
@@ -462,7 +445,7 @@ COACH_EXTRACT_MAX_MESSAGES = _env_int("COACH_EXTRACT_MAX_MESSAGES", 40)
 COACH_EXTRACT_MAX_CHARS = _env_int("COACH_EXTRACT_MAX_CHARS", 20000)
 # Garmin weeks a single get_health_metrics tool call may fetch live.
 COACH_HEALTH_MAX_FETCH = _env_int("COACH_HEALTH_MAX_FETCH", 4)
-# Planned-workout sheet reads are cached this long by /api/compliance.
+# Planned-workout reads are cached this long by /api/compliance.
 COMPLIANCE_PLAN_CACHE_TTL_SEC = _env_float("COMPLIANCE_PLAN_CACHE_TTL_SEC", 300.0)
 
 # Prediction baselines used when no qualifying activity exists.

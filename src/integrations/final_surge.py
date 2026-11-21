@@ -3,9 +3,8 @@ Final Surge training plan integration via the private iCal calendar feed.
 
 Final Surge publishes every planned workout on a read-only iCalendar feed
 (Settings → Calendar Sync). The feed is fetched, cached on disk, and parsed
-into per-day workout text in the same shape the Google Sheet plan reader
-returns, so compliance, Telegram briefs, the coach and the Garmin workout push
-can consume it unchanged.
+into per-day workout text so compliance, Telegram briefs, the coach and the Garmin workout push
+can consume it.
 """
 
 import json
@@ -183,7 +182,7 @@ def day_workout_text(workouts: list[dict[str, Any]]) -> str:
 
 
 def get_planned_workout_for_date(target_date: date) -> dict[str, Any]:
-    """Planned workout for target_date, shaped like the Google Sheet reader's result."""
+    """Planned workout for target_date, with found/workout_text/reason keys."""
     base = {"date": target_date.isoformat(), "source": "final_surge"}
     try:
         workouts = get_workouts_by_date().get(target_date, [])

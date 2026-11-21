@@ -3,7 +3,7 @@ FastAPI Server for Strava & Garmin Training Dashboard.
 
 Provides REST endpoints for activities, Garmin biometrics,
 Relative Effort & ACWR tracking, multi-week progression analytics,
-AI coaching, and Google Sheets synchronization.
+AI coaching, and Strava activity sync into the local history store.
 """
 
 import asyncio
@@ -151,7 +151,6 @@ from src.config import (
     ALLOWED_ORIGINS,
     ATHLETE_GOAL_RACES,
     ATHLETE_NOTES_MAX_CHARS,
-    AUTO_SYNC_SHEET_ON_WEBHOOK,
     CHAT_MESSAGE_MAX_CHARS,
     CHAT_WEEK_CONTEXT_MAX_CHARS,
     COMPLIANCE_PLAN_CACHE_TTL_SEC,
@@ -171,7 +170,6 @@ from src.integrations.garmin import (
     get_weekly_health_summaries,
 )
 from src.integrations.plan_source import get_planned_workout_for_date
-from src.integrations.sheets import write_to_sheet
 from src.integrations.strava import (
     StravaAuthRequired,
     StravaNetworkError,
@@ -512,7 +510,7 @@ def strava_webhook_challenge(
 
 
 def _process_strava_webhook_activity(object_id: int) -> None:
-    """Fetch activity details and optionally sync to sheets in a background worker."""
+    """Fetch activity details and persist them in a background worker."""
     try:
         token = get_access_token(interactive=False)
         detail = fetch_activity_detail(int(object_id), token)
@@ -521,10 +519,6 @@ def _process_strava_webhook_activity(object_id: int) -> None:
             cache = _load_cache()
             cache["details"][str(object_id)] = detail
             _save_cache(cache["activities"], cache["details"], cache["count"])
-
-            if AUTO_SYNC_SHEET_ON_WEBHOOK:
-                summaries, details = _get_summaries(30)
-                write_to_sheet(summaries, details=details)
     except Exception as e:
         server_logger.warning("Webhook activity processing failed for %s: %s", object_id, e)
 
@@ -568,7 +562,7 @@ class TelegramNextDayRequest(BaseModel):
 @app.post("/api/notifications/telegram/next-day")
 def send_telegram_next_day_workout_notification(req: TelegramNextDayRequest = TelegramNextDayRequest()):
     """
-    Extract tomorrow's planned workout from Google Sheets, combine with Athens
+    Extract tomorrow's planned workout from Final Surge, combine with Athens
     weather forecast, Garmin recovery biometrics, and AI coaching advice, and dispatch to athlete's Telegram.
     """
     if req.target_date:
@@ -841,9 +835,9 @@ def history_backfill(req: BackfillRequest):
         conn.close()
 
 
-@app.post("/api/sheet/sync")
-def sync_google_sheets(req: SyncRequest):
-    """Trigger Strava + Garmin sync to Google Sheets."""
+@app.post("/api/sync")
+def sync_activities(req: SyncRequest):
+    """Pull recent Strava activities + details into the cache and local history store."""
     try:
         token = get_access_token(interactive=False)
         summaries = fetch_activities(token, per_page=req.count)
@@ -858,8 +852,7 @@ def sync_google_sheets(req: SyncRequest):
             delay_sec=STRAVA_DETAIL_DELAY_SEC,
         )
         _save_cache(summaries, details, req.count)
-
-        write_to_sheet(summaries, details)
+        _write_history(summaries, details)
         return {"status": "success", "synced_activities": len(summaries)}
     except StravaAuthRequired as e:
         raise HTTPException(status_code=401, detail=str(e)) from e
@@ -868,7 +861,8 @@ def sync_google_sheets(req: SyncRequest):
     except StravaNetworkError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        server_logger.exception("Activity sync failed")
+        raise HTTPException(status_code=500, detail="Activity sync failed.") from e
 
 
 _PLANNED_WORKOUT_CACHE: dict[str, tuple[float, dict]] = {}
@@ -949,7 +943,7 @@ def _gear_summary() -> list[dict]:
 
 @app.get("/api/workouts/preview")
 def preview_workouts_endpoint(week_offset: int = 0):
-    """Preview running and cycling workouts parsed from Google Sheets for Garmin & Tacx with recovery readiness."""
+    """Preview running and cycling workouts parsed from Final Surge for Garmin & Tacx with recovery readiness."""
     from src.integrations.garmin import assess_workout_readiness, get_daily_recovery_metrics
     from src.integrations.garmin_workouts import preview_week_workouts
     try:

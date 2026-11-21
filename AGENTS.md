@@ -6,9 +6,9 @@ This document serves as the primary technical guide for AI agents and developers
 
 ## 📌 Project Overview
 
-**StaminAI** is an automated multi-sport endurance training platform that unifies workout telemetry from **Strava** and 24/7 health biometrics (Sleep, Resting Heart Rate, overnight HRV, Body Battery) from **Garmin Connect**, formatting and synchronizing them into a structured coaching spreadsheet in **Google Sheets**, while providing a modern **FastAPI + Chart.js** analytics web app with **AI Coaching (Gemini)** and **Acute:Chronic Workload Ratio (ACWR)** tracking.
+**StaminAI** is an automated multi-sport endurance training platform that unifies workout telemetry from **Strava** and 24/7 health biometrics (Sleep, Resting Heart Rate, overnight HRV, Body Battery) from **Garmin Connect** with the athlete's **Final Surge** training plan (private iCal feed), while providing a modern **FastAPI + Chart.js** analytics web app with **AI Coaching (Gemini)** and **Acute:Chronic Workload Ratio (ACWR)** tracking.
 
-Beyond the sheet sync it carries a **local SQLite history store** (paginated Strava backfill), a **run-durability & cross-training engine**, **over-the-air workout push to Garmin watches/Tacx**, **proactive daily push notifications via Telegram**, and a **conversational Gemini coach** (`coach_agent.py`) with function-calling tools, grounded web search, and persistent memory.
+It carries a **local SQLite history store** (paginated Strava backfill), a **run-durability & cross-training engine**, **over-the-air workout push to Garmin watches/Tacx**, **proactive daily push notifications via Telegram**, and a **conversational Gemini coach** (`coach_agent.py`) with function-calling tools, grounded web search, and persistent memory.
 
 ---
 
@@ -26,7 +26,8 @@ strava_to_google_sheet/
 │   │   ├── strava_backfill.py    # Paginated full-history import + incremental sync
 │   │   ├── garmin.py             # Garmin Connect authentication & biometrics
 │   │   ├── garmin_workouts.py    # Structured workout generator & watch sync
-│   │   ├── sheets.py             # Google Sheets API & dual-layout sync engine
+│   │   ├── final_surge.py        # Final Surge private iCal plan feed (fetch, cache, parse)
+│   │   ├── plan_source.py        # Single entry point for "what is planned on this day"
 │   │   ├── telegram.py           # Telegram notification dispatcher & interactive bot
 │   │   └── weather.py            # Open-Meteo daily weather integration & caching
 │   ├── analytics/                # Data processing & AI
@@ -48,12 +49,10 @@ strava_to_google_sheet/
 │   ├── index.html                # Dashboard + floating AI Coach chat drawer + Garmin modal
 │   ├── styles.css                # Custom glassmorphic design system
 │   └── app.js                    # Chart.js charts, chat drawer & interaction logic
-├── tests/                        # pytest suite (offline, 460+ tests)
+├── tests/                        # pytest suite (offline, 444 tests)
 │   ├── conftest.py               # Shared synthetic-activity fixtures & tmp_path DB
 │   ├── test_formatting.py        # Unit conversions & sport corrections
 │   ├── test_metrics.py           # Relative effort, weekly rollups, ACWR
-│   ├── test_sheets.py            # Date-range parsing, weekly totals, cell formatting
-│   ├── test_sheets_retry.py      # Exponential backoff & retry handling for Sheets API
 │   ├── test_caching.py           # Activity-cache and Garmin week-cache correctness
 │   ├── test_strava_client.py     # Retry/429 handling with monkeypatched requests
 │   ├── test_strava_webhook.py    # Handshake verification & activity event ingest
@@ -64,6 +63,7 @@ strava_to_google_sheet/
 │   ├── test_gear.py              # Shoe/bike mileage aggregation & alert thresholds
 │   ├── test_weather.py           # Open-Meteo payload parsing, WMO codes, disk caching
 │   ├── test_weather_pace.py      # Temperature & wind pace slowdown calculations
+│   ├── test_final_surge.py       # iCal feed parsing, caching & plan lookups
 │   ├── test_telegram.py          # Telegram daily briefs, weather pace embeds, fallback formatting
 │   ├── test_garmin.py            # Garmin Connect authentication & biometrics
 │   ├── test_garmin_workouts.py   # Workout parsing, Gemini step generation & API payloads
@@ -75,7 +75,7 @@ strava_to_google_sheet/
 │   ├── test_api.py               # FastAPI routes: CSRF header, auth token, webhook fail-closed
 │   ├── test_atomic_file.py       # Atomic writes & file permissions
 │   └── test_status_labels.py     # Status key → display text mapping
-├── docs/                         # Modular documentation (setup, config, analytics, coach, api, sheets)
+├── docs/                         # Modular documentation (setup, config, analytics, coach, api)
 ├── main.py                       # Root CLI entry point (incl. --backfill)
 ├── server.py                     # Root Web server entry point
 ├── pyproject.toml                # Project configuration (deps, pytest, ruff)
@@ -92,7 +92,7 @@ strava_to_google_sheet/
 ## 🔑 Key Backend Components
 
 1. **[`src/config.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/config.py)**
-   - Centralizes project constants, sheet names, token paths, and `.env` loading.
+   - Centralizes project constants, token paths, and `.env` loading.
    - All tunables are env-overridable through `_env_int` / `_env_float` / `_env_list` / `_env_bool`
      helpers that fall back to the default on malformed input. Anything a reviewer
      would call a magic number (HR max/rest, the swim divisor, the indoor-bike
@@ -117,10 +117,10 @@ strava_to_google_sheet/
    - Single home for duration and pace formatting, in both English (`format_duration`,
      `format_pace`) and Greek (`format_duration_el`, `format_duration_short_el`,
      `format_pace(..., greek=True)`). Do not reintroduce local copies in `main.py`
-     or `sheets.py`.
+     or the integrations.
    - `corrected_distance_and_speed(act)` is the **only** place sport corrections
      are applied: the swim divisor and the indoor-trainer distance estimate. Every
-     consumer (CLI, sheets, metrics, AI coach) routes through it so the numbers
+     consumer (CLI, metrics, Telegram, AI coach) routes through it so the numbers
      agree everywhere.
    - `format_mmss` and `parse_pace_to_sec` are the shared `M:SS` render/parse helpers;
      do not hand-roll `divmod(sec, 60)` pace strings elsewhere.
@@ -133,11 +133,11 @@ strava_to_google_sheet/
      single-use refresh token; the token file is written atomically (`write_json_atomic`).
    - Fetches activity summaries (`fetch_activities`) and detailed metrics (`fetch_activity_detail`).
    - Raises `StravaAuthRequired` and `StravaRateLimitError` rather than returning
-     `{}` — a swallowed 429 previously wrote blank cells over real sheet data.
+     `{}` — a swallowed 429 must never look like "no activities".
    - `fetch_details_for_activities` throttles by `STRAVA_DETAIL_DELAY_SEC` and
      retries 429s up to `STRAVA_MAX_RETRIES`, honouring `Retry-After`. It returns a
-     `DetailsResult` (a dict) whose `.incomplete` flag tells the sheet sync not to
-     overwrite cells for activities whose details failed to load.
+     `DetailsResult` (a dict) whose `.incomplete` flag tells callers that some
+     activities' details failed to load (re-run later to fill them in).
 
 4. **[`src/integrations/strava_backfill.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/integrations/strava_backfill.py)**
    - `backfill_all` pages `fetch_activities` until a short/empty page, writing each
@@ -163,17 +163,17 @@ strava_to_google_sheet/
    - `assess_workout_readiness` returns an `advice_key` and a structured
      `substitute_option`; the text is rendered by `status_labels`.
 
-6. **[`src/integrations/sheets.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/integrations/sheets.py)**
-   - Authenticates via desktop OAuth2 (`credentials.json` -> `gsheets_token.json`).
-   - Dynamic layout detection: batch inspects $A(R+4)$ for `ΑΝΑΤΡΟΦΟΔΟΤΗΣΗ` to distinguish **New Block Layout** from **Old Single-Row Layout**.
-   - Formats swimming pace in `/100μ` (distance corrected via `src.formatting`), running pace in `/χλμ`, cycling in `χλμ/ω`.
-   - Populates weekly sport totals and Garmin health tracker in Column A (Old) or Column B of `ΕΒΔΟΜΑΔΑ` (New).
-   - Detail lookups accept both int and string activity ids, since cached details
-     round-trip through JSON.
-   - Retries transient Google API quota **and transport** errors using `execute_with_retry` up to `GSHEETS_MAX_RETRIES`.
-   - Weekly sport totals come from the SQLite store, not just the fetched window,
-     so a partial fetch can't under-report a week. Plan rows are read down to `PLAN_LAST_ROW` (150).
-   - `parse_date_range` handles ranges that cross New Year (e.g. `29/12 - 4/1`).
+6. **[`src/integrations/final_surge.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/integrations/final_surge.py)** & **[`plan_source.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/integrations/plan_source.py)**
+   - The Final Surge private iCal feed (`FINAL_SURGE_ICAL_URL`, from Final Surge →
+     Settings → Calendar Sync) is the **only** plan source: compliance, Telegram briefs,
+     the coach's `preview_next_workout` tool and the Garmin workout push all read it.
+   - The feed is fetched with `FINAL_SURGE_HTTP_TIMEOUT_SEC`, cached on disk in
+     `.final_surge_cache.json` for `FINAL_SURGE_CACHE_TTL` (900 s), and parsed into
+     per-day workout text. `webcal://` URLs are rewritten to `https://`.
+   - Callers go through `plan_source.get_planned_workout_for_date`, never the
+     integration directly, so the source stays swappable and patchable in tests.
+   - Without the URL, lookups return `found=False` with a "not configured" reason.
+     The feed URL is a secret — never log it.
 
 7. **[`src/analytics/metrics.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/analytics/metrics.py)**
    - Extracts Strava Relative Effort (`suffer_score`) or computes HR-based TRIMP stress from `HR_MAX`/`HR_REST`.
@@ -244,7 +244,7 @@ strava_to_google_sheet/
       `get_workout_compliance`, `preview_next_workout`, `get_weather_forecast`,
       `search_web`, `find_exercise_videos`, `remember_fact`.
       Every numeric tool routes through `formatting.corrected_distance_and_speed`,
-      so the chat can never quote a number the dashboard and sheet disagree with.
+      so the chat can never quote a number the dashboard disagrees with.
     - `_grounded_search` issues a **separate**, search-only `generate_content` call
       rather than mixing `google_search` with `function_declarations` in one request.
       That mix is expressible in the SDK but rejected by the API, so this is the
@@ -298,7 +298,7 @@ strava_to_google_sheet/
       `_words`.
 
 14. **[`src/integrations/garmin_workouts.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/integrations/garmin_workouts.py)**
-    - Extracts coach's natural Greek training prescriptions from Google Sheets,
+    - Extracts coach's natural Greek training prescriptions from the Final Surge plan,
       filtering strictly for Running and Cycling sessions.
     - Uses Gemini LLM structured parsing (with regex heuristic fallback) to translate
       natural language intervals, warmup, cooldown, paces, and recovery intervals into
@@ -312,7 +312,7 @@ strava_to_google_sheet/
 
 15. **[`src/integrations/telegram.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/integrations/telegram.py)**
     - Telegram Bot API integration delivering training alerts, interactive bot commands, daily workout briefs, and weekly executive summaries.
-    - `build_daily_brief`: centralized daily brief compiler shared across Telegram dispatch, REST preview endpoints, and the CLI. Reads coach prescriptions from Google Sheets, enriches them with Open-Meteo Athens weather, computes thermal/wind pace adjustments, pairs with daily Garmin recovery biometrics and an AI coach tip, and formats a clean Markdown brief.
+    - `build_daily_brief`: centralized daily brief compiler shared across Telegram dispatch, REST preview endpoints, and the CLI. Reads coach prescriptions from the Final Surge plan (`plan_source`), enriches them with Open-Meteo Athens weather, computes thermal/wind pace adjustments, pairs with daily Garmin recovery biometrics and an AI coach tip, and formats a clean Markdown brief.
     - `build_weekly_summary`: executive weekly summary compiler aggregating multi-sport volumes, ACWR sweet-spot status, Banister CTL/ATL/TSB form, Garmin health averages & baseline deviations, and shoe wear retirement warnings.
     - `dispatch_next_day_workout` / `dispatch_today_workout`: sends the formatted brief via Telegram Markdown messaging.
     - Resilient background dispatch scheduler tracks `last_daily_brief_date` and `last_weekly_brief_date` in SQLite `sync_state` and uses a `>= target_time` comparison, ensuring daily briefs and Sunday evening weekly digests (`TELEGRAM_WEEKLY_DISPATCH_TIME`) are not skipped if the server restarts.
@@ -324,6 +324,7 @@ strava_to_google_sheet/
       per-iteration errors.
     - Includes an interactive command parser (`/today`, `/tomorrow`, `/weekly`, `/form`, `/recovery`, `/compliance`, `/sync`,
       `/stats`, `/gear`, `/coach`) for direct two-way interactions with the athlete.
+      `/sync` stores the latest 30 Strava activities in the local history store.
 
 16. **[`src/integrations/weather.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/integrations/weather.py)**
     - Open-Meteo REST integration for Athens, Greece (or configured coordinates).
@@ -335,7 +336,7 @@ strava_to_google_sheet/
 
 17. **[`src/analytics/compliance.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/analytics/compliance.py)**
     - Workout plan vs. actual execution compliance engine.
-    - Parses coach's Greek sheet text into structured targets (sport, target distance,
+    - Parses coach's Greek plan text into structured targets (sport, target distance,
       target duration, target pace/power).
     - Matches planned targets against completed Strava telemetry logged on that date,
       evaluating volume delta, pace compliance, and overall execution score (0–100%).
@@ -363,7 +364,7 @@ strava_to_google_sheet/
 20. **[`src/api/server.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/api/server.py)**
     - FastAPI backend exposing REST endpoints:
       - Health & Data: `GET /api/health`, `GET /api/activities`, `GET /api/dashboard`,
-        `GET /api/history/status`, `POST /api/history/backfill`, `POST /api/sheet/sync`
+        `GET /api/history/status`, `POST /api/history/backfill`, `POST /api/sync`
       - Performance & Load: `GET /api/performance` (Banister CTL/ATL/TSB)
       - Weather & Pace: `GET /api/weather`
       - Durability & Biometrics: `GET /api/durability`
@@ -371,12 +372,12 @@ strava_to_google_sheet/
       - Garmin Workouts: `GET /api/workouts/preview`, `POST /api/workouts/sync`
       - Notifications: `POST /api/notifications/telegram/next-day`, `POST /api/notifications/telegram/today`, `POST /api/notifications/telegram/weekly`, `POST /api/notifications/telegram/webhook`
       - Strava Webhook: `GET /api/strava/webhook` (verification handshake),
-        `POST /api/strava/webhook` (real-time activity ingestion & optional sheet sync)
+        `POST /api/strava/webhook` (real-time activity ingestion)
       - AI Coach & Chat: `POST /api/ai/coach`, `POST /api/ai/chat`,
         `GET /api/coach/memory`, `DELETE /api/coach/memory/{fact_id}`, `POST /api/coach/memory/extract`
       - Web SPA & Static: `GET /`, `GET /favicon.ico`
     - Non-blocking webhook ingestion: `POST /api/strava/webhook` processes activity detail fetching,
-      database upsertion, and optional Google Sheets sync via FastAPI `BackgroundTasks`, returning
+      and database upsertion via FastAPI `BackgroundTasks`, returning
       HTTP 200 immediately to meet Strava's 2-second timeout window.
     - Reads summaries from the SQLite store first and falls back to Strava for the
       freshness window. The `.activities_cache.json` hot cache stays in front of it —
@@ -412,8 +413,8 @@ strava_to_google_sheet/
   prevent exposing the dashboard endpoints to the WAN. The webhooks reject every
   request until `TELEGRAM_WEBHOOK_SECRET` (`X-Telegram-Bot-Api-Secret-Token` header)
   and `STRAVA_WEBHOOK_SECRET_PARAM` are set — keep them fail-closed.
-- **Secrets stay unread and ungitted:** `.env`, `token.json`, `credentials.json`,
-  `gsheets_token.json`, `.garmin_tokens/`. Never echo their contents into logs,
+- **Secrets stay unread and ungitted:** `.env`, `token.json`, `.garmin_tokens/`,
+  and the `FINAL_SURGE_ICAL_URL` feed URL. Never echo their contents into logs,
   transcripts, or the memory store.
 - **Injury scope is enforced twice.** Pain and injury questions get general,
   cited, non-diagnostic guidance plus a physio/sports-doctor referral. The prompt
@@ -439,11 +440,8 @@ strava_to_google_sheet/
 # Install dependencies (including the dev group)
 uv sync
 
-# Run CLI tool
+# Fetch recent Strava activities into the local SQLite store & print them
 uv run python main.py --count 30
-
-# Sync to Google Sheets via CLI
-uv run python main.py --sheet --count 30
 
 # Import the FULL Strava history into the local SQLite store, then exit.
 # Resumable and idempotent; --no-resume restarts from page 1.

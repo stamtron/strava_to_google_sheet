@@ -26,7 +26,7 @@ graph TD
 
 ## 🛠️ The 14 Agent Tools
 
-The agent intelligently decides which tools to invoke based on user prompts. All numeric tools route through `src.formatting.corrected_distance_and_speed` so that numbers in the chat always match the dashboard and Google Sheet:
+The agent intelligently decides which tools to invoke based on user prompts. All numeric tools route through `src.formatting.corrected_distance_and_speed` so that numbers in the chat always match the dashboard:
 
 | Tool | Purpose & Example Query |
 | --- | --- |
@@ -39,7 +39,7 @@ The agent intelligently decides which tools to invoke based on user prompts. All
 | `get_athlete_recovery` | Evaluates same-day readiness based on sleep duration, RHR, HRV, and Body Battery. *"How recovered am I today?"* |
 | `get_gear_status` | Returns shoe mileage, replacement warnings, and bike equipment usage. *"Check my running shoe wear."* |
 | `get_workout_compliance` | Evaluates plan vs. actual execution and scores target adherence (0-100%). *"Did I hit my intervals on Tuesday?"* |
-| `preview_next_workout` | Reads tomorrow's prescribed workout from Google Sheets with weather adjustments. *"What is planned for tomorrow?"* |
+| `preview_next_workout` | Reads tomorrow's prescribed workout from Final Surge with weather adjustments. *"What is planned for tomorrow?"* |
 | `get_weather_forecast` | Returns Athens daily forecast, rain chance, and wind speed. *"What is the weather tomorrow morning?"* |
 | `search_web` | Performs grounded search for races, registration dates, courses, or gear specs. *"Find half marathons near Athens in November."* |
 | `find_exercise_videos` | Searches YouTube for specific strength, mobility, or drill demonstrations. *"Show me single-leg Romanian deadlift form."* |

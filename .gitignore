@@ -58,3 +58,6 @@ htmlcov/
 ._*
 
 
+
+# Personal drafts (not tracked)
+docs/blog/

@@ -1,7 +1,7 @@
 """
 Workout Plan vs. Actual Compliance Engine.
 
-Parses coach's prescribed workouts from Google Sheets and compares them against
+Parses coach's prescribed workouts (Final Surge plan text) and compares them against
 actual telemetry logged from Strava to calculate volume, pace, and execution fidelity.
 """
 

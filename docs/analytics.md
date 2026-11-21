@@ -107,7 +107,7 @@ Weekly time is classified into:
 
 ## 📋 Plan vs. Actual Workout Compliance
 
-StaminAI automatically parses natural Greek training prescriptions from Google Sheets (e.g., *"10χλμ ελεύθερο σε 5:20/χλμ"* or *"6x1000m σε 4:10/χλμ με 2' διάλειμμα"*) into structured targets:
+StaminAI automatically parses natural Greek training prescriptions from your Final Surge plan (e.g., *"10χλμ ελεύθερο σε 5:20/χλμ"* or *"6x1000m σε 4:10/χλμ με 2' διάλειμμα"*) into structured targets:
 - **Volume Delta**: Compares prescribed distance and duration against Strava execution.
 - **Pace Fidelity**: Validates whether actual pace matched target interval speeds.
 - **Compliance Score (0–100%)**: Weighted scoring evaluating execution discipline.

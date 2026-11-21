@@ -102,10 +102,8 @@ def test_plan_source_dispatch(feed, monkeypatch):
     assert empty["found"] is False
 
     monkeypatch.setattr(config, "FINAL_SURGE_ICAL_URL", "")
-    import src.integrations.sheets as sheets_mod
-
-    monkeypatch.setattr(sheets_mod, "get_planned_workout_for_date", lambda d: {"source": "sheet"})
-    assert plan_source.get_planned_workout_for_date(date(2026, 11, 18)) == {"source": "sheet"}
+    missing = plan_source.get_planned_workout_for_date(date(2026, 11, 18))
+    assert missing["found"] is False and "not configured" in missing["reason"]
 
 
 def test_garmin_week_extraction_uses_final_surge(feed, monkeypatch):

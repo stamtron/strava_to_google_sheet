@@ -387,12 +387,12 @@ def test_build_daily_brief_and_metadata(monkeypatch):
     from datetime import date
 
     import src.integrations.garmin as garmin_mod
-    import src.integrations.sheets as sheets_mod
+    import src.integrations.plan_source as plan_mod
     import src.integrations.weather as weather_mod
     from src.integrations.telegram import build_daily_brief
 
     monkeypatch.setattr(
-        sheets_mod,
+        plan_mod,
         "get_planned_workout_for_date",
         lambda d: {"workout_text": "Easy Run 8km", "reason": None},
     )

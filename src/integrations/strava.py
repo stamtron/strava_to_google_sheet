@@ -57,7 +57,7 @@ class DetailsResult(dict):
 
     A plain dict for every existing caller, plus `incomplete` / `stop_reason`
     ("rate_limit" or "network") when fetching stopped early, so writers can
-    avoid overwriting good sheet cells with detail-less values.
+    avoid overwriting good stored details with detail-less values.
     """
 
     incomplete: bool = False
@@ -249,8 +249,8 @@ def fetch_activity_detail(access_token: str, activity_id: int) -> dict:
     Fetch full details for an activity (HR, temperature, calories, suffer score).
 
     Returns {} only when the activity genuinely has no detail available.
-    Throttling raises StravaRateLimitError, so partial data is never written to
-    the sheet as though it were complete.
+    Throttling raises StravaRateLimitError, so partial data is never stored
+    as though it were complete.
     """
     headers = {"Authorization": f"Bearer {access_token}"}
     response = _request("GET", f"{ACTIVITY_DETAIL_URL}/{activity_id}", headers=headers)

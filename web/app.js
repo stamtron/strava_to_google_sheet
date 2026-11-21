@@ -194,7 +194,7 @@ function setupEventListeners() {
     selectWeek(e.target.value);
   });
 
-  document.getElementById("syncSheetBtn").addEventListener("click", handleSheetSync);
+  document.getElementById("syncActivitiesBtn").addEventListener("click", handleActivitySync);
   document.getElementById("generateAiBtn").addEventListener("click", handleGenerateAiFeedback);
   document.getElementById("copyReportBtn").addEventListener("click", handleCopyReport);
   document.getElementById("sendTelegramBtn").addEventListener("click", handleSendTelegram);
@@ -1708,7 +1708,7 @@ async function loadCompliance(targetDate) {
       badgeEl.style.display = "inline-flex";
     }
 
-    const plannedRaw = data.planned_raw ? escapeHtml(data.planned_raw) : "<em>Rest Day or no scheduled workout found in sheet.</em>";
+    const plannedRaw = data.planned_raw ? escapeHtml(data.planned_raw) : "<em>Rest Day or no workout scheduled in Final Surge.</em>";
 
     let matchesHtml = "";
     if (data.matches && data.matches.length > 0) {
@@ -1840,29 +1840,29 @@ async function handleGenerateAiFeedback() {
   }
 }
 
-async function handleSheetSync() {
-  const btn = document.getElementById("syncSheetBtn");
+async function handleActivitySync() {
+  const btn = document.getElementById("syncActivitiesBtn");
   btn.disabled = true;
-  btn.innerHTML = "<span>🔄 Syncing Logs...</span>";
+  btn.innerHTML = "<span>🔄 Syncing...</span>";
 
   try {
-    const res = await apiFetch("/api/sheet/sync", {
+    const res = await apiFetch("/api/sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ count: 35 }),
     });
 
-    if (!res.ok) throw new Error("Google Sheets Sync failed");
+    if (!res.ok) throw new Error("Strava sync failed");
     const data = await res.json();
 
-    showToast(`✅ Successfully synced ${data.synced_activities} activities to Google Sheet!`, "success");
+    showToast(`✅ Synced ${data.synced_activities} activities from Strava!`, "success");
     await initApp();
   } catch (err) {
     console.error("Sync error:", err);
-    showToast("Google Sheets sync error: " + err.message, "error");
+    showToast("Strava sync error: " + err.message, "error");
   } finally {
     btn.disabled = false;
-    btn.innerHTML = "<span>📊 Sync Training Logs to Spreadsheet</span>";
+    btn.innerHTML = "<span>🔄 Sync Strava Activities</span>";
   }
 }
 
@@ -2290,7 +2290,7 @@ async function loadGarminWorkouts() {
   const listEl = document.getElementById("garminWorkoutsList");
   const statusEl = document.getElementById("garminStatusMsg");
   if (!listEl) return;
-  listEl.innerHTML = `<div style="text-align: center; padding: 25px; color: #94a3b8;">🔍 Reading coach plan from Google Sheet & parsing running & cycling workouts...</div>`;
+  listEl.innerHTML = `<div style="text-align: center; padding: 25px; color: #94a3b8;">🔍 Reading Final Surge plan & parsing running & cycling workouts...</div>`;
   if (statusEl) statusEl.textContent = "";
 
   try {

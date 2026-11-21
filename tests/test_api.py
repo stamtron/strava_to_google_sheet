@@ -177,16 +177,16 @@ def test_ai_coach_error_does_not_leak_exception_text(client, monkeypatch):
     assert "sk-live-123" not in resp.text
 
 
-def test_compliance_sheet_failure_is_a_clean_500(client, monkeypatch):
+def test_compliance_plan_failure_is_a_clean_500(client, monkeypatch):
     server._PLANNED_WORKOUT_CACHE.clear()
 
     def boom(_d):
-        raise RuntimeError("sheets quota")
+        raise RuntimeError("feed key abc123")
 
     monkeypatch.setattr(server, "get_planned_workout_for_date", boom)
     resp = client.get("/api/compliance", params={"target_date": "2026-08-10"})
     assert resp.status_code == 500
-    assert "sheets quota" not in resp.text
+    assert "abc123" not in resp.text
 
 
 def test_compliance_bad_date_is_400(client):
@@ -203,6 +203,16 @@ def test_gear_failure_is_a_clean_500(client, monkeypatch):
     resp = client.get("/api/gear")
     assert resp.status_code == 500
     assert "db locked" not in resp.text
+
+
+def test_sync_failure_is_a_clean_500(client, monkeypatch):
+    def boom(*_a, **_k):
+        raise RuntimeError("token secret xyz789")
+
+    monkeypatch.setattr(server, "get_access_token", boom)
+    resp = client.post("/api/sync", json={}, headers=CLIENT_HEADERS)
+    assert resp.status_code == 500
+    assert "xyz789" not in resp.text
 
 
 def test_history_status_failure_is_a_clean_500(client, monkeypatch):

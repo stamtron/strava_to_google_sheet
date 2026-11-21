@@ -48,19 +48,16 @@ cp .env.example .env
    ```
 5. On first sync or run, a browser window will open asking you to authorize StaminAI. Cached tokens are saved to `token.json` and refreshed automatically.
 
-### 2. Google Sheets API
-1. Navigate to the [Google Cloud Console](https://console.cloud.google.com).
-2. Create a new project (e.g., `StaminAI`) and enable the **Google Sheets API**.
-3. Go to **APIs & Services > Credentials**, click **Create Credentials > OAuth Client ID**.
-4. Choose **Desktop App** as the Application type.
-5. Download the credentials file and save it in the project root as `credentials.json`.
-6. Open your target Google Sheet in your browser and extract the Sheet ID from the URL:
-   `https://docs.google.com/spreadsheets/d/<GOOGLE_SHEET_ID>/edit`
-7. Add the ID to `.env`:
+### 2. Final Surge (Training Plan)
+Your Final Surge calendar is the plan source for compliance, Telegram briefs, the coach's `preview_next_workout` tool, and the Garmin workout push.
+1. In Final Surge, open **Settings → Calendar Sync** and copy your private iCal feed URL.
+2. Add it to `.env`:
    ```env
-   GOOGLE_SHEET_ID=your_spreadsheet_id_here
+   FINAL_SURGE_ICAL_URL=https://.../your-private-feed.ics
    ```
-8. The first time you run `--sheet`, a Google authentication flow will generate `gsheets_token.json`.
+   > [!IMPORTANT]
+   > The feed URL is a secret — anyone holding it can read your plan. Keep it in `.env` only and never commit or share it.
+3. Without it, plan lookups report "not configured" and the rest of the app keeps working.
 
 ### 3. Garmin Connect (24/7 Biometrics)
 1. Provide your Garmin Connect email and password in `.env`:
@@ -105,14 +102,11 @@ cp .env.example .env
 ### CLI Commands
 
 ```bash
-# Print recent Strava activities directly in your terminal
+# Fetch recent Strava activities (with details) into local SQLite and print them
 uv run python main.py
 
-# Sync Strava activities and Garmin biometrics to Google Sheets
-uv run python main.py --sheet
-
 # Fetch a custom number of recent activities (e.g. 50)
-uv run python main.py --sheet --count 50
+uv run python main.py --count 50
 
 # One-time full history backfill into local SQLite database
 uv run python main.py --backfill
@@ -123,6 +117,10 @@ uv run python main.py --backfill --no-resume
 # Dispatch daily briefings to Telegram manually
 uv run python main.py --telegram-next-day
 uv run python main.py --telegram-today
+
+# Preview / push this week's Final Surge run & bike workouts to Garmin Connect
+uv run python main.py --preview-workouts
+uv run python main.py --sync-workouts
 ```
 
 ### Web Dashboard & Server

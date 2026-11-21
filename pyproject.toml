@@ -7,9 +7,6 @@ requires-python = ">=3.11"
 dependencies = [
     "requests>=2.31.0",
     "python-dotenv>=1.0.0",
-    "google-api-python-client>=2.100.0",
-    "google-auth-httplib2>=0.1.1",
-    "google-auth-oauthlib>=1.1.0",
     "garminconnect>=0.3.2",
     "fastapi>=0.141.1",
     "uvicorn[standard]>=0.52.4",
@@ -39,7 +36,7 @@ line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "DTZ"]
-# E501: long Greek message strings and Sheets formulas exceed any sane line limit.
+# E501: long Greek message strings and coach prompts exceed any sane line limit.
 # E402: several modules deliberately import after logger setup / circular-import guards.
 # B905: zip(strict=True) would turn tolerated length mismatches into crashes.
 ignore = ["E501", "E402", "B905", "RUF001", "RUF002", "RUF003"]

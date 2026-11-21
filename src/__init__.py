@@ -1,3 +1,3 @@
 """
-Strava & Garmin to Google Sheet Package.
+StaminAI package: Strava, Garmin & Final Surge training analytics.
 """

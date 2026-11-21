@@ -1,7 +1,8 @@
 """
-Strava Training Log Fetcher & Google Sheets Sync CLI.
+StaminAI CLI.
 
-Entry point for terminal-based activity logging and Google Sheets synchronization.
+Entry point for terminal activity logging, Strava history sync, Telegram briefs
+and the Final Surge → Garmin workout push.
 """
 
 import argparse
@@ -16,7 +17,6 @@ from src.config import (
     TELEGRAM_POLL_TIMEOUT_SEC,
 )
 from src.formatting import corrected_distance_and_speed, format_duration, format_pace
-from src.integrations.sheets import write_to_sheet
 from src.integrations.strava import (
     StravaAuthRequired,
     StravaNetworkError,
@@ -117,9 +117,8 @@ def run_backfill(access_token: str, resume: bool = True) -> int:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Strava Training Log Fetcher & Google Sheets Sync")
+    parser = argparse.ArgumentParser(description="StaminAI: Strava, Garmin & Final Surge training CLI")
     parser.add_argument("--count", type=int, default=200, help="Number of activities to fetch")
-    parser.add_argument("--sheet", action="store_true", help="Sync activities to Google Sheets")
     parser.add_argument(
         "--backfill",
         action="store_true",
@@ -133,12 +132,12 @@ def main():
     parser.add_argument(
         "--telegram-today",
         action="store_true",
-        help="Read today's planned workout from Google Sheets, add Athens weather & tip, and send to Telegram",
+        help="Read today's planned workout from Final Surge, add Athens weather & tip, and send to Telegram",
     )
     parser.add_argument(
         "--telegram-next-day",
         action="store_true",
-        help="Read tomorrow's planned workout from Google Sheets, add Athens weather & tip, and send to Telegram",
+        help="Read tomorrow's planned workout from Final Surge, add Athens weather & tip, and send to Telegram",
     )
     parser.add_argument(
         "--telegram-weekly",
@@ -159,12 +158,12 @@ def main():
     parser.add_argument(
         "--sync-workouts",
         action="store_true",
-        help="Sync this week's running and cycling workouts from Google Sheets to Garmin Connect",
+        help="Sync this week's running and cycling workouts from Final Surge to Garmin Connect",
     )
     parser.add_argument(
         "--preview-workouts",
         action="store_true",
-        help="Preview detected running and cycling workouts from Google Sheets without uploading to Garmin",
+        help="Preview detected running and cycling workouts from Final Surge without uploading to Garmin",
     )
     parser.add_argument(
         "--week-offset",
@@ -177,20 +176,7 @@ def main():
         action="store_true",
         help="Preview actions without sending external notifications or writing data",
     )
-    parser.add_argument(
-        "--auth-sheets",
-        action="store_true",
-        help="Interactively authenticate or re-authorize Google Sheets and save token to gsheets_token.json",
-    )
     args = parser.parse_args()
-
-    # Google Sheets Authentication CLI
-    if args.auth_sheets:
-        from src.integrations.sheets import get_sheets_service
-        print("🔐 Authenticating with Google Sheets...")
-        get_sheets_service(interactive=True)
-        print("✅ Google Sheets authentication successful! Token saved to gsheets_token.json.")
-        return 0
 
     # Garmin Workout Sync & Preview CLI
     if args.preview_workouts or args.sync_workouts:
@@ -271,7 +257,7 @@ def main():
         return 0 if res.get("success") else 1
 
     # Telegram Workout Dispatcher
-    if args.telegram_today or args.telegram_next_day or (args.date and not args.sheet):
+    if args.telegram_today or args.telegram_next_day or args.date:
         from datetime import date, timedelta
 
         from src.integrations.telegram import build_daily_brief, send_telegram_message
@@ -335,7 +321,7 @@ def main():
             if getattr(details, "incomplete", False):
                 print(
                     f"  ⚠️  Detail fetch stopped early ({details.stop_reason}); "
-                    "activities without details will be skipped in the sheet. Re-run later to fill them in."
+                    "re-run later to fill them in."
                 )
 
             if conn is not None:
@@ -360,9 +346,6 @@ def main():
         return 1
 
     print_activities(activities, details)
-
-    if args.sheet:
-        write_to_sheet(activities, details)
 
     return 0
 

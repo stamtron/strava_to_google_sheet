@@ -246,7 +246,7 @@ def format_next_day_brief(
     elif lookup_error:
         lines.append("⚠️ *Πλάνο:* Δεν ήταν δυνατή η ανάγνωση του προγράμματος.")
         lines.append(f"_({lookup_error})_")
-        lines.append("Έλεγξε το Google Sheet πριν προπονηθείς.")
+        lines.append("Έλεγξε το Final Surge πριν προπονηθείς.")
     else:
         lines.append("🏋️‍♂️ *Πλάνο:* Rest Day / Ελεύθερη ημέρα ή δεν έχει καταχωρηθεί ακόμη.")
 
@@ -361,7 +361,7 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
             "• `/form` (ή `/tsb`) — Κατάσταση Φόρμας (CTL Fitness, ATL Fatigue, TSB Form)\n"
             "• `/weekly` — Εβδομαδιαία ανασκόπηση όγκου, ACWR, φόρμας & εξοπλισμού\n"
             "• `/compliance [YYYY-MM-DD]` — Αξιολόγηση εκτέλεσης προπόνησης vs πλάνο\n"
-            "• `/sync` — Συγχρονισμός Strava & Garmin στο Google Sheets\n"
+            "• `/sync` — Συγχρονισμός πρόσφατων δραστηριοτήτων Strava στο τοπικό ιστορικό\n"
             "• `/stats` — Εβδομαδιαίος όγκος προπόνησης & δείκτης ACWR\n"
             "• `/gear` — Χιλιόμετρα παπουτσιών & ποδηλάτων\n"
             "• `/coach <ερώτηση>` — Συνομιλία με τον conversational AI Coach\n"
@@ -569,9 +569,8 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
         except Exception as e:
             return f"❌ Σφάλμα αξιολόγησης συμμόρφωσης: `{e}`"
 
-    if cmd in ("/sync", "sync", "/sheets"):
+    if cmd in ("/sync", "sync"):
         try:
-            from src.integrations.sheets import write_to_sheet
             from src.integrations.strava import fetch_activities, fetch_details_for_activities, get_access_token
             from src.storage.activity_store import get_details, init_db, upsert_activities, upsert_details
 
@@ -589,8 +588,7 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
                     upsert_details(conn, details)
             finally:
                 conn.close()
-            write_to_sheet(summaries, details)
-            return f"✅ *Συγχρονισμός ολοκληρώθηκε!*\nΕνημερώθηκαν τα κελιά στο Google Sheets για τις τελευταίες {len(summaries)} δραστηριότητες."
+            return f"✅ *Συγχρονισμός ολοκληρώθηκε!*\nΑποθηκεύτηκαν οι τελευταίες {len(summaries)} δραστηριότητες στο τοπικό ιστορικό."
         except Exception as e:
             return f"❌ *Σφάλμα συγχρονισμού:* `{redact_token(e)}`"
 

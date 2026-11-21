@@ -751,7 +751,7 @@ def build_tools(
             return {"error": f"Failed to evaluate workout compliance: {e}"}
 
     def preview_next_workout(target_date: str = "") -> dict:
-        """Read coach's prescribed workout from Google Sheets with weather adjustments and recovery readiness.
+        """Read coach's prescribed workout from the Final Surge plan with weather adjustments and recovery readiness.
 
         Returns structured workout targets (warmup, intervals, paces, cooldown) enriched with
         Athens weather forecasts, thermal pace adjustments, and physiological readiness guidance.
@@ -790,7 +790,7 @@ def build_tools(
             return {
                 "target_date": t_date.isoformat(),
                 "workout_text": workout_text,
-                "sheet_read_status": "ok" if not w_info.get("reason") else w_info.get("reason"),
+                "plan_read_status": "ok" if not w_info.get("reason") else w_info.get("reason"),
                 "weather": day_weath,
                 "weather_pace_adjustment": weather_adj,
                 "readiness": readiness,

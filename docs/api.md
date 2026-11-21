@@ -40,7 +40,7 @@ Returns the run durability assessment, Foster monotony & strain, ramp rate, and 
 - **Response**: `{ risk_level, ramp_rate_pct, spacing, monotony, strain, signals, cross_training }`.
 
 ### `GET /api/compliance`
-Matches Google Sheets planned workouts against completed Strava telemetry for a specified date or the current week.
+Matches Final Surge planned workouts against completed Strava telemetry for a specified date or the current week.
 - **Parameters**: `target_date` (optional ISO string e.g. `2026-10-14`).
 - **Response**: `{ overall_score, days: [ { date, planned, actual, delta_km, pace_adherence, score } ] }`.
 
@@ -53,7 +53,7 @@ Returns aggregated equipment and shoe usage, cumulative mileage, threshold statu
 ## ⌚ Garmin Structured Workouts
 
 ### `GET /api/workouts/preview`
-Parses planned Greek training prescriptions from Google Sheets into structured Garmin workout steps without uploading.
+Parses planned Greek training prescriptions from the Final Surge plan into structured Garmin workout steps without uploading.
 - **Response**: `{ workouts: [ { date, sport, title, steps: [ ... ] } ] }`.
 
 ### `POST /api/workouts/sync`
@@ -100,15 +100,16 @@ Triggers a paginated historical backfill of the athlete's entire Strava history 
 - **Payload**: `{ resume?: boolean }`.
 - **Response**: `{ status: "started", message: string }`.
 
-### `POST /api/sheet/sync`
-Performs an on-demand sync of Strava activities and Garmin biometrics to Google Sheets.
-- **Response**: `{ status: "success", activities_synced: number, weeks_updated: [ string ] }`.
+### `POST /api/sync`
+Pulls recent Strava activities and their details into the JSON cache and the local SQLite history store.
+- **Payload**: `{ count?: number }` (default `200`).
+- **Response**: `{ status: "success", synced_activities: number }`.
 
 ### `GET /api/strava/webhook`
 Handles Strava webhook verification challenge handshake.
 
 ### `POST /api/strava/webhook`
-Ingests real-time activity creation and update events from Strava.
+Ingests real-time activity creation and update events from Strava and stores the activity in local history.
 
 ---
 

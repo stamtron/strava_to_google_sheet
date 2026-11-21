@@ -6,7 +6,7 @@ This file provides guidance and key instructions for Claude (and Claude Code CLI
 
 ## 📌 Project Overview
 
-**StaminAI** is an adaptive multi-sport endurance training platform that unifies workout telemetry from **Strava** and 24/7 health biometrics from **Garmin Connect** (Sleep, Resting Heart Rate, overnight HRV, Body Battery), formats and synchronizes them into a structured coaching spreadsheet in **Google Sheets**, and provides a modern **FastAPI + Chart.js** analytics web app with:
+**StaminAI** is an adaptive multi-sport endurance training platform that unifies workout telemetry from **Strava** and 24/7 health biometrics from **Garmin Connect** (Sleep, Resting Heart Rate, overnight HRV, Body Battery) with the athlete's **Final Surge** training plan (private iCal feed) and a local **SQLite** activity history, and provides a modern **FastAPI + Chart.js** analytics web app with:
 - **Banister Impulse-Response EWMA** model (CTL 42d, ATL 7d, TSB = CTL - ATL)
 - **Acute:Chronic Workload Ratio (ACWR)** and 80/20 polarized HR zones (Karvonen)
 - **Garmin Biometric Baselines** ($\mu \pm 0.75\sigma$) with autonomic fatigue anomaly detection
@@ -32,14 +32,13 @@ uv add <package>                           # Add new dependency
 uv run python server.py                    # Launch FastAPI web dashboard on http://127.0.0.1:8000
 
 # CLI Operations
-uv run python main.py                      # Print recent Strava activities in terminal
-uv run python main.py --sheet              # Sync Strava & Garmin to Google Sheets
+uv run python main.py                      # Fetch recent Strava activities into SQLite & print them
 uv run python main.py --backfill           # Full paginated Strava history backfill to SQLite
 uv run python main.py --telegram-next-day  # Dispatch tomorrow's briefing to Telegram
 uv run python main.py --telegram-weekly    # Dispatch weekly executive summary to Telegram
 
 # Testing & Code Quality
-uv run pytest                              # Run full test suite (460+ tests, offline)
+uv run pytest                              # Run full test suite (444 tests, offline)
 uv run pytest tests/test_metrics.py        # Run single test module
 uv run pytest -k "test_classify_tsb"       # Run specific test pattern
 uv run ruff check                          # Lint codebase (config in pyproject.toml)
@@ -62,7 +61,8 @@ strava_to_google_sheet/
 │   │   ├── strava_backfill.py    # Paginated full-history import + resume cursor
 │   │   ├── garmin.py             # Garmin Connect biometrics, sleep, HRV & baseline bands
 │   │   ├── garmin_workouts.py    # Structured workout generator & OTA watch sync
-│   │   ├── sheets.py             # Google Sheets API & dual-layout sync engine
+│   │   ├── final_surge.py        # Final Surge private iCal plan feed (fetch, cache, parse)
+│   │   ├── plan_source.py        # Single entry point for "what is planned on this day"
 │   │   ├── telegram.py           # Telegram dispatcher, daily/weekly briefs, interactive bot
 │   │   └── weather.py            # Open-Meteo Athens weather & disk cache
 │   ├── analytics/
@@ -84,8 +84,8 @@ strava_to_google_sheet/
 │   ├── index.html                # Dashboard + tabs + floating coach drawer
 │   ├── styles.css                # Glassmorphic dark design system
 │   └── app.js                    # Interaction logic, Chart.js instances, chat client
-├── tests/                        # Offline pytest suite (460+ unit tests)
-├── docs/                         # Modular documentation (setup, config, analytics, coach, api, sheets)
+├── tests/                        # Offline pytest suite (444 unit tests)
+├── docs/                         # Modular documentation (setup, config, analytics, coach, api)
 ├── main.py                       # CLI root entry point
 ├── server.py                     # Web server root entry point
 └── pyproject.toml                # Dependencies, project metadata (staminai)
@@ -117,7 +117,7 @@ strava_to_google_sheet/
 8. **Frontend Cache Busting Invariant**:
    Whenever `web/styles.css` or `web/app.js` is modified, the version query parameter in `web/index.html` (e.g. `styles.css?v=X.Y`, `app.js?v=X.Y`) must be bumped.
 9. **Offline Test Suite Integrity**:
-   Every test in `tests/` must run offline with synthetic mock fixtures. Never make live network requests to Strava, Garmin, Google Sheets, or Telegram inside pytest.
+   Every test in `tests/` must run offline with synthetic mock fixtures. Never make live network requests to Strava, Garmin, Final Surge, or Telegram inside pytest.
 10. **Athlete-Local Time**:
    Use `src/timeutil.today_local()` / `now_local()` (evaluated in `ATHLETE_TIMEZONE`), never `date.today()` / `datetime.now()`. Ruff's `DTZ` rules enforce this outside `tests/`.
 11. **API Security (CSRF & Webhooks)**:

@@ -1,8 +1,8 @@
 """
 Shared Duration, Pace, and Distance Formatting.
 
-Single source of truth for unit conversions used by the CLI, the Google Sheets
-writer, and the API. Sport-specific data corrections (swim distance divisor,
+Single source of truth for unit conversions used by the CLI, Telegram,
+the coach and the API. Sport-specific data corrections (swim distance divisor,
 indoor-trainer distance estimate) also live here so every consumer applies them
 identically.
 """

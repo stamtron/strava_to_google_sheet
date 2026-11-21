@@ -10,7 +10,7 @@ All settings in StaminAI are centralized in [`src/config.py`](../src/config.py) 
 | --- | --- | --- |
 | `STRAVA_CLIENT_ID` | — | Strava OAuth2 Application Client ID |
 | `STRAVA_CLIENT_SECRET` | — | Strava OAuth2 Application Client Secret |
-| `GOOGLE_SHEET_ID` | — | Google Sheet ID (from the spreadsheet URL); required for `--sheet` |
+| `FINAL_SURGE_ICAL_URL` | — | Private Final Surge iCal feed (Settings → Calendar Sync); the only plan source. **Secret.** Unset = plan lookups report "not configured" |
 | `GARMIN_EMAIL` | — | Garmin Connect login email address |
 | `GARMIN_PASSWORD` | — | Garmin Connect login password |
 | `GEMINI_API_KEY` | — | Google Gemini API key for AI Coach and workout parsing |
@@ -33,7 +33,7 @@ All settings in StaminAI are centralized in [`src/config.py`](../src/config.py) 
 | `STRAVA_REDIRECT_PORT` | `8123` | Local OAuth callback port; **must differ from `SERVER_PORT`** |
 | `STRAVA_DETAIL_DELAY_SEC` | `0.15` | Throttling delay (seconds) between per-activity detail requests |
 | `STRAVA_MAX_RETRIES` | `3` | Maximum retries on HTTP 429 rate limit responses |
-| `GSHEETS_MAX_RETRIES` | `3` | Maximum retries with exponential backoff on Google API quota errors |
+| `FINAL_SURGE_HTTP_TIMEOUT_SEC` | `15.0` | HTTP timeout (seconds) when fetching the Final Surge iCal feed |
 
 ---
 
@@ -44,6 +44,7 @@ All settings in StaminAI are centralized in [`src/config.py`](../src/config.py) 
 | `ACTIVITIES_CACHE_TTL` | `600` | Strava activity memory/JSON cache lifetime (seconds) |
 | `GARMIN_CACHE_TTL` | `21600` | In-progress Garmin week cache lifetime (6 hours; finished weeks are cached permanently) |
 | `WEATHER_CACHE_TTL` | `10800` | Open-Meteo weather forecast cache lifetime (3 hours) |
+| `FINAL_SURGE_CACHE_TTL` | `900` | Final Surge iCal feed disk cache lifetime (15 minutes) |
 | `STRAVA_BACKFILL_PAGE_SIZE` | `200` | Activities per backfill page (Strava's API cap) |
 | `STRAVA_BACKFILL_MAX_PAGES` | `100` | Maximum pages runaway guard during backfill |
 | `STRAVA_BACKFILL_PAGE_DELAY_SEC`| `0.5` | Pause between backfill pages to protect rate limits |
