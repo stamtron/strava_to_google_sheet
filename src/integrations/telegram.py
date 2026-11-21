@@ -32,12 +32,15 @@ from src.formatting import format_mmss
 from src.status_labels import (
     HEAT_IMPACT_LABELS,
     acwr_label,
+    acwr_window_suffix,
     compliance_summary,
     gear_display_name,
+    key_session_alert_lines,
     readiness_advice,
     tsb_label,
     weather_advice,
     weather_pace_range,
+    weekly_compliance_lines,
 )
 from src.timeutil import now_local, today_local
 
@@ -284,6 +287,7 @@ def format_next_day_brief(
 
         if readiness_info and readiness_info.get("needs_modulation"):
             lines.append(f"• {readiness_advice(readiness_info)}")
+        lines.extend(key_session_alert_lines(readiness_info))
 
     # Weather section
     if weather_info:
@@ -444,6 +448,7 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
 
             if rec.get("flags"):
                 lines.append(f"• ⚠️ Σημάδια κόπωσης: _{', '.join(rec['flags'])}_")
+            lines.extend(key_session_alert_lines(readiness))
 
             lines.append("━━━━━━━━━━━━━━━━━━━━")
             lines.append(f"💡 *Οδηγία Προπόνησης:*\n{readiness_advice(readiness)}")
@@ -653,7 +658,7 @@ def handle_telegram_command(command_text: str, chat_id: str | None = None) -> st
                 f"• 🏃 Τρέξιμο: *{run_km:.1f} km*\n"
                 f"• 🚴 Ποδηλασία: *{bike_km:.1f} km*\n"
                 f"• 🏊 Κολύμβηση: *{swim_m:.0f} m*\n"
-                f"• ⚡ ACWR Ratio: *{ratio_str}* ({zone_str})\n"
+                f"• ⚡ ACWR Ratio: *{ratio_str}* ({zone_str}){acwr_window_suffix(curr_acwr)}\n"
                 "━━━━━━━━━━━━━━━━━━━━"
             )
         except Exception:
@@ -860,6 +865,19 @@ def build_daily_brief(
     return brief_text, meta
 
 
+def _weekly_plan_compliance(monday: date, acts: list[dict]) -> dict | None:
+    """Plan vs actual for the week starting `monday`, or None if the plan feed failed."""
+    from src.analytics.compliance import evaluate_weekly_compliance, week_day_inputs
+    from src.integrations import plan_source
+
+    try:
+        plan_texts = plan_source.get_plan_texts_between(monday, monday + timedelta(days=6))
+    except Exception as e:
+        logger.warning("Weekly digest: plan unavailable: %s", redact_token(str(e)))
+        return None
+    return evaluate_weekly_compliance(week_day_inputs(monday, plan_texts, acts), today_local())
+
+
 def build_weekly_summary(week_key: str | None = None) -> tuple[str, dict]:
     """
     Generate an executive weekly training summary including:
@@ -954,9 +972,12 @@ def build_weekly_summary(week_key: str | None = None) -> tuple[str, dict]:
         lines.append(f"• 🏋️ Ενδυνάμωση: *{strength_s / 3600.0:.1f} ώρες*")
 
     lines.append("\n📈 *Φόρμα & Επιβάρυνση (Banister & ACWR):*")
-    lines.append(f"• ⚡ ACWR Ratio: *{acwr_str}* ({acwr_zone})")
+    lines.append(f"• ⚡ ACWR Ratio: *{acwr_str}* ({acwr_zone}){acwr_window_suffix(acwr)}")
     lines.append(f"• 🏋️ Fitness (CTL): *{ctl:.1f}* | ⚡ Fatigue (ATL): *{atl:.1f}*")
     lines.append(f"• 🎯 Form (TSB): *{tsb:+.1f}* — _{form_status}_")
+
+    plan_week = _weekly_plan_compliance(m_dt, acts)
+    lines.extend(weekly_compliance_lines(plan_week))
 
     if garmin_week:
         lines.append("\n🔋 *Βιομετρικά Garmin (Μέσοι Όροι):*")
@@ -988,6 +1009,7 @@ def build_weekly_summary(week_key: str | None = None) -> tuple[str, dict]:
         "atl": atl,
         "tsb": tsb,
         "acwr": ratio,
+        "plan_compliance": plan_week.get("weekly_score") if plan_week else None,
     }
     return text, meta
 

@@ -396,3 +396,65 @@ def test_polarized_empty_includes_by_sport():
     res = calculate_polarized_distribution([])
     assert res["classification"] == "unknown"
     assert set(res["by_sport"]) == {"run", "bike", "swim", "strength", "other"}
+
+
+# ACWR for the week in progress
+
+
+def _daily_runs(start: date, days: int, effort: float) -> list[dict]:
+    return [
+        _act((start + timedelta(days=i)).isoformat(), "Run", moving_time=3600 + i, suffer_score=effort)
+        for i in range(days)
+    ]
+
+
+def test_in_progress_week_is_scored_over_rolling_seven_days():
+    # Steady 10/day for five full weeks, then Mon–Wed of the current week.
+    start = date(2026, 10, 12)  # Monday
+    today = date(2026, 11, 18)  # Wednesday
+    acts = _daily_runs(start, (today - start).days + 1, 10.0)
+    weeks = process_activities_into_weeks(acts)
+    keys = sorted(weeks)
+    current = calculate_acwr(keys, weeks, today=today)["2026-11-16"]
+
+    assert current["in_progress"] is True
+    assert current["days_elapsed"] == 3
+    assert current["window"] == "rolling_7d"
+    # Calendar week: 30 vs 70 → reads "low" only because the week is unfinished.
+    assert current["calendar_ratio"] == pytest.approx(0.43)
+    # Rolling: last 7 days (70) vs four preceding 7-day blocks (70 each).
+    assert current["acute_effort"] == 70.0
+    assert current["chronic_effort"] == 70.0
+    assert current["acwr_ratio"] == 1.0
+    assert current["zone"] == "optimal"
+
+
+def test_completed_weeks_keep_calendar_scoring():
+    start = date(2026, 10, 12)
+    today = date(2026, 11, 18)
+    weeks = process_activities_into_weeks(_daily_runs(start, (today - start).days + 1, 10.0))
+    past = calculate_acwr(sorted(weeks), weeks, today=today)["2026-11-09"]
+    assert "in_progress" not in past
+    assert past["acwr_ratio"] == 1.0
+
+
+def test_rolling_acwr_respects_the_sport_filter():
+    start = date(2026, 10, 12)
+    today = date(2026, 11, 18)
+    acts = _daily_runs(start, (today - start).days + 1, 10.0)
+    # A big ride in the acute block must not move the run ACWR.
+    acts.append(_act("2026-11-17", "Ride", moving_time=7200, suffer_score=300.0))
+    weeks = process_activities_into_weeks(acts)
+    run = calculate_acwr(sorted(weeks), weeks, effort_key="run_relative_effort", today=today)["2026-11-16"]
+    total = calculate_acwr(sorted(weeks), weeks, today=today)["2026-11-16"]
+    assert run["acwr_ratio"] == 1.0
+    assert total["acwr_ratio"] > 1.5
+
+
+def test_in_progress_week_without_activity_lists_falls_back_to_calendar():
+    keys = ["2026-10-26", "2026-11-02", "2026-11-09", "2026-11-16"]
+    weeks = {k: {"total_relative_effort": 100.0} for k in keys}
+    current = calculate_acwr(keys, weeks, today=date(2026, 11, 18))["2026-11-16"]
+    assert current["in_progress"] is True
+    assert current["window"] == "calendar_week"
+    assert current["acwr_ratio"] == 1.0

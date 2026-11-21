@@ -106,6 +106,9 @@ WEATHER_CACHE_FILE = os.path.join(PROJECT_ROOT, ".weather_cache.json")
 FINAL_SURGE_ICAL_URL = os.getenv("FINAL_SURGE_ICAL_URL", "").strip()
 FINAL_SURGE_CACHE_TTL = _env_int("FINAL_SURGE_CACHE_TTL", 900)  # 15 min
 FINAL_SURGE_CACHE_FILE = str(PROJECT_ROOT / ".final_surge_cache.json")
+# The feed only publishes today onward, so every day it has shown is archived
+# here; past days keep their plan for compliance and the weekly digest.
+FINAL_SURGE_ARCHIVE_FILE = str(PROJECT_ROOT / ".final_surge_archive.json")
 
 # Athlete physiology — used by the TRIMP relative-effort estimate.
 HR_MAX = _env_int("HR_MAX", 185)
@@ -125,6 +128,10 @@ RUN_RAMP_SAFE_PCT = _env_float("RUN_RAMP_SAFE_PCT", 10.0)
 # Fraction of weekly run volume the longest run may occupy before it stops being
 # an endurance stimulus and starts being the week's main injury exposure.
 RUN_LONG_RUN_MAX_SHARE = _env_float("RUN_LONG_RUN_MAX_SHARE", 0.40)
+# A planned run counts as the "long run" (a key session) at or beyond either
+# threshold, or when the plan text labels it as one.
+LONG_RUN_MIN_KM = _env_float("LONG_RUN_MIN_KM", 15.0)
+LONG_RUN_MIN_MINUTES = _env_float("LONG_RUN_MIN_MINUTES", 90.0)
 # Non-running days per week that impact-sensitive athletes need for tissue
 # remodelling. Back-to-back run days are a stronger injury signal than volume.
 RUN_MIN_REST_DAYS = _env_int("RUN_MIN_REST_DAYS", 2)
@@ -414,6 +421,18 @@ WEATHER_WIND_BANDS = (
     (_env_float("WEATHER_WIND_BREEZY_KMH", 18.0), _env_float("WEATHER_WIND_BREEZY_PCT", 0.015)),
 )
 
+# Aerobic decoupling (Pa:HR) on long steady runs: efficiency (speed / HR) of the
+# second half vs the first. Runs qualify when long enough and steady — a per-km
+# pace coefficient of variation above MAX_PACE_CV means intervals or a
+# progression, where drift says nothing about aerobic durability.
+DECOUPLING_MIN_MINUTES = _env_float("DECOUPLING_MIN_MINUTES", 60.0)
+DECOUPLING_MAX_PACE_CV = _env_float("DECOUPLING_MAX_PACE_CV", 0.08)
+DECOUPLING_MIN_SPLIT_KM = _env_float("DECOUPLING_MIN_SPLIT_KM", 0.5)
+DECOUPLING_MIN_SPLITS = _env_int("DECOUPLING_MIN_SPLITS", 6)
+DECOUPLING_GOOD_PCT = _env_float("DECOUPLING_GOOD_PCT", 5.0)
+DECOUPLING_HIGH_PCT = _env_float("DECOUPLING_HIGH_PCT", 10.0)
+DECOUPLING_TREND_RUNS = _env_int("DECOUPLING_TREND_RUNS", 20)
+
 
 # --- API & coach tunables ---
 # Mutating /api routes (everything but GET and the webhooks) require this header.
@@ -439,6 +458,10 @@ COACH_EXTRACT_MAX_CHARS = _env_int("COACH_EXTRACT_MAX_CHARS", 20000)
 COACH_HEALTH_MAX_FETCH = _env_int("COACH_HEALTH_MAX_FETCH", 4)
 # Planned-workout reads are cached this long by /api/compliance.
 COMPLIANCE_PLAN_CACHE_TTL_SEC = _env_float("COMPLIANCE_PLAN_CACHE_TTL_SEC", 300.0)
+# Weeks of weekly compliance scores in the dashboard trend chart.
+COMPLIANCE_TREND_WEEKS = _env_int("COMPLIANCE_TREND_WEEKS", 8)
+# Activities read from the store when the hot cache is empty (covers the trend window).
+COMPLIANCE_ACTIVITY_LIMIT = _env_int("COMPLIANCE_ACTIVITY_LIMIT", 200)
 
 # Prediction baselines used when no qualifying activity exists.
 DEFAULT_5K_PACE_SEC_PER_KM = _env_float("DEFAULT_5K_PACE_SEC_PER_KM", 300.0)  # 5:00/km

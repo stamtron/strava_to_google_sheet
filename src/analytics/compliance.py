@@ -8,6 +8,7 @@ actual telemetry logged from Strava to calculate volume, pace, and execution fid
 from __future__ import annotations
 
 import re
+from datetime import date, timedelta
 from typing import Any
 
 from src.analytics.metrics import sport_group
@@ -311,3 +312,123 @@ def evaluate_daily_compliance(
         "matches": matches,
         "unmatched_actual": unmatched,
     }
+
+
+# Final Surge's session total line, e.g. "Planned: 9 km".
+PLANNED_TOTAL_RE = re.compile(r"planned:\s*\d", re.IGNORECASE)
+
+
+def evaluate_weekly_compliance(days: list[dict[str, Any]], today: date) -> dict[str, Any]:
+    """
+    Aggregate a Monday–Sunday week of plan vs actual.
+
+    `days` holds one entry per calendar day: {date, planned_text, activities}.
+    Days after `today` are "future" (plan shown, not scored). Today counts as
+    "pending" while a planned session simply hasn't been done yet, so the week
+    isn't marked down at breakfast. The weekly score is the mean daily score over
+    scored days that had a plan or training; empty unplanned days don't count.
+
+    Running km are compared plan vs actual (interval rep sets excluded from the
+    planned side, see below): planned over the scored days (so an
+    unfinished week compares like with like) and over the whole week; actual
+    counts every run, planned or not.
+    """
+    from src.analytics.session_type import REPS_RE, classify_planned_session
+
+    out_days = []
+    scores = []
+    planned_run_km_total = planned_run_km_to_date = actual_run_km = 0.0
+    sessions_planned = sessions_done = key_planned = key_done = 0
+
+    for day in sorted(days, key=lambda d: d["date"]):
+        d: date = day["date"]
+        text = day.get("planned_text") or ""
+        acts = day.get("activities") or []
+        result = evaluate_daily_compliance(text, acts)
+        session = classify_planned_session(text) if text.strip() else {"is_key": False, "intensity": "rest"}
+        matches = result.get("matches", [])
+
+        # A bare rep set ("6x800m") parses to one rep's distance and omits warm-up/
+        # cool-down, so it stays out of the km comparison unless Final Surge's
+        # "Planned: 9 km" session total is present.
+        day_planned_run_km = sum(
+            item["target_dist_km"] or 0 for item in parse_planned_workout(text)
+            if item["sport"] == "Run"
+            and (PLANNED_TOTAL_RE.search(item["description"]) or not REPS_RE.search(item["description"]))
+        )
+        day_actual_run_km = sum(
+            distance_and_speed(a)[0] / 1000.0 for a in acts
+            if sport_group(a.get("sport_type") or a.get("type", "")) == "run"
+        )
+        planned_run_km_total += day_planned_run_km
+
+        if d > today:
+            state = "future"
+        elif d == today and not acts and any(m.get("status") == "missed" for m in matches):
+            state = "pending"
+        else:
+            state = "scored"
+
+        executed = [m for m in matches if m.get("status") != "missed"]
+        if state == "scored":
+            planned_run_km_to_date += day_planned_run_km
+            actual_run_km += day_actual_run_km
+            if result.get("status") != "rest_or_empty":
+                scores.append(result["compliance_score"])
+            sessions_planned += len(matches)
+            sessions_done += len(executed)
+            if session["is_key"] and matches:
+                key_planned += 1
+                key_done += 1 if executed else 0
+
+        out_days.append({
+            "date": d.isoformat(),
+            "state": state,
+            "status": result.get("status"),
+            "compliance_score": result["compliance_score"] if state == "scored" else None,
+            "planned_run_km": round(day_planned_run_km, 2),
+            "actual_run_km": round(day_actual_run_km, 2),
+            "is_key": session["is_key"],
+            "intensity": session["intensity"],
+            "matches": matches,
+            "unmatched_actual": result.get("unmatched_actual", []),
+            "planned_raw": text,
+        })
+
+    has_plan = any((day.get("planned_text") or "").strip() for day in days)
+    monday = min(d["date"] for d in days) if days else today - timedelta(days=today.weekday())
+    sunday = monday + timedelta(days=6)
+    return {
+        "week_monday": monday.isoformat(),
+        "week_sunday": sunday.isoformat(),
+        "in_progress": monday <= today <= sunday,
+        # Without any plan on record there is nothing to comply with: unplanned
+        # training alone would otherwise read as a flat score.
+        "has_plan": has_plan,
+        "weekly_score": round(sum(scores) / len(scores)) if scores and has_plan else None,
+        "scored_days": len(scores),
+        "planned_run_km": round(planned_run_km_total, 1),
+        "planned_run_km_to_date": round(planned_run_km_to_date, 1),
+        "actual_run_km": round(actual_run_km, 1),
+        "sessions_planned": sessions_planned,
+        "sessions_done": sessions_done,
+        "key_sessions_planned": key_planned,
+        "key_sessions_done": key_done,
+        "days": out_days,
+    }
+
+
+def week_day_inputs(
+    week_monday: date,
+    plan_texts: dict[date, str],
+    activities: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Slice plan texts and activities into the 7 day entries evaluate_weekly_compliance takes."""
+    by_day: dict[str, list[dict[str, Any]]] = {}
+    for act in activities:
+        by_day.setdefault((act.get("start_date_local") or "")[:10], []).append(act)
+    days = []
+    for i in range(7):
+        d = week_monday + timedelta(days=i)
+        days.append({"date": d, "planned_text": plan_texts.get(d, ""), "activities": by_day.get(d.isoformat(), [])})
+    return days

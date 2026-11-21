@@ -316,6 +316,28 @@ def test_format_next_day_brief_with_recovery():
     assert "(low_sleep)" in brief
 
 
+def test_brief_flags_low_biometrics_on_key_session_for_coach():
+    recovery = {"available": True, "recovery_status": "adequate", "sleep_hours": 5.9}
+    readiness = {"needs_modulation": False, "key_session_alerts": ["hrv_below_baseline", "low_sleep"]}
+    brief = format_next_day_brief(
+        target_date=date(2026, 9, 1),
+        workout_text="Long run 24 km",
+        recovery_info=recovery,
+        readiness_info=readiness,
+    )
+    assert "Σημείωση για τον προπονητή" in brief
+    assert "HRV κάτω από το προσωπικό baseline, λίγος ύπνος" in brief
+    assert "όχι αλλαγή πλάνου" in brief
+
+    plain = format_next_day_brief(
+        target_date=date(2026, 9, 1),
+        workout_text="Long run 24 km",
+        recovery_info=recovery,
+        readiness_info={"needs_modulation": False, "key_session_alerts": []},
+    )
+    assert "Σημείωση για τον προπονητή" not in plain
+
+
 def test_handle_telegram_command_recovery(monkeypatch):
     import src.integrations.garmin as garmin_mod
     from src.integrations.telegram import handle_telegram_command
@@ -474,6 +496,36 @@ def test_build_weekly_summary(monkeypatch):
     assert "ΕΒΔΟΜΑΔΙΑΙΑ ΑΝΑΣΚΟΠΗΣΗ" in brief
     assert "10.0 km" in brief
     assert meta is not None
+    # No feed configured in tests: the digest still renders and says so.
+    assert "Το πλάνο Final Surge δεν ήταν διαθέσιμο" in brief
+
+
+def test_weekly_summary_includes_plan_vs_actual(monkeypatch):
+    from datetime import date
+
+    from src.integrations import plan_source
+    from src.integrations import telegram as tel_mod
+    from tests.conftest import make_activity
+
+    monkeypatch.setattr("src.storage.activity_store.get_activities", lambda conn, limit=250: [
+        make_activity(1, "2026-11-17", distance=8000.0),
+        make_activity(2, "2026-11-19", distance=10000.0),
+        make_activity(3, "2026-11-22", distance=20000.0),
+    ])
+    monkeypatch.setattr("src.storage.activity_store.get_details", lambda conn: {})
+    monkeypatch.setattr(tel_mod, "today_local", lambda: date(2026, 11, 22))
+    monkeypatch.setattr(plan_source, "get_plan_texts_between", lambda start, end: {
+        date(2026, 11, 17): "Τρέξιμο 10 χλμ",
+        date(2026, 11, 19): "Τρέξιμο: 5x1000m @ 4:00",
+        date(2026, 11, 21): "Τρέξιμο: 6x400m",
+        date(2026, 11, 22): "Τρέξιμο 20 χλμ χαλαρά",
+    })
+
+    brief, meta = tel_mod.build_weekly_summary()
+    assert "Πλάνο vs Εκτέλεση" in brief
+    assert "σχεδιασμένα *30.0 km* / έγιναν *38.0 km*" in brief
+    assert "Βασικές προπονήσεις: *2 / 3*" in brief  # Saturday's reps were skipped
+    assert meta["plan_compliance"] is not None
 
 
 

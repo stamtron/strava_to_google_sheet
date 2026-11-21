@@ -187,3 +187,100 @@ def test_other_sports_are_not_folded_into_a_planned_timed_run():
     res = evaluate_daily_compliance("Τρέξιμο 9χλμ", acts)
     assert res["matches"][0]["activity_count"] == 1
     assert res["unmatched_actual"] == ["Ride"]
+
+
+# Session classification
+
+
+def test_classifier_flags_intervals_and_long_runs_as_key():
+    from src.analytics.session_type import classify_planned_session
+
+    assert classify_planned_session("Τρέξιμο: 6x800m @ 4:10 με 90'' rest")["is_key"] is True
+    long_run = classify_planned_session("Τρέξιμο 18 χλμ χαλαρά")
+    assert long_run["is_long_run"] is True and long_run["intensity"] == "moderate"
+    assert classify_planned_session("Τρέξιμο 100' χαλαρό")["is_long_run"] is True
+    assert classify_planned_session("Τρέξιμο 8 χλμ χαλαρό")["is_key"] is False
+    assert classify_planned_session("Ρεπό")["intensity"] == "rest"
+    # A long ride is not the long run.
+    assert classify_planned_session("Ποδηλασία 40 χλμ")["is_long_run"] is False
+
+
+# Weekly compliance
+
+
+def _week(plan: dict[str, str], acts: list[dict], today: str):
+    from datetime import date
+
+    from src.analytics.compliance import evaluate_weekly_compliance, week_day_inputs
+
+    plan_texts = {date.fromisoformat(k): v for k, v in plan.items()}
+    return evaluate_weekly_compliance(
+        week_day_inputs(date(2026, 11, 16), plan_texts, acts), date.fromisoformat(today)
+    )
+
+
+def test_weekly_compliance_totals_km_and_key_sessions():
+    from tests.conftest import make_activity
+
+    plan = {
+        "2026-11-16": "Τρέξιμο 10 χλμ χαλαρό",
+        "2026-11-18": "Τρέξιμο: 6x800m @ 4:10",
+        "2026-11-20": "Ρεπό",
+        "2026-11-22": "Τρέξιμο 18 χλμ χαλαρά",
+    }
+    acts = [
+        make_activity(1, "2026-11-16", distance=9000.0),
+        make_activity(2, "2026-11-18", distance=8000.0),
+        make_activity(3, "2026-11-22", distance=18000.0),
+    ]
+    week = _week(plan, acts, today="2026-11-22")
+    assert week["planned_run_km"] == 28.0  # 10 + 18; the rep set has no honest total
+    assert week["actual_run_km"] == 35.0
+    assert week["key_sessions_planned"] == 2
+    assert week["key_sessions_done"] == 2
+    assert week["sessions_planned"] == 3 and week["sessions_done"] == 3
+    # Unplanned empty days don't count; the honoured rest day does.
+    assert week["scored_days"] == 4
+    assert week["in_progress"] is True
+    states = [d["state"] for d in week["days"]]
+    assert states == ["scored"] * 7
+
+
+def test_weekly_compliance_does_not_mark_down_today_or_future_days():
+    from tests.conftest import make_activity
+
+    plan = {
+        "2026-11-16": "Τρέξιμο 10 χλμ",
+        "2026-11-18": "Τρέξιμο 10 χλμ",  # today, not done yet
+        "2026-11-20": "Τρέξιμο 10 χλμ",  # future
+    }
+    week = _week(plan, [make_activity(1, "2026-11-16", distance=10000.0)], today="2026-11-18")
+    days = {d["date"]: d for d in week["days"]}
+    assert days["2026-11-18"]["state"] == "pending"
+    assert days["2026-11-20"]["state"] == "future"
+    assert days["2026-11-20"]["compliance_score"] is None
+    assert week["weekly_score"] == 100
+    assert week["planned_run_km_to_date"] == 10.0
+    assert week["planned_run_km"] == 30.0
+
+
+def test_weekly_compliance_counts_a_missed_key_session():
+    plan = {"2026-11-17": "Τρέξιμο: 5x1000m @ 4:00"}
+    week = _week(plan, [], today="2026-11-22")
+    assert week["key_sessions_planned"] == 1
+    assert week["key_sessions_done"] == 0
+    assert week["weekly_score"] == 0
+
+
+def test_weekly_km_trusts_final_surge_session_total_over_reps():
+    plan = {"2026-11-21": "Run\nWorkout: Run\n\nPlanned: 9 km\n\n3km προθέρμανση\n2x2000@42k(90'')\n5x200@5k(1')"}
+    assert _week(plan, [], today="2026-11-22")["planned_run_km"] == 9.0
+
+
+def test_week_without_any_plan_has_no_score():
+    from tests.conftest import make_activity
+
+    week = _week({}, [make_activity(1, "2026-11-17")], today="2026-11-22")
+    assert week["has_plan"] is False
+    assert week["weekly_score"] is None
+    assert week["actual_run_km"] == 10.0

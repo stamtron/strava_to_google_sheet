@@ -180,3 +180,33 @@ def test_garmin_week_splits_double_days_by_title_sport(feed, monkeypatch, tmp_pa
     # Days with only bare placeholders, or nothing at all, become rest.
     assert by_key[("2026-11-19", "rest")]["is_target"] is False
     assert by_key[("2026-11-22", "rest")]["raw_text"] == ""
+
+
+def test_plan_texts_between_reads_the_range_once(feed):
+    texts = plan_source.get_plan_texts_between(date(2026, 11, 16), date(2026, 11, 19))
+    assert list(texts) == [date(2026, 11, 18)]
+    assert "45 min easy" in texts[date(2026, 11, 18)]
+    both = plan_source.get_plan_texts_between(date(2026, 11, 16), date(2026, 11, 22))
+    assert "Swim" in both[date(2026, 11, 20)] and "Trainer Intervals" in both[date(2026, 11, 20)]
+    assert len(feed) == 1  # second call served from the cache
+
+
+def test_archive_keeps_past_days_after_they_leave_the_feed():
+    run = [{"uid": "a", "summary": "Run", "text": "Run 10 km"}]
+    bike = [{"uid": "b", "summary": "Bike", "text": "Bike 60'"}]
+    swim = [{"uid": "c", "summary": "Swim", "text": "Swim 2000m"}]
+
+    final_surge.merge_with_archive({date(2026, 11, 16): run, date(2026, 11, 18): bike, date(2026, 11, 19): swim})
+    # Two days later the feed starts on the 18th and the coach dropped the swim.
+    merged = final_surge.merge_with_archive({date(2026, 11, 18): bike})
+
+    assert merged == {date(2026, 11, 16): run, date(2026, 11, 18): bike}
+    with open(config.FINAL_SURGE_ARCHIVE_FILE) as f:
+        assert set(json.load(f)) == {"2026-11-16", "2026-11-18"}
+
+
+def test_unreadable_archive_falls_back_to_the_feed():
+    with open(config.FINAL_SURGE_ARCHIVE_FILE, "w") as f:
+        f.write("{not json")
+    run = [{"uid": "a", "summary": "Run", "text": "Run 10 km"}]
+    assert final_surge.merge_with_archive({date(2026, 11, 18): run}) == {date(2026, 11, 18): run}

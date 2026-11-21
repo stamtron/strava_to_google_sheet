@@ -33,6 +33,16 @@ ACWR_STATUS_LABELS = {
     "no_baseline": "No chronic baseline",
 }
 
+# Shown next to the ACWR of the week still in progress (`window` == "rolling_7d"):
+# its ratio covers the last 7 days, not the partial calendar week.
+ACWR_ROLLING_NOTE = "τελευταίες 7 ημέρες"
+
+
+def acwr_window_suffix(acwr: dict) -> str:
+    """Telegram suffix flagging an in-progress week scored over rolling 7 days."""
+    return f" _({ACWR_ROLLING_NOTE})_" if acwr.get("window") == "rolling_7d" else ""
+
+
 # --- Weather pacing — weather_pace.calculate_weather_pace_adjustment ---
 HEAT_IMPACT_LABELS = {
     "none": "None",
@@ -81,6 +91,15 @@ _READINESS_FLAGS_FALLBACK = {
     "poor_high_intensity": "χαμηλή ετοιμότητα",
     "compromised_high_intensity": "μη βέλτιστο HRV/ύπνος",
 }
+# --- Key-session biometric alerts — garmin.key_session_biometric_alerts ---
+# Greek; information to share with the coach, never a training prescription.
+KEY_SESSION_ALERT_LABELS = {
+    "hrv_below_baseline": "HRV κάτω από το προσωπικό baseline",
+    "low_sleep": "λίγος ύπνος",
+    "low_body_battery": "χαμηλό Body Battery",
+}
+KEY_SESSION_ALERT_HEADER = "📋 *Σημείωση για τον προπονητή (βασική προπόνηση):*"
+KEY_SESSION_ALERT_FOOTER = "_Πληροφορία για να τη μοιραστείς με τον προπονητή σου — όχι αλλαγή πλάνου._"
 SUBSTITUTE_NOTES = {
     "recovery_ride": "Χωρίς αντίσταση, 85-90 rpm cadence για μυϊκή ανακούφιση.",
     "reduce_intensity": "Reduce intensity by 10-15s/km or cut 1-2 intervals",
@@ -131,6 +150,18 @@ def readiness_advice(readiness: dict[str, Any]) -> str:
     template = READINESS_ADVICE_TEMPLATES.get(key, READINESS_ADVICE_TEMPLATES["normal"])
     flags = readiness.get("flags") or []
     return template.format(flags=", ".join(flags) if flags else _READINESS_FLAGS_FALLBACK.get(key, ""))
+
+
+def key_session_alert_lines(readiness: dict[str, Any] | None) -> list[str]:
+    """Brief block listing below-baseline biometrics on a key-session day ([] if none)."""
+    keys = [k for k in (readiness or {}).get("key_session_alerts") or [] if k in KEY_SESSION_ALERT_LABELS]
+    if not keys:
+        return []
+    return [
+        f"\n{KEY_SESSION_ALERT_HEADER}",
+        "• " + ", ".join(KEY_SESSION_ALERT_LABELS[k] for k in keys),
+        KEY_SESSION_ALERT_FOOTER,
+    ]
 
 
 def biometric_description(evaluation: dict[str, Any], metric_type: str) -> str:
@@ -190,3 +221,30 @@ def compliance_summary(result: dict[str, Any]) -> str:
         elif m.get("status") == "missed":
             parts.append(f"{sport}: Session was not completed.")
     return " ".join(parts) or "Workout evaluated."
+
+
+WEEKLY_PLAN_UNAVAILABLE = "• ⚠️ Το πλάνο Final Surge δεν ήταν διαθέσιμο."
+WEEKLY_PLAN_NONE = "• Δεν υπάρχει καταγεγραμμένο πλάνο για αυτή την εβδομάδα."
+
+
+def weekly_compliance_lines(week: dict[str, Any] | None) -> list[str]:
+    """Greek "plan vs actual" block for the weekly digest (compliance.evaluate_weekly_compliance)."""
+    lines = ["\n🎯 *Πλάνο vs Εκτέλεση:*"]
+    if week is None:
+        return [*lines, WEEKLY_PLAN_UNAVAILABLE]
+    if not week.get("has_plan"):
+        return [*lines, WEEKLY_PLAN_NONE]
+
+    planned_km = week["planned_run_km_to_date"] if week.get("in_progress") else week["planned_run_km"]
+    to_date = " _(έως σήμερα)_" if week.get("in_progress") else ""
+    if planned_km or week.get("actual_run_km"):
+        lines.append(
+            f"• 🏃 Τρέξιμο: σχεδιασμένα *{planned_km:.1f} km* / έγιναν *{week['actual_run_km']:.1f} km*{to_date}"
+        )
+    if week.get("key_sessions_planned"):
+        lines.append(f"• ⭐ Βασικές προπονήσεις: *{week['key_sessions_done']} / {week['key_sessions_planned']}*")
+    sessions = f"• ✅ Προπονήσεις: *{week['sessions_done']} / {week['sessions_planned']}*"
+    if week.get("weekly_score") is not None:
+        sessions += f" | Συνέπεια: *{week['weekly_score']}%*"
+    lines.append(sessions)
+    return lines

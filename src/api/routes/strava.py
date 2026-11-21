@@ -63,7 +63,7 @@ def _process_strava_webhook_activity(object_id: int) -> None:
     """Fetch activity details and persist them in a background worker."""
     try:
         token = get_access_token(interactive=False)
-        detail = fetch_activity_detail(int(object_id), token)
+        detail = fetch_activity_detail(token, int(object_id))
         if detail:
             write_history([detail], {int(object_id): detail})
             cache = load_cache()

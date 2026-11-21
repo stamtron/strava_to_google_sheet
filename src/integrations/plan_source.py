@@ -15,3 +15,9 @@ def get_planned_workout_for_date(target_date: date) -> dict[str, Any]:
     from src.integrations import final_surge
 
     return final_surge.get_planned_workout_for_date(target_date)
+
+
+def get_plan_texts_between(start: date, end: date) -> dict[date, str]:
+    from src.integrations import final_surge
+
+    return final_surge.get_plan_texts_between(start, end)

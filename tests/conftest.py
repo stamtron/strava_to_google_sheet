@@ -12,6 +12,12 @@ def _no_final_surge(monkeypatch):
     monkeypatch.setattr(config, "FINAL_SURGE_ICAL_URL", "")
 
 
+@pytest.fixture(autouse=True)
+def _isolated_plan_archive(monkeypatch, tmp_path):
+    """Keep the Final Surge plan archive out of the real project directory."""
+    monkeypatch.setattr(config, "FINAL_SURGE_ARCHIVE_FILE", str(tmp_path / "fs_archive.json"))
+
+
 def make_activity(act_id: int, date: str, sport: str = "Run", **extra) -> dict:
     """A Strava summary with just the fields the store and analytics read."""
     act = {

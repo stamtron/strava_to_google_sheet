@@ -6,13 +6,12 @@ import json
 import logging
 import math
 import os
-import re
 import time
-import unicodedata
 from datetime import date, timedelta
 
 from garminconnect import Garmin, GarminConnectAuthenticationError
 
+from src.analytics.session_type import classify_planned_session
 from src.config import (
     BASELINE_LOW_FLOOR,
     BASELINE_MIN_WEEKS,
@@ -671,35 +670,27 @@ def get_daily_recovery_metrics(target_date: date, client: Garmin | None = None) 
     return res
 
 
-def _fold_accents(text: str) -> str:
-    """Lowercase and strip combining accents so 'Ξεκούραση' matches 'ξεκουραση'."""
-    decomposed = unicodedata.normalize("NFD", text.lower())
-    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+_KEY_SESSION_ALERT_FLAGS = {
+    "hrv_below_baseline": ("depressed_hrv",),
+    "low_sleep": ("critically_low_sleep", "low_sleep"),
+    "low_body_battery": ("depleted_body_battery", "moderate_body_battery"),
+}
 
 
-# Whole-word rest markers: substring matching made "90'' rest" between intervals,
-# "interest" or "offroad" read as a rest day.
-_REST_DAY_RE = re.compile(r"\b(?:rest|off|ξεκουραση|ρεπο)\b")
-# Rep notation such as "6x400m" / "4 × 8'".
-_REPS_RE = re.compile(r"\d\s*[x×]\s*\d")
-_HIGH_INTENSITY_KEYWORDS = (
-    "διαλειμματικη",
-    "διαλειμματα",
-    "tempo",
-    "κατωφλι",
-    "threshold",
-    "vo2",
-    "strides",
-    "ανοιγματα",
-    "repeat",
-    "1000m",
-    "400m",
-    "800m",
-    "2000m",
-    "z4",
-    "z5",
-    "interval",
-)
+def key_session_biometric_alerts(recovery: dict, is_key_session: bool) -> list[str]:
+    """
+    Status keys for the biometrics below baseline on a key-session day.
+
+    Information for the athlete to pass on to their coach, not a prescription:
+    the keys only say *what* is low (`hrv_below_baseline`, `low_sleep`,
+    `low_body_battery`); rendering lives in src/status_labels.
+    """
+    if not is_key_session or not recovery or not recovery.get("available", True):
+        return []
+    flags = set(recovery.get("flags") or [])
+    if (recovery.get("hrv_baseline_eval") or {}).get("status") == "low":
+        flags.add("depressed_hrv")
+    return [key for key, sources in _KEY_SESSION_ALERT_FLAGS.items() if flags.intersection(sources)]
 
 
 def assess_workout_readiness(recovery: dict, workout_text: str = "") -> dict:
@@ -715,17 +706,9 @@ def assess_workout_readiness(recovery: dict, workout_text: str = "") -> dict:
     score = recovery.get("recovery_score", RECOVERY_UNKNOWN_SCORE)
     flags = recovery.get("flags", [])
 
-    clean_text = _fold_accents(workout_text or "")
-
-    # Detect intensity first: a structured session that mentions rest between
-    # reps (e.g. "6x400m, 90'' rest") is not a rest day.
-    is_high_intensity = (
-        any(k in clean_text for k in _HIGH_INTENSITY_KEYWORDS)
-        or bool(_REPS_RE.search(clean_text))
-        or any(p in clean_text for p in ("@ 3:", "@ 4:", "@ 3,", "@ 4,"))
-    )
-    is_structured = is_high_intensity or "@" in clean_text
-    is_rest = not clean_text.strip() or (not is_structured and bool(_REST_DAY_RE.search(clean_text)))
+    session = classify_planned_session(workout_text)
+    is_high_intensity = session["intensity"] == "high"
+    is_rest = session["intensity"] == "rest"
 
     needs_modulation = False
     advice_key = "normal"
@@ -760,7 +743,10 @@ def assess_workout_readiness(recovery: dict, workout_text: str = "") -> dict:
         "recovery_status": status,
         "recovery_score": score,
         "flags": flags,
-        "workout_detected_intensity": "high" if is_high_intensity else ("rest" if is_rest else "moderate"),
+        "workout_detected_intensity": session["intensity"],
+        "is_key_session": session["is_key"],
+        "is_long_run": session["is_long_run"],
+        "key_session_alerts": key_session_biometric_alerts(recovery, session["is_key"]),
         "needs_modulation": needs_modulation,
         "advice_key": advice_key,
         "substitute_option": substitute_option,

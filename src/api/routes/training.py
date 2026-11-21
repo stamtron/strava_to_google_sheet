@@ -2,15 +2,15 @@
 
 import logging
 import time
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from src.api.activity_data import load_cache
+from src.api.activity_data import load_cache, read_history
 from src.api.deps import internal_error
-from src.config import COMPLIANCE_PLAN_CACHE_TTL_SEC
-from src.integrations.plan_source import get_planned_workout_for_date
+from src.config import COMPLIANCE_ACTIVITY_LIMIT, COMPLIANCE_PLAN_CACHE_TTL_SEC, COMPLIANCE_TREND_WEEKS
+from src.integrations.plan_source import get_plan_texts_between, get_planned_workout_for_date
 from src.storage.activity_store import get_activities as store_get_activities
 from src.storage.activity_store import get_details, init_db
 from src.timeutil import today_local
@@ -71,6 +71,52 @@ def _evaluate_compliance(d: date, target_date: str) -> dict:
     result["date"] = target_date
     result["planned_raw"] = planned_text
     return result
+
+
+@router.get("/api/compliance/weekly")
+def get_weekly_compliance(
+    week_offset: int = Query(0, le=0, ge=-52),
+    weeks: int = Query(COMPLIANCE_TREND_WEEKS, ge=1, le=26),
+):
+    """Plan vs actual for one Monday–Sunday week, plus a weekly-score trend."""
+    try:
+        return _weekly_compliance(week_offset, weeks)
+    except Exception as e:
+        logger.exception("Weekly compliance failed")
+        raise HTTPException(status_code=500, detail="Weekly compliance evaluation failed.") from e
+
+
+def _weekly_compliance(week_offset: int, trend_weeks: int) -> dict:
+    from src.analytics.compliance import evaluate_weekly_compliance, week_day_inputs
+
+    today = today_local()
+    target_monday = today - timedelta(days=today.weekday()) + timedelta(weeks=week_offset)
+    first_monday = target_monday - timedelta(weeks=trend_weeks - 1)
+    plan_texts = get_plan_texts_between(first_monday, target_monday + timedelta(days=6))
+
+    activities = _recent_activities()
+    trend = []
+    week = None
+    for k in range(trend_weeks):
+        monday = first_monday + timedelta(weeks=k)
+        result = evaluate_weekly_compliance(week_day_inputs(monday, plan_texts, activities), today)
+        trend.append({
+            key: result[key]
+            for key in (
+                "week_monday", "week_sunday", "in_progress", "has_plan", "weekly_score",
+                "planned_run_km", "actual_run_km", "key_sessions_planned", "key_sessions_done",
+            )
+        })
+        week = result
+    return {"week": week, "trend": trend}
+
+
+def _recent_activities() -> list[dict]:
+    """History store first (the hot cache may hold only the last few weeks), merged with the cache."""
+    stored, _ = read_history(COMPLIANCE_ACTIVITY_LIMIT)
+    merged = {a.get("id"): a for a in stored}
+    merged.update({a.get("id"): a for a in load_cache().get("activities", [])})
+    return list(merged.values())
 
 
 @router.get("/api/gear")

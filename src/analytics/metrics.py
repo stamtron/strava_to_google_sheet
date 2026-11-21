@@ -261,10 +261,53 @@ def _acwr_zone(ratio: float) -> str:
     return ACWR_ZONES[-1][1]
 
 
+def _activity_date(act: dict) -> date | None:
+    try:
+        return datetime.fromisoformat(act.get("start_date_local", "")).date()
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def _rolling_acwr(weeks_dict: dict, effort_key: str, today: date, first_monday: date) -> dict | None:
+    """
+    ACWR over rolling 7-day blocks ending `today`, for the week still in progress.
+
+    A calendar week scored on Wednesday only holds three days of load against a
+    baseline of full weeks, so it always reads "low". Scoring the last 7 days
+    against the ACWR_CHRONIC_WEEKS 7-day blocks *before* them keeps the windows
+    the same length. The acute block stays excluded from the chronic baseline,
+    and empty days count as zero. Returns None when the weeks carry no
+    activity lists to rescore (e.g. pre-aggregated input).
+    """
+    group = next((g for g, k in EFFORT_KEYS.items() if k == effort_key), None)
+    daily: dict[date, float] = {}
+    have_activities = False
+    for week in weeks_dict.values():
+        for act in week.get("activities") or []:
+            have_activities = True
+            if group and sport_group(act.get("sport_type") or act.get("type", "")) != group:
+                continue
+            d = _activity_date(act)
+            if d is not None:
+                daily[d] = daily.get(d, 0.0) + calculate_relative_effort(act)
+    if not have_activities:
+        return None
+
+    def block(end: date) -> float:
+        return sum(daily.get(end - timedelta(days=i), 0.0) for i in range(7))
+
+    acute_start = today - timedelta(days=6)
+    history_blocks = max(0, (acute_start - first_monday).days // 7)
+    lookback = min(ACWR_CHRONIC_WEEKS, history_blocks)
+    prior = [block(today - timedelta(weeks=k)) for k in range(lookback, 0, -1)]
+    return {"acute": block(today), "prior": prior}
+
+
 def calculate_acwr(
     sorted_week_keys: list[str],
     weeks_dict: dict,
     effort_key: str = "total_relative_effort",
+    today: date | None = None,
 ) -> dict[str, dict]:
     """
     Calculate the Acute:Chronic Workload Ratio (ACWR) for each week.
@@ -285,11 +328,18 @@ def calculate_acwr(
     `effort_key` selects which week field to score. It defaults to the aggregate,
     but passing e.g. "run_relative_effort" yields per-sport ACWR — the aggregate
     can sit in the optimal zone while one discipline spikes underneath it.
+
+    The week containing `today` (default: athlete-local today) is unfinished, so
+    it is scored over rolling 7-day blocks instead (see `_rolling_acwr`) and
+    flagged `in_progress` with `days_elapsed`; `calendar_ratio` keeps the
+    partial calendar-week figure for reference.
     """
     acwr_by_week = {}
     if not sorted_week_keys:
         return acwr_by_week
 
+    today = today or today_local()
+    current_monday = today - timedelta(days=today.weekday())
     first_monday = min(date.fromisoformat(k) for k in (weeks_dict.keys() or sorted_week_keys))
 
     for w_key in sorted_week_keys:
@@ -301,6 +351,20 @@ def calculate_acwr(
         chronic_weeks = preceding_weeks[-ACWR_CHRONIC_WEEKS:]
         prior_efforts = [weeks_dict.get(k, {}).get(effort_key, 0.0) for k in chronic_weeks]
 
+        extra = {}
+        if monday == current_monday:
+            calendar_chronic = sum(prior_efforts) / len(prior_efforts) if prior_efforts else 0.0
+            extra = {
+                "in_progress": True,
+                "days_elapsed": today.weekday() + 1,
+                "window": "calendar_week",
+                "calendar_ratio": round(current_effort / calendar_chronic, 2) if calendar_chronic > 0 else None,
+            }
+            rolling = _rolling_acwr(weeks_dict, effort_key, today, first_monday)
+            if rolling is not None:
+                current_effort, prior_efforts = rolling["acute"], rolling["prior"]
+                extra["window"] = "rolling_7d"
+
         if len(prior_efforts) < ACWR_MIN_CHRONIC_WEEKS:
             acwr_by_week[w_key] = {
                 "acute_effort": round(current_effort, 1),
@@ -309,6 +373,7 @@ def calculate_acwr(
                 "chronic_weeks": len(prior_efforts),
                 "status": "insufficient_history",
                 "zone": "unknown",
+                **extra,
             }
             continue
 
@@ -321,6 +386,7 @@ def calculate_acwr(
                 "chronic_weeks": len(prior_efforts),
                 "status": "no_baseline",
                 "zone": "unknown",
+                **extra,
             }
             continue
 
@@ -333,6 +399,7 @@ def calculate_acwr(
             "chronic_weeks": len(prior_efforts),
             "status": zone,
             "zone": zone,
+            **extra,
         }
 
     return acwr_by_week

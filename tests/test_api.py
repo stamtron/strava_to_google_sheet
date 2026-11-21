@@ -270,3 +270,66 @@ def test_history_status_failure_is_a_clean_500(client, monkeypatch):
     resp = client.get("/api/history/status")
     assert resp.status_code == 500
     assert "disk full" not in resp.text
+
+
+def test_weekly_compliance_endpoint_returns_week_and_trend(client, monkeypatch):
+    from datetime import date
+
+    monkeypatch.setattr(training_routes, "today_local", lambda: date(2026, 8, 12))
+    monkeypatch.setattr(
+        training_routes, "get_plan_texts_between",
+        lambda start, end: {date(2026, 8, 10): "Τρέξιμο 10 χλμ"},
+    )
+    monkeypatch.setattr(training_routes, "read_history", lambda count: ([make_activity(1, "2026-08-10")], {}))
+    monkeypatch.setattr(training_routes, "load_cache", lambda: {"activities": [], "details": {}})
+
+    resp = client.get("/api/compliance/weekly", params={"weeks": 3})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert [t["week_monday"] for t in body["trend"]] == ["2026-07-27", "2026-08-03", "2026-08-10"]
+    assert body["week"]["week_monday"] == "2026-08-10"
+    assert body["week"]["actual_run_km"] == 10.0
+    assert body["week"]["weekly_score"] == 100
+
+
+def test_weekly_compliance_plan_failure_is_a_clean_500(client, monkeypatch):
+    def boom(*_a):
+        raise RuntimeError("secret feed url")
+
+    monkeypatch.setattr(training_routes, "get_plan_texts_between", boom)
+    resp = client.get("/api/compliance/weekly")
+    assert resp.status_code == 500
+    assert "secret" not in resp.text
+
+
+def test_strava_webhook_worker_passes_token_then_activity_id(monkeypatch):
+    import src.api.routes.strava as strava_routes
+
+    calls = []
+    monkeypatch.setattr(strava_routes, "get_access_token", lambda interactive=False: "tok")
+    monkeypatch.setattr(strava_routes, "fetch_activity_detail", lambda t, i: calls.append((t, i)) or {})
+    strava_routes._process_strava_webhook_activity(12345)
+    assert calls == [("tok", 12345)]
+
+
+def test_decoupling_endpoint_merges_cached_and_stored_details(client, monkeypatch):
+    splits = [{"distance": 1000.0, "moving_time": 300, "average_heartrate": 140} for _ in range(14)]
+    acts = [
+        {"id": 1, "sport_type": "Run", "moving_time": 4200, "distance": 14000, "start_date_local": "2026-11-08T08:00:00"},
+        {"id": 2, "sport_type": "Run", "moving_time": 4200, "distance": 14000, "start_date_local": "2026-11-15T08:00:00"},
+    ]
+    monkeypatch.setattr(dashboard_routes, "get_summaries", lambda count: (acts, {"2": {"splits_metric": splits}}))
+    monkeypatch.setattr(dashboard_routes, "read_history", lambda count: ([], {"1": {"splits_metric": splits}}))
+    body = client.get("/api/decoupling").json()
+    assert [r["id"] for r in body["runs"]] == [1, 2]
+    assert body["recent_status"] == "good"
+
+
+def test_decoupling_endpoint_hides_internal_errors(client, monkeypatch):
+    def boom(count):
+        raise RuntimeError("secret path /x")
+
+    monkeypatch.setattr(dashboard_routes, "get_summaries", boom)
+    resp = client.get("/api/decoupling")
+    assert resp.status_code == 500
+    assert "secret" not in resp.text

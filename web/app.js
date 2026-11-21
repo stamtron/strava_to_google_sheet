@@ -44,6 +44,38 @@ function themedGridColor() {
   return overlayColor(0.05);
 }
 
+// Chart palette read from the CSS theme tokens so both themes stay legible.
+// Refreshed by applyTheme; datasets read it through scriptable options, and
+// Chart.defaults.color (ticks, legends) is re-resolved on chart.update().
+const THEME_TOKEN_VARS = {
+  textSecondary: "--text-secondary",
+  textMuted: "--text-muted",
+  emerald: "--accent-emerald",
+  amber: "--accent-amber",
+  orange: "--accent-orange",
+  cyan: "--accent-cyan",
+  blue: "--accent-blue",
+  purple: "--accent-purple",
+  pink: "--accent-pink",
+  red: "--accent-red",
+};
+const tok = {};
+
+function refreshThemeTokens() {
+  const cs = getComputedStyle(document.documentElement);
+  for (const [key, cssVar] of Object.entries(THEME_TOKEN_VARS)) {
+    tok[key] = cs.getPropertyValue(cssVar).trim();
+  }
+  if (window.Chart) Chart.defaults.color = tok.textSecondary;
+}
+
+// "#rrggbb" token + alpha → rgba(), for translucent fills that follow the theme.
+function tokAlpha(key, alpha) {
+  const hex = (tok[key] || "#888888").replace("#", "");
+  const [r, g, b] = [0, 2, 4].map(i => parseInt(hex.slice(i, i + 2), 16));
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 function currentTheme() {
   return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
 }
@@ -52,6 +84,7 @@ function applyTheme(theme) {
   if (theme === "light") document.documentElement.setAttribute("data-theme", "light");
   else document.documentElement.removeAttribute("data-theme");
   overlayRgb = getComputedStyle(document.documentElement).getPropertyValue("--overlay-rgb").trim() || "255, 255, 255";
+  refreshThemeTokens();
 
   const btn = document.getElementById("themeToggleBtn");
   if (btn) {
@@ -101,7 +134,8 @@ function getProgressionTooltipTitle(items) {
   if (item && item.week_monday && item.week_sunday) {
     const mStr = formatDateDMY(item.week_monday);
     const sStr = formatDateDMY(item.week_sunday);
-    return `Week: Mon ${mStr} – Sun ${sStr}`;
+    const note = item.acwr?.window === "rolling_7d" ? " (in progress · ACWR over last 7 days)" : "";
+    return `Week: Mon ${mStr} – Sun ${sStr}${note}`;
   }
   return items[0].label;
 }
@@ -130,21 +164,26 @@ const TSB_STATUS_LABELS = {
   high_fatigue: "High Fatigue / Overreaching Risk",
 };
 
+// Colours are CSS custom properties, so badges follow the light/dark theme
+// without re-rendering. `border` is the same hue mixed toward transparent.
+const themeMix = (cssVar, pct) => `color-mix(in srgb, var(${cssVar}) ${pct}%, transparent)`;
+const themeStyle = (cssVar, borderPct) => ({ color: `var(${cssVar})`, border: themeMix(cssVar, borderPct) });
+
 const ACWR_ZONE_STYLES = {
-  low: { color: "#38bdf8", border: "rgba(56, 189, 248, 0.3)" },
-  optimal: { color: "#10b981", border: "rgba(16, 185, 129, 0.3)" },
-  overreaching: { color: "#f59e0b", border: "rgba(245, 158, 11, 0.3)" },
-  spike: { color: "#ef4444", border: "rgba(239, 68, 68, 0.3)" },
-  unknown: { color: "#94a3b8", border: "rgba(148, 163, 184, 0.3)" },
+  low: themeStyle("--accent-blue", 30),
+  optimal: themeStyle("--accent-emerald", 30),
+  overreaching: themeStyle("--accent-amber", 30),
+  spike: themeStyle("--accent-red", 30),
+  unknown: themeStyle("--text-secondary", 30),
 };
 
 // Presentation for the severities and risk levels emitted by /api/durability.
 // Same split as above: the analytics layer names the state, this file colours it.
 const SEVERITY_STYLES = {
-  none: { color: "#10b981", border: "rgba(16, 185, 129, 0.5)" },
-  caution: { color: "#f59e0b", border: "rgba(245, 158, 11, 0.5)" },
-  high: { color: "#ef4444", border: "rgba(239, 68, 68, 0.5)" },
-  unknown: { color: "#94a3b8", border: "rgba(148, 163, 184, 0.4)" },
+  none: themeStyle("--accent-emerald", 50),
+  caution: themeStyle("--accent-amber", 50),
+  high: themeStyle("--accent-red", 50),
+  unknown: themeStyle("--text-secondary", 40),
 };
 
 const RISK_STYLES = {
@@ -227,6 +266,8 @@ async function initApp() {
 
   // Load workout plan compliance
   loadCompliance();
+  loadWeeklyCompliance();
+  loadDecoupling();
 }
 
 function setupEventListeners() {
@@ -307,6 +348,13 @@ function setupEventListeners() {
       const picker = document.getElementById("complianceDatePicker");
       if (picker) picker.value = todayStr;
       loadCompliance(todayStr);
+    });
+  }
+
+  const weekNav = { weekCompPrevBtn: -1, weekCompNextBtn: 1, weekCompThisBtn: null };
+  for (const [id, step] of Object.entries(weekNav)) {
+    document.getElementById(id)?.addEventListener("click", () => {
+      loadWeeklyCompliance(step === null ? 0 : Math.min(0, weeklyComplianceOffset + step));
     });
   }
 
@@ -661,7 +709,11 @@ function renderMetricCards(week, garmin) {
   const acwr = week.acwr || {};
   const acwrBadge = document.getElementById("metricAcwrBadge");
   if (acwr.acwr_ratio) {
-    acwrBadge.textContent = `ACWR: ${acwr.acwr_ratio} (${ACWR_STATUS_LABELS[acwr.status] || 'Active'})`;
+    const windowNote = acwr.window === "rolling_7d" ? " · last 7 days" : "";
+    acwrBadge.textContent = `ACWR: ${acwr.acwr_ratio} (${ACWR_STATUS_LABELS[acwr.status] || 'Active'}${windowNote})`;
+    acwrBadge.title = acwr.window === "rolling_7d"
+      ? `Week in progress (day ${acwr.days_elapsed}/7): scored over the last 7 days vs the 4 blocks before. Calendar-week ratio so far: ${acwr.calendar_ratio ?? "—"}`
+      : "";
     const zoneStyle = ACWR_ZONE_STYLES[acwr.zone] || ACWR_ZONE_STYLES.unknown;
     acwrBadge.style.color = zoneStyle.color;
     acwrBadge.style.borderColor = zoneStyle.border;
@@ -755,16 +807,16 @@ function renderPolarizedBar(pol) {
 
   if (pol.classification === "polarized") {
     badge.textContent = "🏆 80/20 Polarized Optimal";
-    badge.style.color = "#10b981";
-    badge.style.borderColor = "rgba(16, 185, 129, 0.4)";
+    badge.style.color = "var(--accent-emerald)";
+    badge.style.borderColor = themeMix("--accent-emerald", 40);
   } else if (pol.classification === "pyramidal") {
     badge.textContent = "📈 Pyramidal Distribution";
-    badge.style.color = "#00f2fe";
-    badge.style.borderColor = "rgba(0, 242, 254, 0.4)";
+    badge.style.color = "var(--accent-cyan)";
+    badge.style.borderColor = themeMix("--accent-cyan", 40);
   } else if (pol.classification === "moderate_trap") {
     badge.textContent = "⚠️ Zone 3 Tempo Trap";
-    badge.style.color = "#f59e0b";
-    badge.style.borderColor = "rgba(245, 158, 11, 0.4)";
+    badge.style.color = "var(--accent-amber)";
+    badge.style.borderColor = themeMix("--accent-amber", 40);
   } else {
     badge.textContent = "Balanced Intensity";
     badge.style.color = "var(--text-secondary)";
@@ -938,7 +990,7 @@ function initCharts() {
       labels: ["Running", "Cycling", "Swimming", "Strength"],
       datasets: [{
         data: [1, 1, 1, 1],
-        backgroundColor: ["#f97316", "#00f2fe", "#10b981", "#b224ef"],
+        backgroundColor: () => [tok.orange, tok.cyan, tok.emerald, tok.purple],
         borderWidth: 0,
       }],
     },
@@ -948,7 +1000,7 @@ function initCharts() {
       plugins: {
         legend: {
           position: "bottom",
-          labels: { color: "#94a3b8", font: { family: "Inter", size: 11 } },
+          labels: { font: { family: "Inter", size: 11 } },
         },
       },
       cutout: "70%",
@@ -963,7 +1015,7 @@ function initCharts() {
       datasets: [{
         label: "Garmin Health",
         data: [50, 65, 48],
-        backgroundColor: ["#7928ca", "#00f2fe", "#ff0080"],
+        backgroundColor: () => [tok.purple, tok.cyan, tok.pink],
         borderRadius: 6,
       }],
     },
@@ -971,8 +1023,8 @@ function initCharts() {
       responsive: true,
       maintainAspectRatio: false,
       scales: {
-        y: { grid: { color: themedGridColor }, ticks: { color: "#94a3b8" } },
-        x: { grid: { display: false }, ticks: { color: "#94a3b8" } },
+        y: { grid: { color: themedGridColor }, ticks: {} },
+        x: { grid: { display: false }, ticks: {} },
       },
       plugins: { legend: { display: false } },
     },
@@ -990,8 +1042,8 @@ function initProgressionCharts() {
         {
           label: "Relative Effort",
           data: [],
-          backgroundColor: "rgba(255, 0, 128, 0.65)",
-          borderColor: "#ff0080",
+          backgroundColor: () => tokAlpha("pink", 0.65),
+          borderColor: () => tok.pink,
           borderWidth: 1,
           borderRadius: 6,
           yAxisID: "yEffort",
@@ -1000,8 +1052,8 @@ function initProgressionCharts() {
           label: "Training Hours",
           data: [],
           type: "line",
-          borderColor: "#00f2fe",
-          backgroundColor: "rgba(0, 242, 254, 0.15)",
+          borderColor: () => tok.cyan,
+          backgroundColor: () => tokAlpha("cyan", 0.15),
           borderWidth: 2,
           pointRadius: 4,
           fill: false,
@@ -1017,20 +1069,20 @@ function initProgressionCharts() {
           type: "linear",
           position: "left",
           grid: { color: themedGridColor },
-          ticks: { color: "#ff0080" },
-          title: { display: true, text: "Relative Effort", color: "#ff0080" },
+          ticks: { color: () => tok.pink },
+          title: { display: true, text: "Relative Effort", color: () => tok.pink },
         },
         yHours: {
           type: "linear",
           position: "right",
           grid: { display: false },
-          ticks: { color: "#00f2fe" },
-          title: { display: true, text: "Hours", color: "#00f2fe" },
+          ticks: { color: () => tok.cyan },
+          title: { display: true, text: "Hours", color: () => tok.cyan },
         },
-        x: { grid: { display: false }, ticks: { color: "#94a3b8" } },
+        x: { grid: { display: false }, ticks: {} },
       },
       plugins: {
-        legend: { labels: { color: "#94a3b8", font: { family: "Inter", size: 11 } } },
+        legend: { labels: { font: { family: "Inter", size: 11 } } },
         tooltip: { callbacks: { title: getProgressionTooltipTitle } },
       },
     },
@@ -1043,20 +1095,20 @@ function initProgressionCharts() {
     data: {
       labels: [],
       datasets: [
-        { label: "Running (km)", data: [], backgroundColor: "#f97316", borderRadius: 4 },
-        { label: "Cycling (km)", data: [], backgroundColor: "#00f2fe", borderRadius: 4 },
-        { label: "Swimming (km)", data: [], backgroundColor: "#10b981", borderRadius: 4 },
+        { label: "Running (km)", data: [], backgroundColor: () => tok.orange, borderRadius: 4 },
+        { label: "Cycling (km)", data: [], backgroundColor: () => tok.cyan, borderRadius: 4 },
+        { label: "Swimming (km)", data: [], backgroundColor: () => tok.emerald, borderRadius: 4 },
       ],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       scales: {
-        y: { stacked: true, grid: { color: themedGridColor }, ticks: { color: "#94a3b8" } },
-        x: { stacked: true, grid: { display: false }, ticks: { color: "#94a3b8" } },
+        y: { stacked: true, grid: { color: themedGridColor }, ticks: {} },
+        x: { stacked: true, grid: { display: false }, ticks: {} },
       },
       plugins: {
-        legend: { labels: { color: "#94a3b8", font: { family: "Inter", size: 11 } } },
+        legend: { labels: { font: { family: "Inter", size: 11 } } },
         tooltip: { callbacks: { title: getProgressionTooltipTitle } },
       },
     },
@@ -1071,8 +1123,8 @@ function initProgressionCharts() {
       datasets: [{
         label: "Elevation Gain (m)",
         data: [],
-        borderColor: "#b224ef",
-        backgroundColor: "rgba(178, 36, 239, 0.2)",
+        borderColor: () => tok.purple,
+        backgroundColor: () => tokAlpha("purple", 0.2),
         fill: true,
         tension: 0.3,
         borderWidth: 2,
@@ -1083,11 +1135,11 @@ function initProgressionCharts() {
       responsive: true,
       maintainAspectRatio: false,
       scales: {
-        y: { grid: { color: themedGridColor }, ticks: { color: "#94a3b8" } },
-        x: { grid: { display: false }, ticks: { color: "#94a3b8" } },
+        y: { grid: { color: themedGridColor }, ticks: {} },
+        x: { grid: { display: false }, ticks: {} },
       },
       plugins: {
-        legend: { labels: { color: "#94a3b8", font: { family: "Inter", size: 11 } } },
+        legend: { labels: { font: { family: "Inter", size: 11 } } },
         tooltip: { callbacks: { title: getProgressionTooltipTitle } },
       },
     },
@@ -1103,10 +1155,10 @@ function initProgressionCharts() {
         {
           label: "ACWR Ratio (Sweet Spot: 0.8 - 1.3)",
           data: [],
-          borderColor: "#10b981",
+          borderColor: () => tok.emerald,
           borderWidth: 2,
           pointRadius: 5,
-          pointBackgroundColor: "#10b981",
+          pointBackgroundColor: () => tok.emerald,
         },
       ],
     },
@@ -1121,12 +1173,12 @@ function initProgressionCharts() {
           suggestedMax: 2.0,
           beginAtZero: true,
           grid: { color: themedGridColor },
-          ticks: { color: "#94a3b8" },
+          ticks: {},
         },
-        x: { grid: { display: false }, ticks: { color: "#94a3b8" } },
+        x: { grid: { display: false }, ticks: {} },
       },
       plugins: {
-        legend: { labels: { color: "#94a3b8", font: { family: "Inter", size: 11 } } },
+        legend: { labels: { font: { family: "Inter", size: 11 } } },
         tooltip: { callbacks: { title: getProgressionTooltipTitle } },
       },
     },
@@ -1144,8 +1196,8 @@ function initProgressionCharts() {
           {
             label: "Fitness (CTL, 42d)",
             data: [],
-            borderColor: "#00f2fe",
-            backgroundColor: "rgba(0, 242, 254, 0.08)",
+            borderColor: () => tok.cyan,
+            backgroundColor: () => tokAlpha("cyan", 0.08),
             borderWidth: 2.5,
             pointRadius: 0,
             pointHitRadius: 6,
@@ -1156,8 +1208,8 @@ function initProgressionCharts() {
           {
             label: "Fatigue (ATL, 7d)",
             data: [],
-            borderColor: "#ff0080",
-            backgroundColor: "rgba(255, 0, 128, 0.08)",
+            borderColor: () => tok.pink,
+            backgroundColor: () => tokAlpha("pink", 0.08),
             borderWidth: 2,
             pointRadius: 0,
             pointHitRadius: 6,
@@ -1171,11 +1223,11 @@ function initProgressionCharts() {
             type: "bar",
             backgroundColor: function(context) {
               const val = context.raw;
-              if (val === null || val === undefined) return "rgba(148, 163, 184, 0.4)";
-              if (val >= 25) return "rgba(56, 189, 248, 0.5)"; // Freshness / Transition
-              if (val >= -10) return "rgba(16, 185, 129, 0.6)"; // Optimal / Race Ready
-              if (val >= -30) return "rgba(245, 158, 11, 0.6)"; // Productive Overreaching
-              return "rgba(239, 68, 68, 0.6)"; // High Fatigue / Overuse Risk
+              if (val === null || val === undefined) return tokAlpha("textSecondary", 0.4);
+              if (val >= 25) return tokAlpha("blue", 0.5); // Freshness / Transition
+              if (val >= -10) return tokAlpha("emerald", 0.6); // Optimal / Race Ready
+              if (val >= -30) return tokAlpha("amber", 0.6); // Productive Overreaching
+              return tokAlpha("red", 0.6); // High Fatigue / Overuse Risk
             },
             borderRadius: 3,
             yAxisID: "yTsb",
@@ -1191,8 +1243,8 @@ function initProgressionCharts() {
             type: "linear",
             position: "left",
             grid: { color: themedGridColor },
-            ticks: { color: "#00f2fe" },
-            title: { display: true, text: "Training Load (CTL / ATL)", color: "#00f2fe" },
+            ticks: { color: () => tok.cyan },
+            title: { display: true, text: "Training Load (CTL / ATL)", color: () => tok.cyan },
           },
           yTsb: {
             type: "linear",
@@ -1203,17 +1255,17 @@ function initProgressionCharts() {
                 return "transparent";
               },
             },
-            ticks: { color: "#10b981" },
-            title: { display: true, text: "Form (TSB)", color: "#10b981" },
+            ticks: { color: () => tok.emerald },
+            title: { display: true, text: "Form (TSB)", color: () => tok.emerald },
           },
           x: {
             grid: { display: false },
-            ticks: { color: "#94a3b8", maxTicksLimit: 14 },
+            ticks: { maxTicksLimit: 14 },
           },
         },
         plugins: {
           legend: {
-            labels: { color: "#94a3b8", font: { family: "Inter", size: 11 } },
+            labels: { font: { family: "Inter", size: 11 } },
           },
           tooltip: {
             callbacks: {
@@ -1286,6 +1338,9 @@ function updateProgressionCharts(progression) {
   if (acwrProgressionChart) {
     acwrProgressionChart.data.labels = labels;
     acwrProgressionChart.data.datasets[0].data = acwrs;
+    // Hollow marker for the week still in progress (rolling 7-day ratio).
+    acwrProgressionChart.data.datasets[0].pointBackgroundColor = (ctx) =>
+      (progression[ctx.dataIndex]?.acwr?.in_progress ? "transparent" : tok.emerald);
     acwrProgressionChart.update();
   }
 }
@@ -1778,7 +1833,7 @@ async function loadCompliance(targetDate) {
         `;
       }).join("");
     } else if (status === "rest_day_honored") {
-      matchesHtml = `<div style="font-size: 12px; color: #a855f7;">• Recovery day honored. No strenuous sessions logged.</div>`;
+      matchesHtml = `<div style="font-size: 12px; color: var(--accent-purple);">• Recovery day honored. No strenuous sessions logged.</div>`;
     } else if (data.unmatched_actual && data.unmatched_actual.length > 0) {
       matchesHtml = `<div style="font-size: 12px; color: var(--text-muted);">Unplanned activities: ${data.unmatched_actual.map(escapeHtml).join(", ")}</div>`;
     } else {
@@ -1808,13 +1863,309 @@ async function loadCompliance(targetDate) {
       </div>
     `;
   } catch (err) {
-    contentEl.innerHTML = `<div style="color: #ef4444; padding: 12px; font-size: 13px;">Failed to evaluate workout compliance: ${escapeHtml(err.message)}</div>`;
+    contentEl.innerHTML = `<div style="color: var(--accent-red); padding: 12px; font-size: 13px;">Failed to evaluate workout compliance: ${escapeHtml(err.message)}</div>`;
   } finally {
     if (checkBtn) {
       checkBtn.disabled = false;
       checkBtn.innerHTML = "<span>🔄 Check</span>";
     }
   }
+}
+
+let weeklyComplianceOffset = 0;
+let weeklyComplianceChart = null;
+
+const WEEKDAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+// Chip class for one day of the weekly strip, from its state/status keys.
+function weeklyDayClass(day) {
+  if (day.state === "future") return "wday-future";
+  if (day.state === "pending") return "wday-pending";
+  if (day.status === "rest_or_empty") return "wday-empty";
+  if (day.status === "rest_day_honored") return "wday-rest";
+  if (day.status === "rest_day_broken") return "wday-broken";
+  const score = day.compliance_score ?? 0;
+  if (score >= 90) return "wday-good";
+  if (score >= 60) return "wday-partial";
+  return "wday-missed";
+}
+
+function weeklyDayLabel(day) {
+  if (day.state === "future") return day.planned_raw ? "Planned" : "—";
+  if (day.state === "pending") return "Today";
+  if (day.status === "rest_or_empty") return "—";
+  if (day.status === "rest_day_honored") return "Rest";
+  return `${day.compliance_score}%`;
+}
+
+function complianceBadgeClass(score) {
+  if (score === null || score === undefined) return "badge-unknown";
+  if (score >= 90) return "badge-optimal";
+  if (score >= 75) return "badge-overreach";
+  return "badge-spike";
+}
+
+async function loadWeeklyCompliance(offset = weeklyComplianceOffset) {
+  const contentEl = document.getElementById("weeklyComplianceContent");
+  const badgeEl = document.getElementById("weeklyComplianceBadge");
+  if (!contentEl) return;
+  weeklyComplianceOffset = offset;
+  const nextBtn = document.getElementById("weekCompNextBtn");
+  if (nextBtn) nextBtn.disabled = offset >= 0;
+
+  try {
+    const res = await apiFetch(`/api/compliance/weekly?week_offset=${offset}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    renderWeeklyCompliance(data.week, contentEl, badgeEl);
+    renderWeeklyComplianceTrend(data.trend || []);
+  } catch (err) {
+    contentEl.innerHTML = `<div style="color: var(--accent-red); padding: 12px; font-size: 13px;">Failed to load weekly compliance: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderWeeklyCompliance(week, contentEl, badgeEl) {
+  const score = week.weekly_score;
+  if (badgeEl) {
+    badgeEl.className = `acwr-badge ${complianceBadgeClass(score)}`;
+    badgeEl.textContent = !week.has_plan
+      ? "No plan on record"
+      : (score === null ? "No sessions yet" : `${score}% week${week.in_progress ? " (so far)" : ""}`);
+    badgeEl.style.display = "inline-flex";
+  }
+
+  const chips = week.days.map((day, i) => {
+    const title = [formatDateDMY(day.date), day.planned_raw || "No plan"]
+      .concat(day.actual_run_km ? [`Ran ${day.actual_run_km} km`] : []).join("\n");
+    return `
+      <button class="wday-chip ${weeklyDayClass(day)}${day.is_key ? " wday-key" : ""}" data-date="${escapeHtml(day.date)}" title="${escapeHtml(title)}">
+        <span class="wday-name">${WEEKDAY_SHORT[i]}${day.is_key ? " ★" : ""}</span>
+        <span class="wday-score">${escapeHtml(weeklyDayLabel(day))}</span>
+      </button>`;
+  }).join("");
+
+  // While the week is running compare against the plan to date, so an unfinished
+  // week isn't measured against sessions that haven't happened yet.
+  const plannedKm = week.in_progress ? week.planned_run_km_to_date : week.planned_run_km;
+  const kmLabel = week.in_progress ? "Run km (plan to date)" : "Run km";
+  const keyText = week.key_sessions_planned
+    ? `${week.key_sessions_done} / ${week.key_sessions_planned}`
+    : "—";
+
+  contentEl.innerHTML = `
+    <div class="wday-strip">${chips}</div>
+    <div class="weekly-stats">
+      <div class="weekly-stat">
+        <span class="weekly-stat-label">${kmLabel}</span>
+        <span class="weekly-stat-value">${week.actual_run_km} <small>/ ${plannedKm} km</small></span>
+      </div>
+      <div class="weekly-stat">
+        <span class="weekly-stat-label">Key sessions ★</span>
+        <span class="weekly-stat-value">${keyText}</span>
+      </div>
+      <div class="weekly-stat">
+        <span class="weekly-stat-label">Sessions done</span>
+        <span class="weekly-stat-value">${week.sessions_done} <small>/ ${week.sessions_planned}</small></span>
+      </div>
+      <div class="weekly-stat">
+        <span class="weekly-stat-label">Week</span>
+        <span class="weekly-stat-value"><small>${formatDateDM(week.week_monday)} – ${formatDateDM(week.week_sunday)}</small></span>
+      </div>
+    </div>`;
+
+  contentEl.querySelectorAll(".wday-chip").forEach(chip => {
+    chip.addEventListener("click", () => {
+      const picker = document.getElementById("complianceDatePicker");
+      if (picker) picker.value = chip.dataset.date;
+      loadCompliance(chip.dataset.date);
+    });
+  });
+}
+
+function renderWeeklyComplianceTrend(trend) {
+  const canvas = document.getElementById("weeklyComplianceChart");
+  if (!canvas) return;
+  const labels = trend.map(t => formatDateDM(t.week_monday) + (t.in_progress ? " *" : ""));
+  weeklyComplianceChart = createChart(canvas.getContext("2d"), {
+    data: {
+      labels,
+      datasets: [
+        {
+          type: "bar",
+          label: "Planned run km",
+          data: trend.map(t => t.planned_run_km),
+          backgroundColor: () => tokAlpha("blue", 0.25),
+          borderColor: () => tok.blue,
+          borderWidth: 1,
+          yAxisID: "km",
+          order: 2,
+        },
+        {
+          type: "bar",
+          label: "Actual run km",
+          data: trend.map(t => t.actual_run_km),
+          backgroundColor: () => tokAlpha("orange", 0.55),
+          borderColor: () => tok.orange,
+          borderWidth: 1,
+          yAxisID: "km",
+          order: 2,
+        },
+        {
+          type: "line",
+          label: "Weekly score %",
+          data: trend.map(t => t.weekly_score),
+          borderColor: () => tok.emerald,
+          backgroundColor: () => tok.emerald,
+          pointBackgroundColor: (ctx) => (trend[ctx.dataIndex]?.in_progress ? "transparent" : tok.emerald),
+          pointRadius: 4,
+          tension: 0.3,
+          spanGaps: true,
+          yAxisID: "pct",
+          order: 1,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { labels: { boxWidth: 12, font: { size: 11 } } },
+        tooltip: {
+          callbacks: {
+            title: (items) => {
+              const t = trend[items[0].dataIndex];
+              return `Week of ${formatDateDMY(t.week_monday)}${t.in_progress ? " (in progress)" : ""}`;
+            },
+            afterBody: (items) => {
+              const t = trend[items[0].dataIndex];
+              return t.key_sessions_planned ? `Key sessions: ${t.key_sessions_done}/${t.key_sessions_planned}` : "";
+            },
+          },
+        },
+      },
+      scales: {
+        x: { grid: { color: themedGridColor } },
+        km: { position: "left", beginAtZero: true, title: { display: true, text: "km" }, grid: { color: themedGridColor } },
+        pct: { position: "right", min: 0, max: 100, title: { display: true, text: "score %" }, grid: { display: false } },
+      },
+    },
+  });
+}
+
+// --- Aerobic decoupling (Pa:HR) ---
+const DECOUPLING_STATUS = {
+  good: { badge: "badge-optimal", label: "Well coupled", color: "emerald" },
+  moderate: { badge: "badge-overreach", label: "Moderate drift", color: "amber" },
+  high: { badge: "badge-spike", label: "High drift", color: "red" },
+  unknown: { badge: "badge-unknown", label: "No data", color: "textMuted" },
+};
+
+async function loadDecoupling() {
+  const summaryEl = document.getElementById("decouplingSummary");
+  const badgeEl = document.getElementById("decouplingBadge");
+  if (!summaryEl) return;
+  try {
+    const res = await apiFetch("/api/decoupling");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    renderDecoupling(await res.json(), summaryEl, badgeEl);
+  } catch (err) {
+    summaryEl.innerHTML = `<div style="color: var(--accent-red); font-size: 13px;">Failed to load decoupling: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderDecoupling(data, summaryEl, badgeEl) {
+  const status = DECOUPLING_STATUS[data.recent_status] || DECOUPLING_STATUS.unknown;
+  if (badgeEl) {
+    badgeEl.className = `acwr-badge ${status.badge}`;
+    badgeEl.textContent = data.count ? `${status.label} · ${data.recent_avg_pct}%` : status.label;
+  }
+
+  const missing = data.runs_without_detail
+    ? `<span class="decoupling-note">${data.runs_without_detail} long run(s) have no split data yet. Run <code>uv run python main.py</code> to fetch details.</span>`
+    : "";
+  if (!data.count) {
+    summaryEl.innerHTML = `<span class="decoupling-note">No qualifying long steady runs (60+ min, even pace, with HR) found.</span> ${missing}`;
+    const existing = Chart.getChart("decouplingChart");
+    if (existing) existing.destroy();
+    return;
+  }
+  summaryEl.innerHTML = `
+    <div class="weekly-stats">
+      <div class="weekly-stat"><span class="weekly-stat-label">Latest</span><span class="weekly-stat-value">${data.latest_pct}%</span></div>
+      <div class="weekly-stat"><span class="weekly-stat-label">Last 3 avg</span><span class="weekly-stat-value">${data.recent_avg_pct}%</span></div>
+      <div class="weekly-stat"><span class="weekly-stat-label">Runs analysed</span><span class="weekly-stat-value">${data.count}</span></div>
+      <div class="weekly-stat"><span class="weekly-stat-label">Target</span><span class="weekly-stat-value"><small>&lt; ${data.good_pct}%</small></span></div>
+    </div>
+    ${missing}`;
+  renderDecouplingChart(data);
+}
+
+function renderDecouplingChart(data) {
+  const canvas = document.getElementById("decouplingChart");
+  if (!canvas) return;
+  const runs = data.runs;
+  const pointColor = (ctx) => tok[(DECOUPLING_STATUS[runs[ctx.dataIndex]?.status] || DECOUPLING_STATUS.unknown).color];
+  createChart(canvas.getContext("2d"), {
+    type: "line",
+    data: {
+      labels: runs.map(r => formatDateDM(r.date)),
+      datasets: [
+        {
+          label: "Decoupling %",
+          data: runs.map(r => r.decoupling_pct),
+          borderColor: () => tok.pink,
+          backgroundColor: () => tokAlpha("pink", 0.15),
+          pointBackgroundColor: pointColor,
+          pointBorderColor: pointColor,
+          pointRadius: 5,
+          tension: 0.3,
+          fill: true,
+        },
+        {
+          label: `Good (< ${data.good_pct}%)`,
+          data: runs.map(() => data.good_pct),
+          borderColor: () => tok.emerald,
+          borderDash: [6, 4],
+          borderWidth: 1,
+          pointRadius: 0,
+        },
+        {
+          label: `High (≥ ${data.high_pct}%)`,
+          data: runs.map(() => data.high_pct),
+          borderColor: () => tok.red,
+          borderDash: [6, 4],
+          borderWidth: 1,
+          pointRadius: 0,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { labels: { boxWidth: 12, font: { size: 11 } } },
+        tooltip: {
+          filter: (item) => item.datasetIndex === 0,
+          callbacks: {
+            title: (items) => {
+              const r = runs[items[0].dataIndex];
+              return `${formatDateDMY(r.date)} · ${r.name || "Run"}`;
+            },
+            afterBody: (items) => {
+              const r = runs[items[0].dataIndex];
+              return [`${r.distance_km} km · ${r.duration_min} min`, `EF ${r.ef_first} → ${r.ef_second} m/min/bpm`];
+            },
+          },
+        },
+      },
+      scales: {
+        x: { grid: { color: themedGridColor } },
+        y: { suggestedMin: 0, suggestedMax: data.high_pct + 2, title: { display: true, text: "%" }, grid: { color: themedGridColor } },
+      },
+    },
+  });
 }
 
 async function handleGenerateAiFeedback() {
@@ -1949,7 +2300,7 @@ function applyBadgeStyle(el, style) {
   el.style.color = style.color;
   el.style.borderColor = style.border;
   // Same hue at low alpha for the fill, so one colour definition drives both.
-  el.style.background = style.border.replace(/[\d.]+\)$/, "0.12)");
+  el.style.background = `color-mix(in srgb, ${style.color} 12%, transparent)`;
 }
 
 function formatSignal(signal) {
@@ -2335,7 +2686,7 @@ async function loadGarminWorkouts() {
   const listEl = document.getElementById("garminWorkoutsList");
   const statusEl = document.getElementById("garminStatusMsg");
   if (!listEl) return;
-  listEl.innerHTML = `<div style="text-align: center; padding: 25px; color: #94a3b8;">🔍 Reading Final Surge plan & parsing running & cycling workouts...</div>`;
+  listEl.innerHTML = `<div style="text-align: center; padding: 25px; color: var(--text-secondary);">🔍 Reading Final Surge plan & parsing running & cycling workouts...</div>`;
   if (statusEl) statusEl.textContent = "";
 
   try {
@@ -2349,7 +2700,7 @@ async function loadGarminWorkouts() {
     renderGarminWorkouts(data);
   } catch (err) {
     console.error("Failed to load workouts for Garmin:", err);
-    listEl.innerHTML = `<div style="padding: 16px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; color: #fca5a5;">
+    listEl.innerHTML = `<div style="padding: 16px; background: color-mix(in srgb, var(--accent-red) 10%, transparent); border: 1px solid color-mix(in srgb, var(--accent-red) 30%, transparent); border-radius: 8px; color: var(--accent-red);">
       ⚠️ Error reading workouts: ${escapeHtml(err.message)}
     </div>`;
   }
@@ -2365,7 +2716,7 @@ function renderGarminWorkouts(data) {
   }
 
   if (workouts.length === 0) {
-    listEl.innerHTML = `<div style="text-align: center; padding: 25px; color: #94a3b8;">
+    listEl.innerHTML = `<div style="text-align: center; padding: 25px; color: var(--text-secondary);">
       No running or cycling workouts found in this week's plan.
     </div>`;
     return;
@@ -2393,7 +2744,7 @@ function renderGarminWorkouts(data) {
       }
 
       return `<div style="font-size: 11px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; padding: 2px 0;">
-        <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: ${isRun ? '#f97316' : '#38bdf8'};"></span>
+        <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: ${isRun ? 'var(--accent-orange)' : 'var(--accent-blue)'};"></span>
         <strong style="text-transform: capitalize;">${escapeHtml(s.step_type)}:</strong> ${escapeHtml(condStr)}${escapeHtml(targetStr)}
       </div>`;
     }).join("");
@@ -2405,15 +2756,15 @@ function renderGarminWorkouts(data) {
             <span style="font-size: 12px; font-weight: 700; color: var(--text-primary); margin-right: 8px;">${escapeHtml(w.day_name)} (${escapeHtml(w.date)})</span>
             <span class="${badgeClass}">${badgeText}</span>
           </div>
-          <span style="font-size: 11px; color: #64748b;">${escapeHtml(w.source || "gemini")}</span>
+          <span style="font-size: 11px; color: var(--text-muted);">${escapeHtml(w.source || "gemini")}</span>
         </div>
-        <div style="font-size: 13px; font-weight: 600; color: ${isRun ? '#fdba74' : '#7dd3fc'}; margin-bottom: 6px;">
+        <div style="font-size: 13px; font-weight: 600; color: ${isRun ? 'var(--accent-orange)' : 'var(--accent-blue)'}; margin-bottom: 6px;">
           ${escapeHtml(w.workout_name)}
         </div>
-        <div style="background: rgba(0,0,0,0.25); border-radius: 6px; padding: 6px 10px; margin-bottom: 6px;">
+        <div style="background: color-mix(in srgb, var(--text-secondary) 12%, transparent); border-radius: 6px; padding: 6px 10px; margin-bottom: 6px;">
           ${stepsHtml}
         </div>
-        <div style="font-size: 11px; color: #94a3b8; font-style: italic;">
+        <div style="font-size: 11px; color: var(--text-secondary); font-style: italic;">
           "${escapeHtml(w.raw_coach_text || "").replace(/\\n/g, ' ')}"
         </div>
       </div>
@@ -2452,13 +2803,13 @@ async function handleSendToGarmin() {
 
     showToast(`✅ Successfully scheduled ${count} workout(s) on Garmin Connect! Synced to Watch & Tacx.`, "success");
     if (statusEl) {
-      statusEl.innerHTML = `<span style="color: #10b981; font-weight: 600;">✅ ${count} workout(s) scheduled on Garmin Calendar!</span>`;
+      statusEl.innerHTML = `<span style="color: var(--accent-emerald); font-weight: 600;">✅ ${count} workout(s) scheduled on Garmin Calendar!</span>`;
     }
   } catch (err) {
     console.error("Garmin sync error:", err);
     showToast("Garmin sync failed: " + err.message, "error");
     if (statusEl) {
-      statusEl.innerHTML = `<span style="color: #ef4444;">❌ Failed: ${escapeHtml(err.message)}</span>`;
+      statusEl.innerHTML = `<span style="color: var(--accent-red);">❌ Failed: ${escapeHtml(err.message)}</span>`;
     }
   } finally {
     sendBtn.disabled = false;

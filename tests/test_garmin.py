@@ -391,3 +391,31 @@ def test_accented_greek_interval_keyword_is_high_intensity():
     ok = {"recovery_status": "adequate", "recovery_score": 70}
     res = assess_workout_readiness(ok, "Διαλειμματική προπόνηση στο στίβο")
     assert res["workout_detected_intensity"] == "high"
+
+
+# --- Key-session biometric alerts ---
+
+def test_key_session_alerts_list_low_biometrics_on_interval_day():
+    rec = {
+        "available": True,
+        "recovery_status": "adequate",
+        "flags": ["low_sleep", "moderate_body_battery"],
+        "hrv_baseline_eval": {"status": "low", "value": 38, "normal_range": [45, 60]},
+    }
+    res = assess_workout_readiness(rec, "Τρέξιμο: 6x800m @ 10K pace")
+    assert res["is_key_session"] is True
+    assert res["key_session_alerts"] == ["hrv_below_baseline", "low_sleep", "low_body_battery"]
+
+
+def test_key_session_alerts_empty_on_easy_day_or_good_biometrics():
+    low = {"available": True, "flags": ["critically_low_sleep", "depressed_hrv"]}
+    assert assess_workout_readiness(low, "Τρέξιμο 6 χλμ χαλαρό")["key_session_alerts"] == []
+
+    fine = {"available": True, "flags": [], "hrv_baseline_eval": {"status": "optimal"}}
+    assert assess_workout_readiness(fine, "Long run 22 km")["key_session_alerts"] == []
+
+
+def test_key_session_alerts_skip_unavailable_garmin():
+    from src.integrations.garmin import key_session_biometric_alerts
+
+    assert key_session_biometric_alerts({"available": False, "flags": ["low_sleep"]}, True) == []

@@ -172,8 +172,44 @@ def has_plan_details(workout: dict[str, Any]) -> bool:
     return False
 
 
+def _load_archive() -> dict[str, list[dict[str, Any]]]:
+    if not os.path.exists(config.FINAL_SURGE_ARCHIVE_FILE):
+        return {}
+    try:
+        with open(config.FINAL_SURGE_ARCHIVE_FILE) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError) as e:
+        logger.warning("Ignoring unreadable Final Surge plan archive: %s", e)
+        return {}
+
+
+def merge_with_archive(feed: dict[date, list[dict[str, Any]]]) -> dict[date, list[dict[str, Any]]]:
+    """
+    Combine the live feed with the archive of days it has shown before.
+
+    The feed only publishes from (roughly) today onward. From its first day on
+    the feed is authoritative: a day it no longer lists was removed by the
+    coach. Earlier days come from the archive. The archive is rewritten only
+    when it changes.
+    """
+    archive = _load_archive()
+    window_start = min(feed) if feed else None
+    merged: dict[str, list[dict[str, Any]]] = {
+        iso: workouts for iso, workouts in archive.items()
+        if window_start is None or iso < window_start.isoformat()
+    }
+    merged.update({d.isoformat(): workouts for d, workouts in feed.items()})
+    if merged != archive:
+        try:
+            write_json_atomic(config.FINAL_SURGE_ARCHIVE_FILE, merged)
+        except OSError as e:
+            logger.warning("Could not update Final Surge plan archive: %s", e)
+    return {date.fromisoformat(iso): workouts for iso, workouts in merged.items()}
+
+
 def get_workouts_by_date(force_refresh: bool = False) -> dict[date, list[dict[str, Any]]]:
-    return parse_calendar(fetch_calendar_text(force_refresh=force_refresh))
+    return merge_with_archive(parse_calendar(fetch_calendar_text(force_refresh=force_refresh)))
 
 
 def day_workout_text(workouts: list[dict[str, Any]]) -> str:
@@ -196,3 +232,13 @@ def get_planned_workout_for_date(target_date: date) -> dict[str, Any]:
     if not text:
         result["reason"] = f"No Final Surge workout scheduled on {target_date.isoformat()}"
     return result
+
+
+def get_plan_texts_between(start: date, end: date) -> dict[date, str]:
+    """Plan text per day for start..end inclusive (days without a workout omitted).
+
+    Reads the calendar once, unlike calling get_planned_workout_for_date per day.
+    Raises on feed failure so callers can report it instead of scoring an empty plan.
+    """
+    by_date = get_workouts_by_date()
+    return {d: day_workout_text(w) for d, w in by_date.items() if start <= d <= end and w}

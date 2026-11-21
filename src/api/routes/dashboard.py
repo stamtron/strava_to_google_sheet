@@ -6,6 +6,7 @@ from datetime import date
 from fastapi import APIRouter, Query
 
 from src.analytics.ai_coach import predict_race_performances, predict_triathlon_performances
+from src.analytics.decoupling import decoupling_trend
 from src.analytics.durability import assess_run_durability, sport_strength_profile, suggest_cross_training
 from src.analytics.metrics import (
     build_progression_history,
@@ -15,7 +16,7 @@ from src.analytics.metrics import (
     calculate_polarized_distribution,
     process_activities_into_weeks,
 )
-from src.api.activity_data import get_summaries
+from src.api.activity_data import get_summaries, read_history
 from src.api.deps import internal_error
 from src.config import (
     ATHLETE_GOAL_RACES,
@@ -181,3 +182,19 @@ def get_run_durability(count: int = Query(200, ge=1, le=500)):
         "cross_training": suggest_cross_training(target_run_load, durability, profile),
         "weeks_analyzed": len(sorted_week_keys),
     }
+
+
+@router.get("/api/decoupling")
+def get_aerobic_decoupling(count: int = Query(200, ge=1, le=500)):
+    """
+    Pa:HR aerobic decoupling trend on long steady runs (from per-km splits).
+
+    Details come from the hot cache and the history store combined — the cache
+    only holds what the last sync fetched, the store keeps every detail seen.
+    """
+    try:
+        summaries, cached_details = get_summaries(count)
+        _, stored_details = read_history(count)
+        return decoupling_trend(summaries, {**stored_details, **cached_details})
+    except Exception as e:
+        raise internal_error("Decoupling trend") from e

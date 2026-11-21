@@ -14,7 +14,7 @@
       if (light) document.documentElement.setAttribute("data-theme", "light");
     })();
   </script>
-  <link rel="stylesheet" href="/static/styles.css?v=4.7">
+  <link rel="stylesheet" href="/static/styles.css?v=4.8">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
 </head>
 <body>
@@ -231,6 +231,27 @@
             <div style="text-align: center; color: var(--text-muted); padding: 16px;">Loading workout compliance...</div>
           </div>
         </div>
+
+        <!-- Weekly Plan vs. Actual -->
+        <div class="glass-panel compliance-section">
+          <div class="section-header">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <h2 class="section-title">📅 Weekly Plan vs Actual</h2>
+              <span id="weeklyComplianceBadge" class="acwr-badge badge-unknown" style="display: none;">--</span>
+            </div>
+            <div class="date-nav-group">
+              <button id="weekCompPrevBtn" class="btn-icon-nav" title="Previous Week">◀</button>
+              <button id="weekCompThisBtn" class="btn-date-quick" title="Jump to This Week">This week</button>
+              <button id="weekCompNextBtn" class="btn-icon-nav" title="Next Week">▶</button>
+            </div>
+          </div>
+          <div id="weeklyComplianceContent" class="compliance-content">
+            <div style="text-align: center; color: var(--text-muted); padding: 16px;">Loading weekly compliance...</div>
+          </div>
+          <div class="chart-wrapper weekly-compliance-chart">
+            <canvas id="weeklyComplianceChart"></canvas>
+          </div>
+        </div>
       </div>
 
       <!-- Right Column: AI Insights & Predictions -->
@@ -310,6 +331,21 @@ Click "Generate AI Feedback" for an analysis of your week's data, with points wo
         </div>
         <div id="durabilityPlan" class="durability-plan">
           <!-- Rendered dynamically -->
+        </div>
+      </div>
+
+      <!-- Aerobic Decoupling (Pa:HR) on long steady runs -->
+      <div class="glass-panel ai-card decoupling-card">
+        <div class="ai-header">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <h3 style="font-size: 16px;">💓 Aerobic Decoupling (Pa:HR)</h3>
+            <span id="decouplingBadge" class="acwr-badge badge-unknown">Loading…</span>
+          </div>
+          <span class="bio-badge">Long steady runs · 2nd half vs 1st</span>
+        </div>
+        <div id="decouplingSummary" class="decoupling-summary"></div>
+        <div class="chart-wrapper decoupling-chart">
+          <canvas id="decouplingChart"></canvas>
         </div>
       </div>
 
@@ -703,6 +739,6 @@ Click "Generate AI Feedback" for an analysis of your week's data, with points wo
     </div>
   </div>
 
-  <script src="/static/app.js?v=4.14"></script>
+  <script src="/static/app.js?v=4.15"></script>
 </body>
 </html>

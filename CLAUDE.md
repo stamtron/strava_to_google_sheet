@@ -38,7 +38,7 @@ uv run python main.py --telegram-next-day  # Dispatch tomorrow's briefing to Tel
 uv run python main.py --telegram-weekly    # Dispatch weekly executive summary to Telegram
 
 # Testing & Code Quality
-uv run pytest                              # Run full test suite (456 tests, offline)
+uv run pytest                              # Run full test suite (487 tests, offline)
 uv run pytest tests/test_metrics.py        # Run single test module
 uv run pytest -k "test_classify_tsb"       # Run specific test pattern
 uv run ruff check                          # Lint codebase (config in pyproject.toml)
@@ -71,6 +71,8 @@ strava_to_google_sheet/
 │   │   ├── compliance.py         # Plan vs actual workout execution matcher
 │   │   ├── gear.py               # Shoe & bike cumulative mileage tracker & alert thresholds
 │   │   ├── weather_pace.py       # Temperature & wind pace slowdown adjustment
+│   │   ├── decoupling.py         # Aerobic decoupling (Pa:HR drift) per run + trend
+│   │   ├── session_type.py       # Classify Final Surge planned sessions (hard/key) from text
 │   │   ├── ai_coach.py           # Gemini LLM qualitative coaching & Riegel predictions
 │   │   ├── coach_agent.py        # Conversational agent: 14 tools, grounded search, chat session
 │   │   └── coach_memory.py       # ChromaDB / SqliteMemory long-term fact store
@@ -87,7 +89,7 @@ strava_to_google_sheet/
 │   ├── index.html                # Dashboard + tabs + floating assistant chat drawer
 │   ├── styles.css                # Glassmorphic dark design system
 │   └── app.js                    # Interaction logic, Chart.js instances, chat client
-├── tests/                        # Offline pytest suite (456 unit tests)
+├── tests/                        # Offline pytest suite (487 unit tests)
 ├── docs/                         # Modular documentation (setup, config, analytics, AI assistant, api)
 ├── main.py                       # CLI root entry point
 ├── server.py                     # Web server root entry point
