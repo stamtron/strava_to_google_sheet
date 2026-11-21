@@ -49,7 +49,7 @@ strava_to_google_sheet/
 │   ├── index.html                # Dashboard + floating AI Coach chat drawer + Garmin modal
 │   ├── styles.css                # Custom glassmorphic design system
 │   └── app.js                    # Chart.js charts, chat drawer & interaction logic
-├── tests/                        # pytest suite (offline, 444 tests)
+├── tests/                        # pytest suite (offline, 452 tests)
 │   ├── conftest.py               # Shared synthetic-activity fixtures & tmp_path DB
 │   ├── test_formatting.py        # Unit conversions & sport corrections
 │   ├── test_metrics.py           # Relative effort, weekly rollups, ACWR

@@ -215,6 +215,52 @@ def test_sync_failure_is_a_clean_500(client, monkeypatch):
     assert "xyz789" not in resp.text
 
 
+SECRET_MARKER = "secret-token-xyz789"
+
+
+def _boom(*_a, **_k):
+    raise RuntimeError(SECRET_MARKER)
+
+
+@pytest.mark.parametrize(
+    ("target", "method", "path", "body"),
+    [
+        ("get_weather_outlook", "get", "/api/weather", None),
+        ("coach_chat", "post", "/api/ai/chat", {"message": "hi"}),
+        ("list_remembered_facts", "get", "/api/coach/memory", None),
+        ("forget_remembered_fact", "delete", "/api/coach/memory/abc", None),
+        ("extract_session_facts", "post", "/api/coach/memory/extract", {"session_id": "s1"}),
+        ("src.integrations.garmin_workouts.preview_week_workouts", "get", "/api/workouts/preview", None),
+        ("src.integrations.garmin_workouts.sync_week_workouts_to_garmin", "post", "/api/workouts/sync", {}),
+    ],
+)
+def test_endpoint_failures_are_clean_500s(client, monkeypatch, target, method, path, body):
+    if "." in target:
+        monkeypatch.setattr(target, _boom)
+    else:
+        monkeypatch.setattr(server, target, _boom)
+    kwargs = {"headers": CLIENT_HEADERS}
+    if body is not None:
+        kwargs["json"] = body
+    resp = getattr(client, method)(path, **kwargs)
+    assert resp.status_code == 500
+    assert SECRET_MARKER not in resp.text
+    assert resp.json()["detail"].endswith("failed.")
+
+
+def test_backfill_failure_is_a_clean_500(client, monkeypatch):
+    class _Conn:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(server, "get_access_token", lambda interactive=False: "tok")
+    monkeypatch.setattr(server, "init_db", _Conn)
+    monkeypatch.setattr(server, "backfill_all", _boom)
+    resp = client.post("/api/history/backfill", json={}, headers=CLIENT_HEADERS)
+    assert resp.status_code == 500
+    assert SECRET_MARKER not in resp.text
+
+
 def test_history_status_failure_is_a_clean_500(client, monkeypatch):
     def boom(*_a, **_k):
         raise RuntimeError("disk full")

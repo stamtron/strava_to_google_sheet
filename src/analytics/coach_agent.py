@@ -198,7 +198,10 @@ def _get_gemini_client():
 
         return genai.Client(api_key=GEMINI_API_KEY)
     except Exception as e:
-        raise CoachUnavailable(f"Gemini client initialization failed: {e}") from e
+        logger.warning("Gemini client initialization failed: %s", e)
+        raise CoachUnavailable(
+            f"Gemini client initialization failed ({type(e).__name__}); see the server log."
+        ) from e
 
 
 # --------------------------------------------------------------------------- #
@@ -1016,16 +1019,18 @@ def chat(
                     if ("503" in err_msg or "UNAVAILABLE" in err_msg or "429" in err_msg) and attempt == 0:
                         time.sleep(1.5)
                         continue
-                    failures.append(f"{model_name}: {e}")
+                    # Status code or exception type only: raw provider errors can
+                    # echo request details, so the full text stays in the log.
+                    failures.append(f"{model_name}: {getattr(e, 'code', None) or type(e).__name__}")
                     logger.warning("Coach chat with %s failed: %s", model_name, e)
                     break
             if succeeded:
                 break
 
         if not model_used:
-            # Every model's error, not just the last: when Google retires an ID the
-            # whole chain 404s, and only the full list makes that diagnosable from
-            # the drawer without reading the server log.
+            # Every model's status, not just the last: when Google retires an ID the
+            # whole chain 404s, and the per-model codes make that diagnosable from
+            # the drawer. Full error text is in the server log.
             raise CoachUnavailable("No Gemini model could answer — " + "; ".join(failures))
 
         disclaimer_applied = needs_medical_disclaimer(message, reply)

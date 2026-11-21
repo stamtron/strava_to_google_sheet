@@ -24,6 +24,17 @@ from pydantic import BaseModel, Field, field_validator
 server_logger = logging.getLogger(__name__)
 
 
+def _internal_error(action: str) -> HTTPException:
+    """
+    Log the active exception and build a generic 500 for `action`.
+
+    Call inside an `except` block. Exception text can carry tokens, feed URLs or
+    file paths, so it goes to the log and the client only sees which action failed.
+    """
+    server_logger.exception("%s failed", action)
+    return HTTPException(status_code=500, detail=f"{action} failed.")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle manager running background Telegram bot poller and auto-dispatcher."""
@@ -458,8 +469,7 @@ def get_dashboard_data(count: int = Query(200, ge=1, le=500)):
             "progression": build_progression_history(weeks, acwr_map=acwr_map),
         }
     except Exception as e:
-        server_logger.exception("Dashboard analytics failed")
-        raise HTTPException(status_code=500, detail="Dashboard analytics failed.") from e
+        raise _internal_error("Dashboard analytics") from e
 
     return {
         "weeks": weeks,
@@ -675,7 +685,7 @@ def get_weather(
         )
         return {"city": "Athens, Greece", "days": outlook}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise _internal_error("Weather fetch") from e
 
 
 @app.get("/api/durability")
@@ -745,7 +755,7 @@ def post_ai_chat(req: ChatRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise _internal_error("Coach chat") from e
 
 
 @app.get("/api/coach/memory")
@@ -761,7 +771,7 @@ def get_coach_memory():
         facts = list_remembered_facts()
         return {"facts": facts, "count": len(facts)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise _internal_error("Reading coach memory") from e
 
 
 @app.delete("/api/coach/memory/{fact_id}")
@@ -770,7 +780,7 @@ def delete_coach_memory(fact_id: str):
     try:
         removed = forget_remembered_fact(fact_id)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise _internal_error("Deleting coach memory") from e
     if not removed:
         raise HTTPException(status_code=404, detail=f"No stored fact with id {fact_id}")
     return {"deleted": fact_id}
@@ -791,7 +801,7 @@ def post_coach_memory_extract(req: MemoryExtractRequest):
     except CoachUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise _internal_error("Memory extraction") from e
 
 
 @app.get("/api/history/status")
@@ -830,7 +840,7 @@ def history_backfill(req: BackfillRequest):
     try:
         return backfill_all(token, conn, resume=req.resume)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise _internal_error("History backfill") from e
     finally:
         conn.close()
 
@@ -861,8 +871,7 @@ def sync_activities(req: SyncRequest):
     except StravaNetworkError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
-        server_logger.exception("Activity sync failed")
-        raise HTTPException(status_code=500, detail="Activity sync failed.") from e
+        raise _internal_error("Activity sync") from e
 
 
 _PLANNED_WORKOUT_CACHE: dict[str, tuple[float, dict]] = {}
@@ -956,12 +965,12 @@ def preview_workouts_endpoint(week_offset: int = 0):
                     rec = get_daily_recovery_metrics(w_date)
                     w["recovery"] = rec
                     w["readiness"] = assess_workout_readiness(rec, workout_text=w.get("raw_coach_text", ""))
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Recovery is decoration on the preview; a Garmin hiccup must not hide the plan.
+                    server_logger.warning("Recovery lookup for %s failed: %s", w_date_str, e)
         return preview
     except Exception as e:
-        server_logger.error("Error previewing workouts: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise _internal_error("Workout preview") from e
 
 
 class WorkoutSyncRequest(BaseModel):
@@ -976,8 +985,7 @@ def sync_workouts_endpoint(req: WorkoutSyncRequest = WorkoutSyncRequest()):
     try:
         return sync_week_workouts_to_garmin(week_offset=req.week_offset, dry_run=req.dry_run)
     except Exception as e:
-        server_logger.error("Error syncing workouts to Garmin: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise _internal_error("Garmin workout sync") from e
 
 
 # Serve Static UI

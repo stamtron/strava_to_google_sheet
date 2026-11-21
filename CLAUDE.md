@@ -38,7 +38,7 @@ uv run python main.py --telegram-next-day  # Dispatch tomorrow's briefing to Tel
 uv run python main.py --telegram-weekly    # Dispatch weekly executive summary to Telegram
 
 # Testing & Code Quality
-uv run pytest                              # Run full test suite (444 tests, offline)
+uv run pytest                              # Run full test suite (452 tests, offline)
 uv run pytest tests/test_metrics.py        # Run single test module
 uv run pytest -k "test_classify_tsb"       # Run specific test pattern
 uv run ruff check                          # Lint codebase (config in pyproject.toml)
@@ -84,7 +84,7 @@ strava_to_google_sheet/
 │   ├── index.html                # Dashboard + tabs + floating coach drawer
 │   ├── styles.css                # Glassmorphic dark design system
 │   └── app.js                    # Interaction logic, Chart.js instances, chat client
-├── tests/                        # Offline pytest suite (444 unit tests)
+├── tests/                        # Offline pytest suite (452 unit tests)
 ├── docs/                         # Modular documentation (setup, config, analytics, coach, api)
 ├── main.py                       # CLI root entry point
 ├── server.py                     # Web server root entry point
