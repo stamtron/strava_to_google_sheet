@@ -154,7 +154,7 @@ def test_cli_imports_runs_and_wellness(tmp_path, garmin_cache, monkeypatch, caps
 
     assert main.run_garmin_export_import(str(root)) == 0
     out = capsys.readouterr().out
-    assert "1 runs stored" in out and "1 written" in out
+    assert "1 runs (1 with splits), 0 rides, 0 swims stored" in out and "1 written" in out
     conn = init_db(str(db))
     assert len(get_fit_runs(conn)) == 1
     conn.close()

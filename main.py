@@ -126,10 +126,12 @@ def _fit_source(path: str) -> str:
 
 def run_garmin_export_import(path: str) -> int:
     """
-    Import a Garmin Connect data export, offline: runs (FIT files) into the
-    history store for decoupling, and daily wellness into the biometrics cache.
+    Import a Garmin Connect data export, offline: runs, rides and swims (FIT
+    files) into the history store — runs with per-km splits for decoupling,
+    all three as summaries for the multi-sport trends — and daily wellness
+    into the biometrics cache.
     """
-    from src.integrations.fit_import import import_fit_runs
+    from src.integrations.fit_import import import_fit_activities
     from src.integrations.garmin_export import import_garmin_wellness
 
     if not os.path.exists(path):
@@ -137,15 +139,16 @@ def run_garmin_export_import(path: str) -> int:
         return 1
 
     fit_path = _fit_source(path) if os.path.isdir(path) else path
-    print(f"📦 Importing Garmin FIT runs from {fit_path}...")
+    print(f"📦 Importing Garmin FIT activities from {fit_path}...")
     conn = init_db()
     try:
-        stats = import_fit_runs(fit_path, conn)
+        stats = import_fit_activities(fit_path, conn)
     finally:
         conn.close()
     print(
         f"  Scanned {stats['files']} FIT files: {stats['activities']} activities, "
-        f"{stats['runs']} runs stored"
+        f"{stats['runs']} runs ({stats['run_splits']} with splits), {stats['rides']} rides, "
+        f"{stats['swims']} swims stored"
         + (f", {stats['errors']} unreadable" if stats["errors"] else "")
         + (f", {stats['oversized']} oversized skipped" if stats["oversized"] else "")
     )

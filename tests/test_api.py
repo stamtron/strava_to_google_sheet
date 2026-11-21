@@ -363,3 +363,50 @@ def test_decoupling_endpoint_includes_fit_runs_and_limits(client, monkeypatch):
     assert body["fit_runs"] == 2 and [r["source"] for r in body["runs"]] == ["fit", "fit"]
     assert [r["date"] for r in client.get("/api/decoupling?runs=1").json()["runs"]] == ["2026-04-01"]
     assert client.get("/api/decoupling?runs=0").status_code == 422
+
+
+# --- /api/sport-trends ---------------------------------------------------------
+
+
+def test_sport_trends_endpoint_merges_strava_and_fit(client, monkeypatch):
+    acts = [make_activity(1, "2026-10-05", "Ride", start_date="2026-10-05T05:30:00Z")]
+    fit = [{"start_utc": "2025-10-05T05:30:00Z", "start_local": "2025-10-05T08:30:00", "sport": "swimming",
+            "distance_m": 2000.0, "moving_time": 2400, "avg_hr": None, "avg_power": None}]
+    monkeypatch.setattr(dashboard_routes, "read_all_summaries", lambda limit: acts)
+    monkeypatch.setattr(dashboard_routes, "read_fit_activities", lambda: fit)
+    monkeypatch.setattr(dashboard_routes, "today_local", lambda: __import__("datetime").date(2026, 11, 21))
+    body = client.get("/api/sport-trends?bucket=quarter").json()
+    assert body["periods"][0] == "2025-Q4" and body["periods"][-1] == "2026-Q4"
+    assert body["sources"] == {"strava": 1, "fit": 1}
+    assert body["sports"]["swim"]["series"][0]["efficiency"] == 120.0
+
+
+def test_sport_trends_endpoint_rejects_bad_bucket_and_hides_errors(client, monkeypatch):
+    assert client.get("/api/sport-trends?bucket=week").status_code == 422
+
+    def boom(limit):
+        raise RuntimeError("secret path /x")
+
+    monkeypatch.setattr(dashboard_routes, "read_all_summaries", boom)
+    resp = client.get("/api/sport-trends")
+    assert resp.status_code == 500 and "secret" not in resp.text
+
+
+def test_read_all_summaries_prefers_cache_and_survives_store_failure(monkeypatch, tmp_path):
+    from src.api import activity_data
+    from src.storage.activity_store import init_db, upsert_activities
+
+    db = tmp_path / "h.db"
+    conn = init_db(str(db))
+    upsert_activities(conn, [make_activity(1, "2026-10-01", name="stored"), make_activity(2, "2026-10-02")])
+    conn.close()
+    monkeypatch.setattr(activity_data, "init_db", lambda: init_db(str(db)))
+    monkeypatch.setattr(activity_data, "load_cache", lambda: {"activities": [make_activity(1, "2026-10-01", name="cached")]})
+    merged = {a["id"]: a["name"] for a in activity_data.read_all_summaries(100)}
+    assert merged == {1: "cached", 2: "Run 2"}
+
+    def broken():
+        raise OSError("disk gone")
+
+    monkeypatch.setattr(activity_data, "init_db", broken)
+    assert [a["name"] for a in activity_data.read_all_summaries(100)] == ["cached"]

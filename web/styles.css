@@ -2313,3 +2313,31 @@ input[type="range"] {
 }
 
 
+
+/* Multi-sport trends card */
+.trend-controls { display: flex; flex-wrap: wrap; gap: 8px; }
+.trend-toggle {
+  display: inline-flex;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.trend-toggle-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.trend-toggle-btn + .trend-toggle-btn { border-left: 1px solid var(--glass-border); }
+.trend-toggle-btn:hover { color: var(--text-primary); }
+.trend-toggle-btn.active {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent-cyan) 18%, transparent);
+}
+.sport-trends-chart { height: 260px; margin-top: 12px; }
+.trend-delta-up { color: var(--accent-emerald); }
+.trend-delta-down { color: var(--accent-red); }

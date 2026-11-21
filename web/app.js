@@ -268,9 +268,11 @@ async function initApp() {
   loadCompliance();
   loadWeeklyCompliance();
   loadDecoupling();
+  loadSportTrends();
 }
 
 function setupEventListeners() {
+  setupSportTrendsControls();
   document.getElementById("weekSelector").addEventListener("change", (e) => {
     selectWeek(e.target.value);
   });
@@ -2169,6 +2171,184 @@ function renderDecouplingChart(data) {
       scales: {
         x: { grid: { color: themedGridColor } },
         y: { suggestedMin: 0, suggestedMax: data.high_pct + 2, title: { display: true, text: "%" }, grid: { color: themedGridColor } },
+      },
+    },
+  });
+}
+
+// --- Multi-sport trends (Strava + Garmin export history) ----------------------
+
+const SPORT_TRENDS_META = {
+  run: { label: "Run", color: "orange", effLabel: "Speed per heartbeat (m/min per bpm)", effShort: "m/min/bpm" },
+  bike: { label: "Ride", color: "blue", effLabel: "Power per heartbeat (W per bpm)", effShort: "W/bpm" },
+  swim: { label: "Swim", color: "cyan", effLabel: "Pace per 100 m (lower is better)", effShort: "/100 m" },
+};
+const SPORT_TRENDS_STATUS = {
+  improved: { badge: "badge-optimal", label: "Improving" },
+  flat: { badge: "badge-low", label: "Steady" },
+  declined: { badge: "badge-spike", label: "Declining" },
+  insufficient: { badge: "badge-unknown", label: "Not enough data" },
+};
+const sportTrendsState = { sport: "run", bucket: "month", data: null };
+
+function formatSwimPace(secs) {
+  if (secs == null) return "–";
+  const s = Math.round(secs);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function formatTrendEfficiency(sport, value) {
+  if (value == null) return "–";
+  return sport === "swim" ? formatSwimPace(value) : value.toFixed(sport === "bike" ? 2 : 3);
+}
+
+function formatTrendPeriod(period) {
+  if (period.includes("Q")) return period.replace("-", " ");
+  const [y, m] = period.split("-");
+  return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString(undefined, { month: "short", year: "2-digit" });
+}
+
+function trendDelta(pct, higherIsBetter = true) {
+  if (pct == null) return "";
+  const good = higherIsBetter ? pct > 0 : pct < 0;
+  const cls = pct === 0 ? "" : good ? "trend-delta-up" : "trend-delta-down";
+  return ` <small class="${cls}">${pct > 0 ? "+" : ""}${pct}%</small>`;
+}
+
+function setupSportTrendsControls() {
+  document.querySelectorAll("[data-trend-sport]").forEach(btn => btn.addEventListener("click", () => {
+    sportTrendsState.sport = btn.dataset.trendSport;
+    document.querySelectorAll("[data-trend-sport]").forEach(b => b.classList.toggle("active", b === btn));
+    if (sportTrendsState.data) renderSportTrends();
+  }));
+  document.querySelectorAll("[data-trend-bucket]").forEach(btn => btn.addEventListener("click", () => {
+    if (sportTrendsState.bucket === btn.dataset.trendBucket) return;
+    sportTrendsState.bucket = btn.dataset.trendBucket;
+    document.querySelectorAll("[data-trend-bucket]").forEach(b => b.classList.toggle("active", b === btn));
+    loadSportTrends();
+  }));
+}
+
+async function loadSportTrends() {
+  const summaryEl = document.getElementById("sportTrendsSummary");
+  if (!summaryEl) return;
+  try {
+    const res = await apiFetch(`/api/sport-trends?bucket=${sportTrendsState.bucket}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    sportTrendsState.data = await res.json();
+    renderSportTrends();
+  } catch (err) {
+    summaryEl.innerHTML = `<div style="color: var(--accent-red); font-size: 13px;">Failed to load trends: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderSportTrends() {
+  const { sport, data } = sportTrendsState;
+  const summaryEl = document.getElementById("sportTrendsSummary");
+  const badgeEl = document.getElementById("sportTrendsBadge");
+  const meta = SPORT_TRENDS_META[sport];
+  const sportData = data.sports?.[sport];
+  const hasSessions = sportData && sportData.series.some(p => p.sessions > 0);
+  if (!hasSessions) {
+    badgeEl.className = "acwr-badge badge-unknown";
+    badgeEl.textContent = "No data";
+    summaryEl.innerHTML = `<span class="decoupling-note">No ${meta.label.toLowerCase()} sessions yet. Import older history with <code>uv run python main.py --import-garmin-export &lt;folder&gt;</code>.</span>`;
+    const existing = Chart.getChart("sportTrendsChart");
+    if (existing) existing.destroy();
+    return;
+  }
+
+  const yoy = sportData.year_over_year;
+  const status = SPORT_TRENDS_STATUS[yoy.efficiency_status] || SPORT_TRENDS_STATUS.insufficient;
+  badgeEl.className = `acwr-badge ${status.badge}`;
+  badgeEl.textContent = `${status.label} vs last year`;
+
+  const cur = yoy.current;
+  const prev = yoy.previous;
+  const powerStat = sport === "bike"
+    ? `<div class="weekly-stat"><span class="weekly-stat-label">Avg power</span><span class="weekly-stat-value">${cur.avg_power ?? "–"}<small> W (was ${prev.avg_power ?? "–"})</small></span></div>`
+    : "";
+  summaryEl.innerHTML = `
+    <div class="weekly-stats">
+      <div class="weekly-stat"><span class="weekly-stat-label">Last ${yoy.window_days} days</span><span class="weekly-stat-value">${cur.hours}<small> h</small>${trendDelta(yoy.hours_change_pct)}</span></div>
+      <div class="weekly-stat"><span class="weekly-stat-label">Same window ${new Date().getFullYear() - 1}</span><span class="weekly-stat-value">${prev.hours}<small> h · ${prev.sessions} sessions</small></span></div>
+      <div class="weekly-stat"><span class="weekly-stat-label">Efficiency</span><span class="weekly-stat-value">${formatTrendEfficiency(sport, cur.efficiency)}<small> ${meta.effShort} (was ${formatTrendEfficiency(sport, prev.efficiency)})</small>${trendDelta(yoy.efficiency_change_pct, sportData.higher_is_better)}</span></div>
+      ${powerStat}
+    </div>
+    <span class="decoupling-note">${meta.effLabel}. ${data.sources.fit ? `${data.sources.fit} older session(s) come from your Garmin export; Strava is used wherever it has the same session.` : ""}</span>`;
+  renderSportTrendsChart(sport, sportData);
+}
+
+function renderSportTrendsChart(sport, sportData) {
+  const canvas = document.getElementById("sportTrendsChart");
+  if (!canvas) return;
+  const meta = SPORT_TRENDS_META[sport];
+  const series = sportData.series;
+  createChart(canvas.getContext("2d"), {
+    type: "bar",
+    data: {
+      labels: series.map(p => formatTrendPeriod(p.period)),
+      datasets: [
+        {
+          type: "bar",
+          label: "Hours",
+          data: series.map(p => p.hours),
+          backgroundColor: () => tokAlpha(meta.color, 0.45),
+          borderColor: () => tok[meta.color],
+          borderWidth: 1,
+          borderRadius: 4,
+          yAxisID: "y",
+          order: 2,
+        },
+        {
+          type: "line",
+          label: meta.effLabel,
+          data: series.map(p => p.efficiency),
+          borderColor: () => tok.purple,
+          backgroundColor: () => tok.purple,
+          pointRadius: 3,
+          tension: 0.3,
+          spanGaps: true,
+          yAxisID: "y1",
+          order: 1,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { labels: { boxWidth: 12, font: { size: 11 } } },
+        tooltip: {
+          callbacks: {
+            label: (item) => {
+              const p = series[item.dataIndex];
+              if (item.datasetIndex === 0) return `${p.hours} h · ${p.sessions} sessions · ${p.distance_km} km`;
+              return `Efficiency: ${formatTrendEfficiency(sport, p.efficiency)} ${meta.effShort}`;
+            },
+            afterBody: (items) => {
+              const p = series[items[0].dataIndex];
+              const lines = [];
+              if (p.avg_hr) lines.push(`Avg HR ${p.avg_hr} bpm`);
+              if (p.avg_power) lines.push(`Avg power ${p.avg_power} W`);
+              if (p.fit_sessions) lines.push(`${p.fit_sessions} from Garmin export`);
+              return lines;
+            },
+          },
+        },
+      },
+      scales: {
+        x: { grid: { color: themedGridColor } },
+        y: { beginAtZero: true, title: { display: true, text: "Hours" }, grid: { color: themedGridColor } },
+        y1: {
+          position: "right",
+          // Swim pace: lower is better, so flip the axis to keep "up = better".
+          reverse: sport === "swim",
+          title: { display: true, text: meta.effShort },
+          ticks: { callback: (v) => formatTrendEfficiency(sport, v) },
+          grid: { drawOnChartArea: false },
+        },
       },
     },
   });

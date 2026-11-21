@@ -26,6 +26,20 @@ def _close(split: dict) -> dict:
     }
 
 
+def moving_seconds(records: list[dict]) -> float:
+    """
+    Moving time of a record stream ({"t", "dist"}), by the same rule as the
+    splits: short gaps at FIT_MOVING_SPEED_MS or faster. 0 without distance.
+    """
+    stream = sorted((r for r in records if r.get("dist") is not None), key=lambda r: r["t"])
+    moving = 0.0
+    for prev, cur in pairwise(stream):
+        dt = cur["t"] - prev["t"]
+        if 0 < dt <= FIT_MAX_RECORD_GAP_S and (cur["dist"] - prev["dist"]) / dt >= FIT_MOVING_SPEED_MS:
+            moving += dt
+    return moving
+
+
 def splits_from_records(records: list[dict], split_m: float = FIT_SPLIT_METERS) -> list[dict]:
     """
     Cut records ({"t", "hr", "dist"}; `dist` cumulative metres) into splits of

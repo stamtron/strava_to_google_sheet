@@ -53,8 +53,12 @@ All settings in StaminAI are centralized in [`src/config.py`](../src/config.py) 
 | `FIT_SPLIT_METERS` | `1000` | Split length built from FIT record streams |
 | `FIT_MAX_RECORD_GAP_S` | `30` | Record gap (s) treated as a pause, not moving time |
 | `FIT_MOVING_SPEED_MS` | `0.5` | Below this speed (m/s) a record counts as standing still |
-| `FIT_MATCH_TOLERANCE_S` | `180` | Max start-time difference (s) to match a FIT run to a Strava activity |
+| `FIT_MATCH_TOLERANCE_S` | `180` | Max start-time difference (s) to match a FIT activity to a Strava one |
 | `DECOUPLING_TREND_MAX_RUNS` | `200` | Upper bound for `/api/decoupling?runs=` |
+| `SPORT_TRENDS_MIN_MINUTES` | `20` | Sessions shorter than this count for volume but not efficiency |
+| `SPORT_TRENDS_COMPARE_DAYS` | `90` | Year-over-year window (trailing days vs the same days a year earlier) |
+| `SPORT_TRENDS_FLAT_PCT` | `2` | Efficiency change (%) within which the trend is `flat` |
+| `SPORT_TRENDS_MAX_ACTIVITIES` | `5000` | Stored Strava activities read for `/api/sport-trends` |
 | `BASELINE_WINDOW_WEEKS` | `12` | Biometric baselines use only the latest N weeks with a reading (0 = all) |
 
 ---

@@ -31,6 +31,11 @@ Calculates and returns Banister Impulse-Response EWMA training metrics:
   - `current`: `{ ctl, atl, tsb, status, ctl_ramp_7d }` (`status` is a key: `transition` | `fresh` | `neutral` | `optimal` | `high_fatigue`; labels live in `web/app.js`)
   - `series`: `[ { date, day_load, ctl, atl, tsb, status }, ... ]` (90-day time-series)
 
+### `GET /api/sport-trends?bucket=month|quarter`
+Long-range run / bike / swim trends from stored Strava history plus Garmin export FIT summaries (Strava wins when both hold a session). Never calls Strava.
+- **Response**: `{ bucket, periods: ["2026-10", ...], sources: { strava, fit }, sports: { run|bike|swim: { series: [ { period, sessions, hours, distance_km, avg_hr, avg_power, efficiency, fit_sessions } ], efficiency_unit, higher_is_better, year_over_year: { window_days, current, previous, hours_change_pct, efficiency_change_pct, efficiency_status } } } }`.
+- `efficiency_status` is a key: `improved` | `flat` | `declined` | `insufficient`. An unknown `bucket` returns 422.
+
 ---
 
 ## 🏃 Durability, Compliance & Gear

@@ -49,6 +49,21 @@ CREATE TABLE IF NOT EXISTS fit_runs (
     imported_at  REAL NOT NULL
 );
 
+-- One summary row per run / ride / swim in a Garmin export, for the long-range
+-- multi-sport trends. Same key and Strava-separation rules as fit_runs; avg_hr
+-- and avg_power are NULL when the device didn't record them.
+CREATE TABLE IF NOT EXISTS fit_activities (
+    start_utc    TEXT PRIMARY KEY,
+    start_local  TEXT NOT NULL,
+    sport        TEXT NOT NULL,
+    distance_m   REAL NOT NULL,
+    moving_time  REAL NOT NULL,
+    avg_hr       REAL,
+    avg_power    REAL,
+    source       TEXT,
+    imported_at  REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sync_state (
     key    TEXT PRIMARY KEY,
     value  TEXT NOT NULL
@@ -229,6 +244,42 @@ def get_fit_runs(conn: sqlite3.Connection, min_moving_time: float = 0) -> list[d
         (min_moving_time,),
     )
     return [{**dict(r), "splits": json.loads(r["splits"])} for r in cur]
+
+
+def upsert_fit_activities(conn: sqlite3.Connection, activities: list[dict]) -> int:
+    """Insert or replace imported FIT activity summaries (keyed by UTC start)."""
+    now = time.time()
+    rows = [
+        (
+            a["start_utc"],
+            a["start_local"],
+            a["sport"],
+            float(a.get("distance_m") or 0),
+            float(a.get("moving_time") or 0),
+            a.get("avg_hr"),
+            a.get("avg_power"),
+            a.get("source"),
+            now,
+        )
+        for a in activities
+    ]
+    conn.executemany(
+        "INSERT OR REPLACE INTO fit_activities "
+        "(start_utc, start_local, sport, distance_m, moving_time, avg_hr, avg_power, source, imported_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    conn.commit()
+    return len(rows)
+
+
+def get_fit_activities(conn: sqlite3.Connection) -> list[dict]:
+    """Imported FIT activity summaries, oldest first."""
+    cur = conn.execute(
+        "SELECT start_utc, start_local, sport, distance_m, moving_time, avg_hr, avg_power, source "
+        "FROM fit_activities ORDER BY start_utc"
+    )
+    return [dict(r) for r in cur]
 
 
 def count_activities(conn: sqlite3.Connection) -> int:

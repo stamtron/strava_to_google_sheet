@@ -11,6 +11,7 @@ _SIZE = {UINT8: 1, ENUM: 1, UINT16: 2, UINT32: 4}
 FILE_ID = [(0, ENUM)]
 SESSION = [(2, UINT32), (5, ENUM), (7, UINT32), (9, UINT32)]
 RECORD = [(253, UINT32), (3, UINT8), (5, UINT32), (6, UINT16)]
+LENGTH = [(4, UINT32), (12, ENUM)]
 
 
 def definition(local: int, global_num: int, fields: list[tuple[int, int]], dev_sizes: list[int] = ()) -> bytes:
@@ -52,14 +53,39 @@ def activity_fit(
     hr: int = 145,
     hr_drift_per_s: float = 0.0,
     file_type: int = 4,
+    session_hr: int | None = None,
+    session_power: int | None = None,
+    pause_after_s: int | None = None,
+    pause_s: int = 0,
+    lengths: list[tuple[int, int]] = (),
 ) -> bytes:
-    """An activity with one record per second at constant speed."""
+    """
+    An activity with one record per second at constant speed. `session_hr` /
+    `session_power` add the session avg_heart_rate (16) / avg_power (20) fields.
+    `pause_after_s` / `pause_s` stand still for `pause_s` seconds (timer
+    running) after that many seconds. `lengths` adds pool length messages as
+    (timer seconds, length_type) pairs.
+    """
     t0 = fit_ts(start_iso)
     body = definition(0, 0, FILE_ID) + data(0, FILE_ID, [file_type])
     body += definition(2, 20, RECORD)
+    paused = pause_s if pause_after_s is not None else 0
     for i in range(seconds + 1):
         heart = min(254, round(hr + hr_drift_per_s * i))
-        body += data(2, RECORD, [t0 + i, heart, round(i * speed_ms * 100), round(speed_ms * 1000)])
-    total_m = seconds * speed_ms
-    body += definition(1, 18, SESSION) + data(1, SESSION, [t0, sport, seconds * 1000, round(total_m * 100)])
+        moved = i if pause_after_s is None else min(i, pause_after_s) + max(0, i - pause_after_s - pause_s)
+        speed = 0 if pause_after_s is not None and pause_after_s < i <= pause_after_s + pause_s else speed_ms
+        body += data(2, RECORD, [t0 + i, heart, round(moved * speed_ms * 100), round(speed * 1000)])
+    if lengths:
+        body += definition(3, 101, LENGTH)
+        body += b"".join(data(3, LENGTH, [secs * 1000, kind]) for secs, kind in lengths)
+    total_m = (seconds - paused) * speed_ms
+    session = list(SESSION)
+    values = [t0, sport, seconds * 1000, round(total_m * 100)]
+    if session_hr is not None:
+        session.append((16, UINT8))
+        values.append(session_hr)
+    if session_power is not None:
+        session.append((20, UINT16))
+        values.append(session_power)
+    body += definition(1, 18, session) + data(1, session, values)
     return wrap(body)

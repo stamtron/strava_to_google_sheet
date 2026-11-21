@@ -18,7 +18,14 @@ from src.integrations.strava import (
     get_access_token,
 )
 from src.storage.activity_store import get_activities as store_get_activities
-from src.storage.activity_store import get_details, get_fit_runs, init_db, upsert_activities, upsert_details
+from src.storage.activity_store import (
+    get_details,
+    get_fit_activities,
+    get_fit_runs,
+    init_db,
+    upsert_activities,
+    upsert_details,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +116,42 @@ def read_fit_runs() -> list[dict]:
         return []
     finally:
         conn.close()
+
+
+def read_fit_activities() -> list[dict]:
+    """Run/ride/swim summaries imported from a Garmin export; [] if unavailable."""
+    try:
+        conn = init_db()
+    except Exception as e:
+        logger.warning("History store unavailable: %s", e)
+        return []
+    try:
+        return get_fit_activities(conn)
+    except Exception as e:
+        logger.warning("FIT activity read failed: %s", e)
+        return []
+    finally:
+        conn.close()
+
+
+def read_all_summaries(limit: int) -> list[dict]:
+    """
+    Stored history merged with the hot cache (cache wins per id), without
+    touching Strava. Never raises; an unavailable store means cache only.
+    """
+    by_id: dict = {}
+    try:
+        conn = init_db()
+        try:
+            for act in store_get_activities(conn, limit=limit):
+                by_id[act.get("id")] = act
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning("History store read failed: %s", e)
+    for act in load_cache()["activities"]:
+        by_id[act.get("id")] = act
+    return list(by_id.values())
 
 
 def write_history(activities: list[dict], details: dict | None = None) -> None:

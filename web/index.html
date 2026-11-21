@@ -14,7 +14,7 @@
       if (light) document.documentElement.setAttribute("data-theme", "light");
     })();
   </script>
-  <link rel="stylesheet" href="/static/styles.css?v=4.8">
+  <link rel="stylesheet" href="/static/styles.css?v=4.9">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
 </head>
 <body>
@@ -346,6 +346,31 @@ Click "Generate AI Feedback" for an analysis of your week's data, with points wo
         <div id="decouplingSummary" class="decoupling-summary"></div>
         <div class="chart-wrapper decoupling-chart">
           <canvas id="decouplingChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Multi-sport long-range trends (Strava + Garmin export history) -->
+      <div class="glass-panel ai-card sport-trends-card">
+        <div class="ai-header" style="flex-wrap: wrap; gap: 8px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <h3 style="font-size: 16px;">📈 Multi-Sport Trends</h3>
+            <span id="sportTrendsBadge" class="acwr-badge badge-unknown">Loading…</span>
+          </div>
+          <div class="trend-controls">
+            <div class="trend-toggle" role="group" aria-label="Sport">
+              <button type="button" class="trend-toggle-btn active" data-trend-sport="run">🏃 Run</button>
+              <button type="button" class="trend-toggle-btn" data-trend-sport="bike">🚴 Ride</button>
+              <button type="button" class="trend-toggle-btn" data-trend-sport="swim">🏊 Swim</button>
+            </div>
+            <div class="trend-toggle" role="group" aria-label="Period">
+              <button type="button" class="trend-toggle-btn active" data-trend-bucket="month">Month</button>
+              <button type="button" class="trend-toggle-btn" data-trend-bucket="quarter">Quarter</button>
+            </div>
+          </div>
+        </div>
+        <div id="sportTrendsSummary" class="decoupling-summary"></div>
+        <div class="chart-wrapper sport-trends-chart">
+          <canvas id="sportTrendsChart"></canvas>
         </div>
       </div>
 
@@ -739,6 +764,6 @@ Click "Generate AI Feedback" for an analysis of your week's data, with points wo
     </div>
   </div>
 
-  <script src="/static/app.js?v=4.16"></script>
+  <script src="/static/app.js?v=4.17"></script>
 </body>
 </html>

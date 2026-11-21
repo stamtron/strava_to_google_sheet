@@ -25,12 +25,24 @@ FIT_EPOCH = datetime(1989, 12, 31, tzinfo=UTC)
 MESG_FILE_ID = 0
 MESG_SESSION = 18
 MESG_RECORD = 20
+MESG_LENGTH = 101
+LENGTH_ACTIVE = 1
 FILE_TYPE_ACTIVITY = 4
 
 _FILE_ID_FIELDS = {0: "type"}
-_SESSION_FIELDS = {2: "start_time", 5: "sport", 6: "sub_sport", 7: "total_timer_time", 9: "total_distance"}
+_SESSION_FIELDS = {
+    2: "start_time", 5: "sport", 6: "sub_sport", 7: "total_timer_time", 9: "total_distance",
+    16: "avg_heart_rate", 20: "avg_power",
+}
 _RECORD_FIELDS = {253: "timestamp", 3: "heart_rate", 5: "distance", 6: "speed", 73: "enhanced_speed"}
-_WANTED = {MESG_FILE_ID: _FILE_ID_FIELDS, MESG_SESSION: _SESSION_FIELDS, MESG_RECORD: _RECORD_FIELDS}
+# Pool swim lengths: idle lengths are the rest between sets.
+_LENGTH_FIELDS = {4: "total_timer_time", 12: "length_type"}
+_WANTED = {
+    MESG_FILE_ID: _FILE_ID_FIELDS,
+    MESG_SESSION: _SESSION_FIELDS,
+    MESG_RECORD: _RECORD_FIELDS,
+    MESG_LENGTH: _LENGTH_FIELDS,
+}
 
 # FIT sport enum values used by callers.
 SPORT_NAMES = {0: "generic", 1: "running", 2: "cycling", 5: "swimming", 11: "walking", 17: "hiking"}
@@ -71,15 +83,15 @@ def _header(data: bytes, offset: int) -> tuple[int, int]:
 
 def read_fit(data: bytes, stop_unless_activity: bool = True) -> dict:
     """
-    Decode a FIT file into {"file_type", "sessions", "records"}.
+    Decode a FIT file into {"file_type", "sessions", "records", "lengths"}.
 
-    `sessions` and `records` are lists of dicts keyed by the field names above,
+    `sessions`, `records` and `lengths` (pool swims) are lists of dicts keyed by the field names above,
     with raw FIT integer values (scaling is applied by `fit_activity_summary`).
     When `stop_unless_activity` is set, decoding stops as soon as the file_id
     shows a non-activity file (monitoring, settings…), which is most of a
     Garmin export, so bulk imports stay fast.
     """
-    out = {"file_type": None, "sessions": [], "records": []}
+    out = {"file_type": None, "sessions": [], "records": [], "lengths": []}
     offset = 0
     # Chained FIT files (several files back to back, each with a 2-byte CRC).
     while True:
@@ -181,6 +193,8 @@ def _read_messages(data: bytes, pos: int, end: int, out: dict, stop_unless_activ
                 return False
         elif defn["global"] == MESG_SESSION:
             out["sessions"].append(values)
+        elif defn["global"] == MESG_LENGTH:
+            out["lengths"].append(values)
         else:
             out["records"].append(values)
     return True
@@ -194,7 +208,9 @@ def fit_time(raw: int) -> datetime:
 def fit_activity_summary(fit: dict) -> dict | None:
     """
     Scaled summary of a decoded activity: start (UTC), sport name, timer
-    seconds, distance (m), plus the record stream as
+    seconds, distance (m), session average HR (bpm) and power (W) — None when
+    the device didn't record them — the swimming time of active pool lengths
+    (None without lengths, i.e. anything but a pool swim), plus the record stream as
     [{"t": unix seconds, "hr": bpm|None, "dist": m|None, "speed": m/s|None}].
     None when the file isn't an activity or has no session.
     """
@@ -204,6 +220,7 @@ def fit_activity_summary(fit: dict) -> dict | None:
     if "start_time" not in session:
         return None
     start = fit_time(session["start_time"])
+    lengths = fit.get("lengths", [])
     records = []
     for r in fit.get("records", []):
         if "timestamp" not in r:
@@ -220,5 +237,11 @@ def fit_activity_summary(fit: dict) -> dict | None:
         "sport": SPORT_NAMES.get(session.get("sport"), "other"),
         "timer_secs": session.get("total_timer_time", 0) / 1000,
         "distance_m": session.get("total_distance", 0) / 100,
+        "avg_hr": session.get("avg_heart_rate"),
+        "avg_power": session.get("avg_power"),
+        "active_length_secs": (
+            sum(ln.get("total_timer_time", 0) for ln in lengths if ln.get("length_type") == LENGTH_ACTIVE) / 1000
+            if lengths else None
+        ),
         "records": records,
     }

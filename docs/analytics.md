@@ -69,6 +69,21 @@ Splits come from the Strava activity detail. When a run has no fetched detail, o
 
 ---
 
+## 📈 Multi-Sport Trends
+
+`src/analytics/sport_trends.py` builds monthly or quarterly run, bike and swim series (sessions, hours, km, time-weighted avg HR and power, efficiency) from Strava history plus Garmin export FIT summaries. A FIT session with the same sport group as a Strava activity starting within `FIT_MATCH_TOLERANCE_S` is dropped, so the export only fills in what Strava doesn't have. Months with no sessions stay in the series as zeros.
+
+Efficiency per sport, over sessions of at least `SPORT_TRENDS_MIN_MINUTES`:
+- **Run**: speed per heartbeat, m/min per bpm.
+- **Bike**: watts per bpm, only rides with device power (Strava `device_watts`) and HR.
+- **Swim**: pace in seconds per 100 m (lower is better).
+
+Year over year compares the trailing `SPORT_TRENDS_COMPARE_DAYS` with the same window a year earlier; an efficiency change within ±`SPORT_TRENDS_FLAT_PCT` % is `flat`.
+
+FIT summaries store moving time comparable to Strava's: the active pool lengths for pool swims (the timer keeps running through rest between sets), moving records for anything with a distance stream, and timer time otherwise (indoor rides), never more than the timer.
+
+---
+
 ## 🏃 Run Durability & Injury Prevention Engine
 
 Endurance athletes often have cardiovascular capacity that outpaces their musculoskeletal structural tolerance (tendons, bones, fascia). StaminAI's durability engine assesses run-specific load across five dimensions:

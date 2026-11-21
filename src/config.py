@@ -451,6 +451,17 @@ FIT_MAX_FILE_MB = _env_float("FIT_MAX_FILE_MB", 50.0)
 # Garmin export wellness JSON (UDS, sleep, health status) above this is skipped.
 GARMIN_EXPORT_MAX_JSON_MB = _env_float("GARMIN_EXPORT_MAX_JSON_MB", 100.0)
 
+# Multi-sport trends (run / bike / swim volume and efficiency per month or
+# quarter, Strava merged with Garmin export history). Every session counts for
+# volume; only sessions of at least SPORT_TRENDS_MIN_MINUTES feed efficiency.
+# Year-over-year compares the trailing SPORT_TRENDS_COMPARE_DAYS with the same
+# window a year earlier; an efficiency change within ±SPORT_TRENDS_FLAT_PCT is
+# "flat". SPORT_TRENDS_MAX_ACTIVITIES caps the Strava history read.
+SPORT_TRENDS_MIN_MINUTES = _env_float("SPORT_TRENDS_MIN_MINUTES", 20.0)
+SPORT_TRENDS_COMPARE_DAYS = _env_int("SPORT_TRENDS_COMPARE_DAYS", 90)
+SPORT_TRENDS_FLAT_PCT = _env_float("SPORT_TRENDS_FLAT_PCT", 2.0)
+SPORT_TRENDS_MAX_ACTIVITIES = _env_int("SPORT_TRENDS_MAX_ACTIVITIES", 5000)
+
 
 # --- API & coach tunables ---
 # Mutating /api routes (everything but GET and the webhooks) require this header.

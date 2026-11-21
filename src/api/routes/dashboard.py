@@ -16,7 +16,14 @@ from src.analytics.metrics import (
     calculate_polarized_distribution,
     process_activities_into_weeks,
 )
-from src.api.activity_data import get_summaries, read_fit_runs, read_history
+from src.analytics.sport_trends import sport_trends
+from src.api.activity_data import (
+    get_summaries,
+    read_all_summaries,
+    read_fit_activities,
+    read_fit_runs,
+    read_history,
+)
 from src.api.deps import internal_error
 from src.config import (
     ATHLETE_GOAL_RACES,
@@ -26,11 +33,12 @@ from src.config import (
     GOAL_HALF_MARATHON_DATE,
     HR_MAX,
     HR_REST,
+    SPORT_TRENDS_MAX_ACTIVITIES,
     TRAINING_PHASE,
 )
 from src.integrations.garmin import _load_garmin_cache, compute_biometric_baselines, get_weekly_health_summaries
 from src.integrations.weather import get_weather_outlook
-from src.timeutil import now_local
+from src.timeutil import now_local, today_local
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -212,3 +220,18 @@ def get_aerobic_decoupling(
         )
     except Exception as e:
         raise internal_error("Decoupling trend") from e
+
+
+@router.get("/api/sport-trends")
+def get_sport_trends(bucket: str = Query("month", pattern="^(month|quarter)$")):
+    """
+    Run / bike / swim volume and efficiency per month or quarter, plus a
+    year-over-year comparison. Strava history (store + hot cache, no live
+    fetch) merged with Garmin export summaries; Strava wins on overlap.
+    """
+    try:
+        return sport_trends(
+            read_all_summaries(SPORT_TRENDS_MAX_ACTIVITIES), read_fit_activities(), today_local(), bucket=bucket
+        )
+    except Exception as e:
+        raise internal_error("Sport trends") from e
