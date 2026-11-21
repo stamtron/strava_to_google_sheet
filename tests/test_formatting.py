@@ -1,14 +1,12 @@
-"""Unit conversion and sport-correction tests."""
+"""Unit conversion tests."""
 
-from src.config import INDOOR_BIKE_SPEED_KMH, SWIM_DISTANCE_DIVISOR
 from src.formatting import (
-    corrected_distance_and_speed,
+    distance_and_speed,
     format_duration,
     format_duration_el,
     format_duration_short_el,
     format_mmss,
     format_pace,
-    is_indoor_ride,
     parse_pace_to_sec,
 )
 
@@ -48,32 +46,15 @@ def test_format_pace_handles_missing_speed():
     assert format_pace(None, "Run", greek=True) == "N/A"
 
 
-def test_swim_distance_and_speed_are_divided():
-    act = {"sport_type": "Swim", "distance": 2000.0, "average_speed": 1.0, "moving_time": 1800}
-    dist, speed = corrected_distance_and_speed(act)
-    assert dist == 2000.0 / SWIM_DISTANCE_DIVISOR
-    assert speed == 1.0 / SWIM_DISTANCE_DIVISOR
+def test_distances_are_taken_as_strava_reports_them():
+    swim = {"sport_type": "Swim", "distance": 2000.0, "average_speed": 1.0, "moving_time": 1800}
+    tacx = {"sport_type": "VirtualRide", "distance": 30000.0, "average_speed": 7.5, "moving_time": 4000, "trainer": True}
+    assert distance_and_speed(swim) == (2000.0, 1.0)
+    assert distance_and_speed(tacx) == (30000.0, 7.5)
 
 
-def test_indoor_ride_distance_is_estimated_from_duration():
-    act = {"sport_type": "VirtualRide", "distance": 0.0, "average_speed": 0.0, "moving_time": 3600, "trainer": True}
-    assert is_indoor_ride(act)
-    dist, speed = corrected_distance_and_speed(act)
-    assert dist == INDOOR_BIKE_SPEED_KMH * 1000.0
-    assert round(speed, 4) == round(INDOOR_BIKE_SPEED_KMH / 3.6, 4)
-
-
-def test_outdoor_ride_is_left_alone():
-    act = {"sport_type": "Ride", "distance": 40000.0, "average_speed": 8.0, "moving_time": 5000}
-    assert not is_indoor_ride(act)
-    assert corrected_distance_and_speed(act) == (40000.0, 8.0)
-
-
-def test_trainer_ride_with_real_distance_is_not_estimated():
-    """A trainer that does report distance must keep its own numbers."""
-    act = {"sport_type": "VirtualRide", "distance": 30000.0, "average_speed": 7.5, "moving_time": 4000, "trainer": True}
-    assert not is_indoor_ride(act)
-    assert corrected_distance_and_speed(act) == (30000.0, 7.5)
+def test_distance_and_speed_tolerate_missing_fields():
+    assert distance_and_speed({"sport_type": "Run", "distance": None}) == (0.0, 0.0)
 
 
 def test_format_mmss_rounds_and_clamps():

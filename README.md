@@ -10,7 +10,7 @@
 
 ## 🌟 Key Highlights
 
-- **Multi-Sport Telemetry Sync**: Automated Strava OAuth2 sync with sport corrections (swimming pace `/100m`, pool distance correction, indoor trainer speed estimation).
+- **Multi-Sport Telemetry Sync**: Automated Strava OAuth2 sync (distances used as Strava reports them; swimming pace shown per `/100m`).
 - **24/7 Garmin Biometrics & Baselines**: Automated tracking of Sleep hours, Resting Heart Rate (HRrest), overnight HRV, daily Body Battery, plus statistical baseline normal ranges ($\mu \pm 0.75\sigma$) with autonomic fatigue anomaly detection.
 - **Fitness, Fatigue & Form (Banister EWMA)**: Chronic Training Load (CTL, 42d), Acute Training Load (ATL, 7d), and Training Stress Balance (TSB = CTL - ATL) tracking readiness, freshness, and optimal overload.
 - **Equipment & Shoe Mileage Tracker**: Automated tracking of cumulative mileage per shoe/bike with wear degradation thresholds and retirement alert warnings.

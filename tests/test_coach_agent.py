@@ -263,11 +263,11 @@ def test_an_absurd_limit_is_clamped_not_honoured(tools):
     assert by_name["get_activities"](limit=-5)["count"] == 1
 
 
-def test_swim_distance_goes_through_the_dashboard_correction(tools):
-    """Strava double-counts this athlete's pool swims; the chat must not."""
+def test_swim_distance_is_strava_distance(tools):
+    """The chat reports swim distance exactly as Strava does, like the dashboard."""
     by_name, _, _ = tools
     swim = by_name["get_activities"](sport="swim")["activities"][0]
-    assert swim["distance_m"] == 5000  # 10 000 raw / SWIM_DISTANCE_DIVISOR
+    assert swim["distance_m"] == 10000  # Strava distance used as-is
     assert swim["pace_per_100m"].endswith("/100m")
     assert "distance_km" not in swim
 

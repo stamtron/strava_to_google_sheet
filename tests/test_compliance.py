@@ -5,7 +5,7 @@ Unit tests for Plan vs. Actual Workout Compliance Engine.
 import pytest
 
 from src.analytics.compliance import evaluate_daily_compliance, parse_planned_workout
-from src.formatting import corrected_distance_and_speed
+from src.formatting import distance_and_speed
 
 
 def test_parse_planned_workout_running_intervals():
@@ -125,7 +125,7 @@ def test_duration_targets_use_the_same_bands_as_distance():
 def test_swim_actual_pace_is_per_100m():
     act = _run(2000.0, 2400, sport="Swim")
     match = evaluate_daily_compliance("Κολύμβηση 2000μ", [act])["matches"][0]
-    distance_m, _ = corrected_distance_and_speed(act)
+    distance_m, _ = distance_and_speed(act)
     assert match["pace_unit"] == "per_100m"
     assert match["actual_pace_sec"] == pytest.approx(2400 / (distance_m / 100.0), abs=1)
 
@@ -163,6 +163,8 @@ def test_split_recordings_of_one_planned_run_are_summed():
     assert m["actual_km"] == 8.06
     assert m["actual_min"] == 44.0
     assert m["dist_compliance_pct"] == round(8.06 / 9 * 100, 1)
+    assert m["status"] == "spot_on"
+    assert res["compliance_score"] == 90  # 89.6% of the plan, not a flat 100
     assert m["activity_name"] == "Run 1, Run 2, Run 3"  # chronological
     assert res["unmatched_actual"] == []
 

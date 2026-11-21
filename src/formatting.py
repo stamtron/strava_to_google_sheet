@@ -2,20 +2,12 @@
 Shared Duration, Pace, and Distance Formatting.
 
 Single source of truth for unit conversions used by the CLI, Telegram,
-the coach and the API. Sport-specific data corrections (swim distance divisor,
-indoor-trainer distance estimate) also live here so every consumer applies them
-identically.
+the coach and the API. Distances and speeds are taken as Strava reports them.
 """
 
 import re
 
-from src.config import (
-    BIKE_SPORTS,
-    INDOOR_BIKE_SPEED_KMH,
-    RUN_SPORTS,
-    SWIM_DISTANCE_DIVISOR,
-    SWIM_SPORTS,
-)
+from src.config import RUN_SPORTS, SWIM_SPORTS
 
 # Sports whose pace reads as min/km rather than km/h.
 _PACE_SPORTS = (*RUN_SPORTS, "Walk", "Hike")
@@ -92,8 +84,6 @@ def format_pace(speed_mps: float, sport_type: str = "", greek: bool = False) -> 
     Format an average speed as a sport-appropriate pace.
 
     Swim -> min/100m, run/walk/hike -> min/km, everything else -> km/h.
-    `speed_mps` must already have any sport correction applied (see
-    `corrected_distance_and_speed`).
     """
     if not speed_mps or speed_mps <= 0:
         return "N/A" if greek else "—"
@@ -110,33 +100,6 @@ def format_pace(speed_mps: float, sport_type: str = "", greek: bool = False) -> 
     return f"{speed_mps * 3.6:.1f} {unit}"
 
 
-def is_indoor_ride(act: dict) -> bool:
-    """True if this is a trainer ride whose reported distance is unusable."""
-    sport = act.get("sport_type") or act.get("type", "")
-    if sport not in BIKE_SPORTS:
-        return False
-    distance_m = float(act.get("distance", 0) or 0)
-    moving_time = int(act.get("moving_time", 0) or 0)
-    return bool(act.get("trainer", False)) and distance_m < 100 and moving_time > 0
-
-
-def corrected_distance_and_speed(act: dict) -> tuple[float, float]:
-    """
-    Return (distance_m, speed_mps) with sport corrections applied.
-
-    Swims are divided by SWIM_DISTANCE_DIVISOR; indoor trainer rides get their
-    distance estimated from duration at INDOOR_BIKE_SPEED_KMH.
-    """
-    sport = act.get("sport_type") or act.get("type", "")
-    distance_m = float(act.get("distance", 0) or 0)
-    speed_mps = float(act.get("average_speed", 0) or 0)
-    moving_time = int(act.get("moving_time", 0) or 0)
-
-    if sport in SWIM_SPORTS and SWIM_DISTANCE_DIVISOR:
-        distance_m /= SWIM_DISTANCE_DIVISOR
-        speed_mps /= SWIM_DISTANCE_DIVISOR
-    elif is_indoor_ride(act):
-        distance_m = (moving_time / 3600.0) * INDOOR_BIKE_SPEED_KMH * 1000.0
-        speed_mps = INDOOR_BIKE_SPEED_KMH / 3.6
-
-    return distance_m, speed_mps
+def distance_and_speed(act: dict) -> tuple[float, float]:
+    """Return (distance_m, speed_mps) exactly as Strava reports them, None-safe."""
+    return float(act.get("distance") or 0), float(act.get("average_speed") or 0)

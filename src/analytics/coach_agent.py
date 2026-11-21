@@ -84,7 +84,7 @@ from src.config import (
     SHOE_ALERT_KM,
     TRAINING_PHASE,
 )
-from src.formatting import corrected_distance_and_speed, format_duration
+from src.formatting import distance_and_speed, format_duration
 from src.integrations.garmin import assess_workout_readiness, get_daily_recovery_metrics
 from src.integrations.plan_source import get_planned_workout_for_date
 from src.integrations.weather import get_weather_outlook
@@ -257,10 +257,9 @@ def _activity_brief(act: dict) -> dict:
 
     Full Strava payloads are ~80 fields each; sending them would burn the
     context window on segment efforts and gear ids. Distance and speed come from
-    `corrected_distance_and_speed` so the chat agrees with the dashboard on
-    indoor rides and swim lengths.
+    `distance_and_speed` so the chat agrees with the dashboard.
     """
-    dist_m, speed_mps = corrected_distance_and_speed(act)
+    dist_m, speed_mps = distance_and_speed(act)
     moving = act.get("moving_time") or 0
     group = sport_group(act.get("sport_type") or act.get("type") or "")
 

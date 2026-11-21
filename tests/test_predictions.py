@@ -92,19 +92,13 @@ def test_predictions_fall_back_without_run_history():
     assert len(pred["predictions"]) == 4
 
 
-def test_swim_baseline_accounts_for_the_distance_correction():
-    """
-    Swim pace must be derived from corrected distance, so it agrees with the
-    sheet and dashboard rather than reading twice as fast.
-    """
+def test_swim_baseline_uses_strava_distance_as_is():
+    """Swim pace comes straight from Strava distance, matching the dashboard."""
     tri = predict_triathlon_performances(
         [{"sport_type": "Swim", "distance": 3000.0, "moving_time": 2700, "average_speed": 3000 / 2700}]
     )
-    mins, _, rest = tri["baselines"]["swim_100m"].partition(":")
-    secs = int(rest.split()[0])
-    pace_sec = int(mins) * 60 + secs
-    # 1500m corrected in 2700s -> 3:00 /100m, clamped to the realistic ceiling.
-    assert pace_sec >= 105.0
+    # 3000 m in 2700 s -> 1:30 /100m.
+    assert tri["baselines"]["swim_100m"].startswith("1:30")
 
 
 def test_triathlon_distances_are_ordered_by_total_time():

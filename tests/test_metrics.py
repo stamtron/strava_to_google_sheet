@@ -84,7 +84,7 @@ def test_activities_group_into_monday_weeks():
     assert weeks["2026-08-24"]["week_sunday"] == "2026-08-30"
 
 
-def test_weekly_volumes_split_by_sport_with_corrections():
+def test_weekly_volumes_split_by_sport():
     weeks = process_activities_into_weeks([
         _act("2026-08-24", "Run", distance=10000.0, moving_time=3000, total_elevation_gain=120.0),
         _act("2026-08-25", "Ride", distance=40000.0, moving_time=5400, total_elevation_gain=300.0),
@@ -94,7 +94,7 @@ def test_weekly_volumes_split_by_sport_with_corrections():
     w = weeks["2026-08-24"]
     assert round(w["run_dist_km"], 2) == 10.0
     assert round(w["bike_dist_km"], 2) == 40.0
-    assert w["swim_dist_m"] == 1500.0  # divisor applied
+    assert w["swim_dist_m"] == 3000.0  # Strava distance used as-is
     assert w["strength_time_sec"] == 1800
     assert w["total_time_sec"] == 3000 + 5400 + 2700 + 1800
     assert w["total_elevation_m"] == 420.0

@@ -33,7 +33,7 @@ from src.config import (
     STRENGTH_SESSIONS_DEFAULT,
     STRENGTH_SESSIONS_HIGH_RISK,
 )
-from src.formatting import corrected_distance_and_speed
+from src.formatting import distance_and_speed
 from src.timeutil import today_local
 
 # Severity is ordered, so the worst signal in a set can be found by max().
@@ -230,7 +230,7 @@ def long_run_share(weeks_dict: dict) -> dict:
 
     week_key = max(weeks_dict.keys())
     runs = _run_activities(weeks_dict[week_key])
-    distances = [corrected_distance_and_speed(a)[0] / 1000.0 for a in runs]
+    distances = [distance_and_speed(a)[0] / 1000.0 for a in runs]
     longest = max(distances, default=0.0)
     run_km = weeks_dict[week_key].get("run_dist_km", 0.0)
 
@@ -447,7 +447,7 @@ def sport_strength_profile(activities: list[dict]) -> dict:
         g = groups.setdefault(
             group, {"sessions": 0, "time_sec": 0, "effort": 0.0, "distance_m": 0.0}
         )
-        dist_m, _ = corrected_distance_and_speed(act)
+        dist_m, _ = distance_and_speed(act)
         g["sessions"] += 1
         g["time_sec"] += act.get("moving_time", 0) or 0
         g["effort"] += calculate_relative_effort(act)

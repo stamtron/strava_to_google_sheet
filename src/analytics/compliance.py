@@ -23,7 +23,7 @@ from src.config import (
     COMPLIANCE_SPOT_ON_MAX_PCT,
     COMPLIANCE_SPOT_ON_MIN_PCT,
 )
-from src.formatting import corrected_distance_and_speed, parse_pace_to_sec
+from src.formatting import distance_and_speed, parse_pace_to_sec
 
 # Section-header keywords, matched on accent-stripped lower-case text. Word
 # boundaries keep e.g. "strides" from reading as a ride. Checked in order.
@@ -227,7 +227,7 @@ def evaluate_daily_compliance(
             })
             continue
 
-        act_dist_km = sum(corrected_distance_and_speed(a)[0] for a in acts) / 1000.0
+        act_dist_km = sum(distance_and_speed(a)[0] for a in acts) / 1000.0
         moving_time_sec = sum(a.get("moving_time") or 0 for a in acts)
         # Swim targets (e.g. "@1:45") are per 100 m; everything else is per km.
         is_swim = p_sport == "Swim"
@@ -291,15 +291,14 @@ def evaluate_daily_compliance(
         scores = []
         for m in matches:
             st = m["status"]
-            if st == "spot_on":
-                scores.append(COMPLIANCE_SCORE_FULL)
-            elif st == "completed":
-                scores.append(COMPLIANCE_SCORE_COMPLETED)
-            elif st in ("overreach", "underreach"):
-                # Over/underreach always carry a volume percentage (see classification).
+            if st in ("spot_on", "overreach", "underreach"):
+                # Score the actual deviation, even inside the spot-on band:
+                # 8 of 9 km is close, not 100%. The band only sets the status.
                 pct = m.get("dist_compliance_pct") if m.get("dist_compliance_pct") is not None else m.get("dur_compliance_pct")
                 deviation = abs(100 - pct)
-                scores.append(max(COMPLIANCE_SCORE_DEVIATION_FLOOR, int(COMPLIANCE_SCORE_FULL - deviation)))
+                scores.append(max(COMPLIANCE_SCORE_DEVIATION_FLOOR, round(COMPLIANCE_SCORE_FULL - deviation)))
+            elif st == "completed":
+                scores.append(COMPLIANCE_SCORE_COMPLETED)
             elif st == "missed":
                 scores.append(0)
             else:

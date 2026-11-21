@@ -16,7 +16,7 @@ from src.config import (
     TELEGRAM_BOT_LOOP_SLEEP_SEC,
     TELEGRAM_POLL_TIMEOUT_SEC,
 )
-from src.formatting import corrected_distance_and_speed, format_duration, format_pace
+from src.formatting import distance_and_speed, format_duration, format_pace
 from src.integrations.strava import (
     StravaAuthRequired,
     StravaNetworkError,
@@ -53,8 +53,7 @@ def print_activities(activities: list[dict], details: dict) -> None:
         act_id = act["id"]
         sport = act.get("sport_type") or act.get("type", "Unknown")
         name = act.get("name", "Untitled")
-        # Applies the swim divisor and the indoor-trainer distance estimate.
-        dist_m, speed = corrected_distance_and_speed(act)
+        dist_m, speed = distance_and_speed(act)
         dist_km = dist_m / 1000.0
         moving_time = act.get("moving_time", 0)
         elev = act.get("total_elevation_gain", 0)

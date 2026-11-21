@@ -111,14 +111,6 @@ FINAL_SURGE_CACHE_FILE = str(PROJECT_ROOT / ".final_surge_cache.json")
 HR_MAX = _env_int("HR_MAX", 185)
 HR_REST = _env_int("HR_REST", 50)
 
-# Sport-specific data corrections.
-# Strava reports this athlete's pool swims at double the true distance, so raw
-# swim distance and speed are divided before use.
-SWIM_DISTANCE_DIVISOR = _env_float("SWIM_DISTANCE_DIVISOR", 2.0)
-# Indoor trainer rides report ~0 distance, so distance is estimated from
-# duration at a nominal steady speed.
-INDOOR_BIKE_SPEED_KMH = _env_float("INDOOR_BIKE_SPEED_KMH", 21.0)
-
 # ACWR (Acute:Chronic Workload Ratio) configuration.
 # Chronic load is the mean weekly load over the ACWR_CHRONIC_WEEKS weeks
 # *preceding* the week being scored; fewer than ACWR_MIN_CHRONIC_WEEKS of

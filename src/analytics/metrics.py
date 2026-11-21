@@ -41,7 +41,7 @@ from src.config import (
     TSB_OPTIMAL_MAX,
     TSB_OPTIMAL_MIN,
 )
-from src.formatting import corrected_distance_and_speed
+from src.formatting import distance_and_speed
 from src.timeutil import today_local
 
 # ACWR interpretation bands as (inclusive upper edge, zone key). Keys are
@@ -177,8 +177,7 @@ def process_activities_into_weeks(activities: list[dict]) -> dict:
     Group activities by week (Monday to Sunday) and calculate all sport volumes,
     elevation gains, calories, and Relative Effort (Suffer Score).
 
-    Distances go through `corrected_distance_and_speed`, which applies the swim
-    divisor and the indoor-trainer distance estimate.
+    Distances are taken as Strava reports them (`distance_and_speed`).
     """
     weeks = {}
 
@@ -218,7 +217,7 @@ def process_activities_into_weeks(activities: list[dict]) -> dict:
         week["activities"].append(act)
 
         moving_time = act.get("moving_time", 0) or 0
-        dist_m, _ = corrected_distance_and_speed(act)
+        dist_m, _ = distance_and_speed(act)
         dist_km = dist_m / 1000.0
         elev = float(act.get("total_elevation_gain", 0) or 0)
         sport = act.get("sport_type") or act.get("type", "")

@@ -51,7 +51,7 @@ from src.config import (
     TRAINING_PHASE,
     TRI_LEG_FACTORS,
 )
-from src.formatting import corrected_distance_and_speed
+from src.formatting import distance_and_speed
 from src.timeutil import today_local
 
 # Where each verified PB was set. The times live in config.py as tunables; only
@@ -188,7 +188,7 @@ def predict_race_performances(activities: list[dict], custom_5k_pace_sec: float 
         for a in activities:
             sport = a.get("sport_type") or a.get("type", "")
             if sport in RUN_SPORTS:
-                dist_m, _ = corrected_distance_and_speed(a)
+                dist_m, _ = distance_and_speed(a)
                 dist_km = dist_m / 1000.0
                 time_s = a.get("moving_time", 0) or 0
                 if dist_km > longest_run_km:
@@ -260,7 +260,7 @@ def predict_triathlon_performances(activities: list[dict], use_race_pb: bool = F
         swim_paces = []
         for a in activities:
             if (a.get("sport_type") or a.get("type")) in SWIM_SPORTS:
-                raw_dist, _ = corrected_distance_and_speed(a)
+                raw_dist, _ = distance_and_speed(a)
                 moving_time = a.get("moving_time", 0) or 0
                 if raw_dist >= 300 and moving_time > 180:
                     pace = moving_time / (raw_dist / 100.0)
@@ -273,7 +273,7 @@ def predict_triathlon_performances(activities: list[dict], use_race_pb: bool = F
         for a in activities:
             sport = a.get("sport_type") or a.get("type", "")
             if sport in BIKE_SPORTS:
-                dist_m, _ = corrected_distance_and_speed(a)
+                dist_m, _ = distance_and_speed(a)
                 dist_km = dist_m / 1000.0
                 moving_time = a.get("moving_time", 0) or 0
                 if dist_km >= 15.0 and moving_time > 1200:
@@ -287,7 +287,7 @@ def predict_triathlon_performances(activities: list[dict], use_race_pb: bool = F
         for a in activities:
             sport = a.get("sport_type") or a.get("type", "")
             if sport in RUN_SPORTS:
-                dist_m, _ = corrected_distance_and_speed(a)
+                dist_m, _ = distance_and_speed(a)
                 dist_km = dist_m / 1000.0
                 time_s = a.get("moving_time", 0) or 0
                 if dist_km >= 3.0 and time_s > 600:

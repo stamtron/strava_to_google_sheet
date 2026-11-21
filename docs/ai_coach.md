@@ -26,7 +26,7 @@ graph TD
 
 ## 🛠️ The 14 Agent Tools
 
-The agent intelligently decides which tools to invoke based on user prompts. All numeric tools route through `src.formatting.corrected_distance_and_speed` so that numbers in the chat always match the dashboard:
+The agent intelligently decides which tools to invoke based on user prompts. All numeric tools route through `src.formatting.distance_and_speed` so that numbers in the chat always match the dashboard:
 
 | Tool | Purpose & Example Query |
 | --- | --- |

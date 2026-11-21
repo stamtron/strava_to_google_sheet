@@ -70,8 +70,6 @@ All settings in StaminAI are centralized in [`src/config.py`](../src/config.py) 
 | --- | --- | --- |
 | `HR_MAX` | `185` | Maximum heart rate for Karvonen zones and TRIMP stress |
 | `HR_REST` | `50` | Resting heart rate for Karvonen Heart Rate Reserve |
-| `SWIM_DISTANCE_DIVISOR` | `2.0` | Divisor to correct watch double-counting in pool swims |
-| `INDOOR_BIKE_SPEED_KMH` | `21.0` | Estimated speed (km/h) for indoor trainer rides reporting 0 km |
 | `ACWR_CHRONIC_WEEKS` | `4` | Weeks in the chronic baseline window |
 | `ACWR_MIN_CHRONIC_WEEKS` | `2` | Minimum chronic history required before ACWR ratio is reported |
 | `CTL_DAYS` | `42` | Banister Chronic Training Load (CTL / Fitness) EWMA time constant (days) |

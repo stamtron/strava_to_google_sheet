@@ -53,7 +53,7 @@ node --check web/app.js                    # Validate frontend JavaScript syntax
 strava_to_google_sheet/
 ├── src/
 │   ├── config.py                 # Central configuration, env tunables, path constants
-│   ├── formatting.py             # Duration/pace formatters, corrected_distance_and_speed
+│   ├── formatting.py             # Duration/pace formatters, distance_and_speed
 │   ├── status_labels.py          # Display text for analytics status keys (Telegram/coach)
 │   ├── timeutil.py               # Athlete-timezone now_local()/today_local()
 │   ├── integrations/
@@ -106,8 +106,8 @@ strava_to_google_sheet/
 3. **No Presentation Strings in Analytics**:
    Analytics functions emit machine-readable status keys only (`low`, `optimal`, `overreaching`, `spike`, `fresh`, `neutral`, `high_fatigue`, `advice_key`s). Presentation labels, colors, and emojis belong strictly in `src/status_labels.py` (Telegram/coach text) and `web/app.js` / `web/styles.css` (dashboard).
    - Analytics also return no `summary` prose; callers render it, e.g. `status_labels.compliance_summary`.
-4. **Single Home for Sport Corrections**:
-   `corrected_distance_and_speed(act)` in `src/formatting.py` is the **only** place where swim distance divisors and indoor bike distance estimates are applied. Never calculate ad-hoc distance adjustments inline.
+4. **Strava Distances Are Used As-Is**:
+   Read distance/speed via `distance_and_speed(act)` in `src/formatting.py`. No sport corrections (no swim divisor, no indoor-ride estimate — indoor rides come from Tacx with real distance). Never add ad-hoc distance adjustments.
 5. **No Magic Numbers**:
    All physiological constants, HR max/rest, time constants, limits, thresholds, and ports live in `src/config.py` backed by `_env_*` helpers.
 6. **ACWR Baseline Invariant**:

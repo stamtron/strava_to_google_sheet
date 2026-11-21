@@ -17,7 +17,7 @@ from src.config import (
     RUN_SPORTS,
     SHOE_ALERT_KM,
 )
-from src.formatting import corrected_distance_and_speed
+from src.formatting import distance_and_speed
 
 # Strava gear ids encode their kind: "g…" is shoes, "b…" is a bike.
 _GEAR_ID_PREFIX_TYPES = {"g": "Shoes", "b": "Bike"}
@@ -57,7 +57,7 @@ def extract_gear_summary(
         sport = act.get("sport_type") or act.get("type", "Unknown")
         gear_type = _classify_gear(gear_id, sport)
 
-        dist_m, _ = corrected_distance_and_speed(act)
+        dist_m, _ = distance_and_speed(act)
         dist_km = dist_m / 1000.0
         start_date = act.get("start_date_local", "")
 

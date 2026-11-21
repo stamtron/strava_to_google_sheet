@@ -728,8 +728,7 @@ function renderPolarizedBar(pol) {
 function formatPace(sport, movingTime, distanceMeters) {
   if (!movingTime || movingTime <= 0 || !distanceMeters || distanceMeters <= 0) return "";
   if (sport === "Swim") {
-    const adjDistM = distanceMeters / 2.0;
-    const paceSec = movingTime / (adjDistM / 100.0);
+    const paceSec = movingTime / (distanceMeters / 100.0);
     const m = Math.floor(paceSec / 60);
     const s = Math.floor(paceSec % 60);
     return `${m}:${s.toString().padStart(2, "0")} /100m`;
@@ -852,15 +851,11 @@ function renderCalendar(week) {
         if (sport.includes("Ride")) {
           sportClass = "act-ride";
           icon = "🚴";
-          let distKm = (rawDistM / 1000.0);
-          if (a.trainer && distKm < 0.1 && movingTime > 0) {
-            distKm = (movingTime / 3600.0) * 21.0;
-          }
-          distStr = `${distKm.toFixed(2)} km`;
+          distStr = `${(rawDistM / 1000.0).toFixed(2)} km`;
         } else if (sport.includes("Swim")) {
           sportClass = "act-swim";
           icon = "🏊";
-          const distM = Math.round(rawDistM / 2.0);
+          const distM = Math.round(rawDistM);
           distStr = `${distM} m`;
         } else if (sport.includes("Weight") || sport.includes("Workout")) {
           sportClass = "act-strength";
@@ -1073,8 +1068,11 @@ function initProgressionCharts() {
       maintainAspectRatio: false,
       scales: {
         y: {
-          min: 0.5,
-          max: 2.0,
+          // Soft bounds: the axis grows to fit real ratios (e.g. 0.25 after a
+          // light week, 2.8 on a spike) instead of clipping the line off-chart.
+          suggestedMin: 0.5,
+          suggestedMax: 2.0,
+          beginAtZero: true,
           grid: { color: "rgba(255, 255, 255, 0.05)" },
           ticks: { color: "#94a3b8" },
         },
@@ -1215,7 +1213,7 @@ function updateProgressionCharts(progression) {
   const elevs = progression.map(p => p.elevation_m);
   // null (not 1.0) for weeks without enough chronic history: Chart.js renders a
   // gap there instead of inventing a neutral ratio.
-  const acwrs = progression.map(p => (p.acwr && p.acwr.acwr_ratio) || null);
+  const acwrs = progression.map(p => p.acwr?.acwr_ratio ?? null);
 
   if (effortProgressionChart) {
     effortProgressionChart.data.labels = labels;
