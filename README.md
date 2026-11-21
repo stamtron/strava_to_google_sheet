@@ -59,6 +59,7 @@ uv run python server.py
 ```bash
 uv run python main.py                     # Fetch recent Strava activities into local SQLite & print them
 uv run python main.py --backfill          # One-time full Strava history import into SQLite
+uv run python main.py --import-garmin-export <dir>  # Garmin export: FIT runs + wellness history
 uv run python main.py --telegram-next-day # Dispatch tomorrow's brief to Telegram
 uv run python main.py --telegram-weekly   # Dispatch weekly executive summary to Telegram
 uv run pytest                             # Run offline test suite (440+ tests)

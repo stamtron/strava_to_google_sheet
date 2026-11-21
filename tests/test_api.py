@@ -54,6 +54,19 @@ def test_dashboard_survives_weather_failure(client, offline_dashboard, monkeypat
     assert "performance" in body and "predictions" in body
 
 
+def test_dashboard_baselines_use_whole_garmin_cache(client, offline_dashboard, monkeypatch):
+    # Export-imported weeks with no activities in the loaded window still count.
+    cache = {
+        f"2026-0{m}-0{d}": {"summary": {"avg_rhr": 48, "avg_hrv": 72}, "fetched_at": 1.0}
+        for m, d in ((3, 2), (3, 9), (4, 6), (5, 4))
+    }
+    monkeypatch.setattr(dashboard_routes, "_load_garmin_cache", lambda: cache)
+    monkeypatch.setattr(dashboard_routes, "get_weather_outlook", lambda **_k: [])
+    body = client.get("/api/dashboard").json()
+    assert body["garmin"] == {}
+    assert body["baselines"]["rhr"]["weeks_used"] == 4
+
+
 def test_dashboard_analytics_failure_is_a_clean_500(client, offline_dashboard, monkeypatch):
     monkeypatch.setattr(dashboard_routes, "get_weather_outlook", lambda **_k: [])
 
@@ -320,6 +333,7 @@ def test_decoupling_endpoint_merges_cached_and_stored_details(client, monkeypatc
     ]
     monkeypatch.setattr(dashboard_routes, "get_summaries", lambda count: (acts, {"2": {"splits_metric": splits}}))
     monkeypatch.setattr(dashboard_routes, "read_history", lambda count: ([], {"1": {"splits_metric": splits}}))
+    monkeypatch.setattr(dashboard_routes, "read_fit_runs", lambda: [])
     body = client.get("/api/decoupling").json()
     assert [r["id"] for r in body["runs"]] == [1, 2]
     assert body["recent_status"] == "good"
@@ -333,3 +347,19 @@ def test_decoupling_endpoint_hides_internal_errors(client, monkeypatch):
     resp = client.get("/api/decoupling")
     assert resp.status_code == 500
     assert "secret" not in resp.text
+
+
+def test_decoupling_endpoint_includes_fit_runs_and_limits(client, monkeypatch):
+    splits = [{"distance": 1000.0, "moving_time": 300, "average_heartrate": 140} for _ in range(14)]
+    fit = [
+        {"start_utc": f"2026-0{m}-01T07:00:00Z", "start_local": f"2026-0{m}-01T09:00:00",
+         "distance_m": 14000.0, "moving_time": 4200, "splits": splits}
+        for m in (3, 4)
+    ]
+    monkeypatch.setattr(dashboard_routes, "get_summaries", lambda count: ([], {}))
+    monkeypatch.setattr(dashboard_routes, "read_history", lambda count: ([], {}))
+    monkeypatch.setattr(dashboard_routes, "read_fit_runs", lambda: fit)
+    body = client.get("/api/decoupling").json()
+    assert body["fit_runs"] == 2 and [r["source"] for r in body["runs"]] == ["fit", "fit"]
+    assert [r["date"] for r in client.get("/api/decoupling?runs=1").json()["runs"]] == ["2026-04-01"]
+    assert client.get("/api/decoupling?runs=0").status_code == 422

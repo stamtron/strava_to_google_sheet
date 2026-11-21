@@ -289,6 +289,9 @@ BASELINE_STD_FACTOR = _env_float("BASELINE_STD_FACTOR", 0.75)
 BASELINE_STD_FLOOR = _env_float("BASELINE_STD_FLOOR", 2.0)
 BASELINE_LOW_FLOOR = _env_float("BASELINE_LOW_FLOOR", 10.0)
 BASELINE_MIN_WEEKS = _env_int("BASELINE_MIN_WEEKS", 3)
+# Only the most recent weeks with a reading form the band, so a long imported
+# history doesn't anchor "normal" to fitness from a year ago.
+BASELINE_WINDOW_WEEKS = _env_int("BASELINE_WINDOW_WEEKS", 12)
 
 # Garmin daily recovery score thresholds
 RECOVERY_BASE_SCORE = _env_int("RECOVERY_BASE_SCORE", 80)
@@ -432,6 +435,21 @@ DECOUPLING_MIN_SPLITS = _env_int("DECOUPLING_MIN_SPLITS", 6)
 DECOUPLING_GOOD_PCT = _env_float("DECOUPLING_GOOD_PCT", 5.0)
 DECOUPLING_HIGH_PCT = _env_float("DECOUPLING_HIGH_PCT", 10.0)
 DECOUPLING_TREND_RUNS = _env_int("DECOUPLING_TREND_RUNS", 20)
+DECOUPLING_TREND_MAX_RUNS = _env_int("DECOUPLING_TREND_MAX_RUNS", 200)
+
+# Garmin FIT import (Garmin Connect data export). Per-second records are cut into
+# FIT_SPLIT_METERS splits for decoupling. A record counts as moving when the gap
+# since the previous one is at most FIT_MAX_RECORD_GAP_S (longer gaps are
+# auto-pause / stops) and the speed over it is at least FIT_MOVING_SPEED_MS.
+# A FIT run and a Strava activity are the same session when their starts are
+# within FIT_MATCH_TOLERANCE_S. Archive members above FIT_MAX_FILE_MB are skipped.
+FIT_SPLIT_METERS = _env_float("FIT_SPLIT_METERS", 1000.0)
+FIT_MAX_RECORD_GAP_S = _env_float("FIT_MAX_RECORD_GAP_S", 30.0)
+FIT_MOVING_SPEED_MS = _env_float("FIT_MOVING_SPEED_MS", 0.5)
+FIT_MATCH_TOLERANCE_S = _env_float("FIT_MATCH_TOLERANCE_S", 180.0)
+FIT_MAX_FILE_MB = _env_float("FIT_MAX_FILE_MB", 50.0)
+# Garmin export wellness JSON (UDS, sleep, health status) above this is skipped.
+GARMIN_EXPORT_MAX_JSON_MB = _env_float("GARMIN_EXPORT_MAX_JSON_MB", 100.0)
 
 
 # --- API & coach tunables ---

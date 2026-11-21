@@ -18,7 +18,7 @@ from src.integrations.strava import (
     get_access_token,
 )
 from src.storage.activity_store import get_activities as store_get_activities
-from src.storage.activity_store import get_details, init_db, upsert_activities, upsert_details
+from src.storage.activity_store import get_details, get_fit_runs, init_db, upsert_activities, upsert_details
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +91,22 @@ def read_history(count: int) -> tuple[list[dict], dict]:
     except Exception as e:
         logger.warning("History store read failed: %s", e)
         return [], {}
+    finally:
+        conn.close()
+
+
+def read_fit_runs() -> list[dict]:
+    """Runs imported from a Garmin export; [] if the store is unavailable."""
+    try:
+        conn = init_db()
+    except Exception as e:
+        logger.warning("History store unavailable: %s", e)
+        return []
+    try:
+        return get_fit_runs(conn)
+    except Exception as e:
+        logger.warning("FIT run read failed: %s", e)
+        return []
     finally:
         conn.close()
 

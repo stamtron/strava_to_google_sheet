@@ -57,6 +57,15 @@ $$\text{Normal Band} = \mu \pm 0.75 \times \sigma$$
 - **Overnight HRV**: Suppressed values below the $-0.75\sigma$ floor indicate sympathetic stress or incomplete parasympathetic restoration.
 - **Resting Heart Rate (RHR)**: Elevated values above $+0.75\sigma$ indicate systemic fatigue, dehydration, or impending illness.
 - **Integration**: Feeds directly into the daily workout readiness assessor to automatically recommend interval volume reductions or low-impact substitutions.
+- **Window**: Each band uses the latest `BASELINE_WINDOW_WEEKS` (default 12) weeks that have the reading, needing at least `BASELINE_MIN_WEEKS`. The source is every week in `.garmin_cache.json`, so a Garmin data export import (`main.py --import-garmin-export`) gives full baselines from day one instead of waiting for weeks of API fetches.
+
+---
+
+## 💓 Aerobic Decoupling (Pa:HR)
+
+For long steady runs (`DECOUPLING_MIN_MINUTES`+, even pace, with HR), the efficiency factor (speed ÷ HR) of the first half is compared with the second half using per-km splits. Drift below `DECOUPLING_GOOD_PCT` (5%) means aerobic durability is good; `DECOUPLING_HIGH_PCT` (10%) or more is high.
+
+Splits come from the Strava activity detail. When a run has no fetched detail, or predates the Strava sync, splits from Garmin export FIT files are used instead. The import matches runs by UTC start within `FIT_MATCH_TOLERANCE_S` and builds `FIT_SPLIT_METERS` splits from the record stream, counting moving time only (gaps over `FIT_MAX_RECORD_GAP_S` or speed under `FIT_MOVING_SPEED_MS` are pauses). Runs from FIT carry `source: "fit"`.
 
 ---
 

@@ -65,3 +65,64 @@ def test_trend_orders_runs_and_counts_missing_detail():
 def test_trend_empty():
     trend = decoupling_trend([], {})
     assert trend["count"] == 0 and trend["latest_pct"] is None and trend["recent_status"] == "unknown"
+
+
+def _fit_run(start_utc, start_local, splits, moving_time=4200):
+    return {
+        "start_utc": start_utc,
+        "start_local": start_local,
+        "distance_m": 14000.0,
+        "moving_time": moving_time,
+        "splits": splits,
+    }
+
+
+def _run(act_id, start_utc, start_local):
+    return {
+        "id": act_id, "sport_type": "Run", "name": f"Run {act_id}", "moving_time": 4200,
+        "distance": 14000, "start_date": start_utc, "start_date_local": start_local,
+    }
+
+
+def test_fit_splits_fill_in_missing_strava_detail():
+    acts = [_run(1, "2026-11-08T06:00:00Z", "2026-11-08T08:00:00")]
+    fit = [_fit_run("2026-11-08T06:01:30Z", "2026-11-08T08:01:30", _splits(14, hr_step=2.5))]
+    trend = decoupling_trend(acts, {}, fit_runs=fit)
+    assert trend["runs_without_detail"] == 0
+    (run,) = trend["runs"]
+    assert run["id"] == 1 and run["source"] == "fit" and run["status"] == "high"
+    assert trend["fit_runs"] == 1
+
+
+def test_strava_detail_wins_and_matched_fit_run_is_not_duplicated():
+    acts = [_run(1, "2026-11-08T06:00:00Z", "2026-11-08T08:00:00")]
+    fit = [_fit_run("2026-11-08T06:00:00Z", "2026-11-08T08:00:00", _splits(14, hr_step=2.5))]
+    trend = decoupling_trend(acts, {"1": {"splits_metric": _splits(14)}}, fit_runs=fit)
+    (run,) = trend["runs"]
+    assert run["source"] == "strava" and run["decoupling_pct"] == 0.0
+    assert trend["fit_runs"] == 0
+
+
+def test_unmatched_fit_runs_extend_history():
+    acts = [_run(1, "2026-11-08T06:00:00Z", "2026-11-08T08:00:00")]
+    fit = [
+        _fit_run("2026-11-08T06:30:00Z", "2026-11-08T08:30:00", _splits(14)),  # outside match tolerance
+        _fit_run("2026-03-01T07:00:00Z", "2026-03-01T09:00:00", _splits(14)),
+        _fit_run("2026-03-05T07:00:00Z", "2026-03-05T09:00:00", _splits(14), moving_time=1800),  # too short
+    ]
+    trend = decoupling_trend(acts, {"1": {"splits_metric": _splits(14)}}, fit_runs=fit)
+    assert [(r["date"], r["id"], r["source"]) for r in trend["runs"]] == [
+        ("2026-03-01", None, "fit"),
+        ("2026-11-08", 1, "strava"),
+        ("2026-11-08", None, "fit"),
+    ]
+    assert trend["runs"][0]["name"] is None
+    assert trend["fit_runs"] == 2
+
+
+def test_fit_runs_respect_the_limit():
+    fit = [
+        _fit_run(f"2026-0{m}-01T07:00:00Z", f"2026-0{m}-01T09:00:00", _splits(14)) for m in range(1, 6)
+    ]
+    trend = decoupling_trend([], {}, limit=2, fit_runs=fit)
+    assert [r["date"] for r in trend["runs"]] == ["2026-04-01", "2026-05-01"]

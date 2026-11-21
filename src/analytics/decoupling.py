@@ -8,13 +8,15 @@ that drop as a percentage of the first-half EF:
 
     decoupling % = (EF_first - EF_second) / EF_first * 100
 
-Computed from Strava's per-km `splits_metric` (in the activity detail payload),
+Computed from Strava's per-km `splits_metric` (in the activity detail payload)
+or the same shape rebuilt from an imported Garmin FIT file (`fit_splits`),
 time-weighted so a short final split doesn't count like a full kilometre. Only
 long, steady runs qualify — intervals and progressions would drift by design.
 
 Returns numbers and status keys (`good`, `moderate`, `high`) only.
 """
 
+from datetime import datetime
 from statistics import mean, pstdev
 
 from src.analytics.metrics import sport_group
@@ -26,6 +28,7 @@ from src.config import (
     DECOUPLING_MIN_SPLIT_KM,
     DECOUPLING_MIN_SPLITS,
     DECOUPLING_TREND_RUNS,
+    FIT_MATCH_TOLERANCE_S,
 )
 
 
@@ -99,23 +102,59 @@ def run_decoupling(splits: list[dict]) -> dict | None:
     }
 
 
-def decoupling_trend(activities: list[dict], details: dict, limit: int = DECOUPLING_TREND_RUNS) -> dict:
+def _utc_seconds(raw: str | None) -> float | None:
+    """ISO-8601 UTC timestamp (Strava `start_date`, FIT `start_utc`) -> epoch seconds."""
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _match_fit(start: float | None, fit_by_start: list[tuple[float, dict]]) -> dict | None:
+    """The FIT run starting within FIT_MATCH_TOLERANCE_S of `start`, if any."""
+    if start is None:
+        return None
+    best = min(fit_by_start, key=lambda item: abs(item[0] - start), default=None)
+    if best and abs(best[0] - start) <= FIT_MATCH_TOLERANCE_S:
+        return best[1]
+    return None
+
+
+def decoupling_trend(
+    activities: list[dict],
+    details: dict,
+    limit: int = DECOUPLING_TREND_RUNS,
+    fit_runs: list[dict] | None = None,
+) -> dict:
     """
     Decoupling for the most recent qualifying runs, oldest first.
 
     `details` maps activity id (str or int) to the Strava detail payload.
-    `runs_without_detail` counts recent runs that couldn't be assessed because
-    no detail (splits) has been fetched for them yet.
+    `fit_runs` are runs imported from a Garmin export (`splits` in Strava's
+    shape). A Strava run without fetched splits falls back to the FIT run with
+    the same start; FIT runs that match no Strava activity at all (history
+    older than the Strava sync) are assessed on their own.
+    `runs_without_detail` counts recent Strava runs with no splits from either.
     """
+    fit_by_start = [(t, r) for r in fit_runs or [] if (t := _utc_seconds(r.get("start_utc"))) is not None]
+    matched_fit: set[int] = set()
     runs, missing_detail = [], 0
+
     for act in activities:
+        fit = _match_fit(_utc_seconds(act.get("start_date")), fit_by_start)
+        if fit is not None:
+            matched_fit.add(id(fit))
         if sport_group(act.get("sport_type") or act.get("type") or "") != "run":
             continue
         if (act.get("moving_time") or 0) / 60 < DECOUPLING_MIN_MINUTES:
             continue
         act_id = act.get("id")
         detail = details.get(str(act_id)) or details.get(act_id) or {}
-        splits = detail.get("splits_metric")
+        splits, source = detail.get("splits_metric"), "strava"
+        if not splits and fit is not None:
+            splits, source = fit.get("splits"), "fit"
         if not splits:
             missing_detail += 1
             continue
@@ -127,6 +166,22 @@ def decoupling_trend(activities: list[dict], details: dict, limit: int = DECOUPL
             "date": (act.get("start_date_local") or "")[:10],
             "name": act.get("name"),
             "distance_km": round((act.get("distance") or 0) / 1000, 2),
+            "source": source,
+            **result,
+        })
+
+    for _start, fit in fit_by_start:
+        if id(fit) in matched_fit or (fit.get("moving_time") or 0) / 60 < DECOUPLING_MIN_MINUTES:
+            continue
+        result = run_decoupling(fit.get("splits") or [])
+        if result is None:
+            continue
+        runs.append({
+            "id": None,
+            "date": (fit.get("start_local") or "")[:10],
+            "name": None,
+            "distance_km": round((fit.get("distance_m") or 0) / 1000, 2),
+            "source": "fit",
             **result,
         })
 
@@ -141,6 +196,7 @@ def decoupling_trend(activities: list[dict], details: dict, limit: int = DECOUPL
         "recent_avg_pct": round(mean(recent), 1) if recent else None,
         "recent_status": classify_decoupling(round(mean(recent), 1) if recent else None),
         "runs_without_detail": missing_detail,
+        "fit_runs": sum(1 for r in runs if r["source"] == "fit"),
         "good_pct": DECOUPLING_GOOD_PCT,
         "high_pct": DECOUPLING_HIGH_PCT,
     }

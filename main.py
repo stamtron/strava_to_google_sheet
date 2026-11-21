@@ -7,6 +7,7 @@ and the Final Surge → Garmin workout push.
 
 import argparse
 import logging
+import os
 import time
 from collections import defaultdict
 
@@ -115,6 +116,51 @@ def run_backfill(access_token: str, resume: bool = True) -> int:
     return 0
 
 
+def _fit_source(path: str) -> str:
+    """Inside a full export, scan only the uploaded-activity folder (much faster)."""
+    for root, dirs, _files in os.walk(path):
+        if "DI-Connect-Uploaded-Files" in dirs:
+            return os.path.join(root, "DI-Connect-Uploaded-Files")
+    return path
+
+
+def run_garmin_export_import(path: str) -> int:
+    """
+    Import a Garmin Connect data export, offline: runs (FIT files) into the
+    history store for decoupling, and daily wellness into the biometrics cache.
+    """
+    from src.integrations.fit_import import import_fit_runs
+    from src.integrations.garmin_export import import_garmin_wellness
+
+    if not os.path.exists(path):
+        print(f"  ❌ Not found: {path}")
+        return 1
+
+    fit_path = _fit_source(path) if os.path.isdir(path) else path
+    print(f"📦 Importing Garmin FIT runs from {fit_path}...")
+    conn = init_db()
+    try:
+        stats = import_fit_runs(fit_path, conn)
+    finally:
+        conn.close()
+    print(
+        f"  Scanned {stats['files']} FIT files: {stats['activities']} activities, "
+        f"{stats['runs']} runs stored"
+        + (f", {stats['errors']} unreadable" if stats["errors"] else "")
+        + (f", {stats['oversized']} oversized skipped" if stats["oversized"] else "")
+    )
+
+    if os.path.isdir(path):
+        print("💤 Importing Garmin wellness (sleep, RHR, HRV, stress, Body Battery)...")
+        w = import_garmin_wellness(path, today_local())
+        print(
+            f"  {w['days']} days from {w['files']} files -> {w['weeks']} weeks: "
+            f"{w['weeks_written']} written to the biometrics cache, {w['weeks_kept']} already cached"
+            + (f", {w['skipped_files']} files skipped" if w["skipped_files"] else "")
+        )
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="StaminAI: Strava, Garmin & Final Surge training CLI")
     parser.add_argument("--count", type=int, default=200, help="Number of activities to fetch")
@@ -175,7 +221,19 @@ def main():
         action="store_true",
         help="Preview actions without sending external notifications or writing data",
     )
+    parser.add_argument(
+        "--import-garmin-export",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Import a Garmin Connect data export (folder, zip or .fit): runs for the "
+            "decoupling trend and daily wellness for biometric baselines, then exit"
+        ),
+    )
     args = parser.parse_args()
+
+    if args.import_garmin_export:
+        return run_garmin_export_import(args.import_garmin_export)
 
     # Garmin Workout Sync & Preview CLI
     if args.preview_workouts or args.sync_workouts:

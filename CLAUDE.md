@@ -34,11 +34,12 @@ uv run python server.py                    # Launch FastAPI web dashboard on htt
 # CLI Operations
 uv run python main.py                      # Fetch recent Strava activities into SQLite & print them
 uv run python main.py --backfill           # Full paginated Strava history backfill to SQLite
+uv run python main.py --import-garmin-export <dir>  # Offline: FIT runs -> SQLite, wellness -> Garmin cache
 uv run python main.py --telegram-next-day  # Dispatch tomorrow's briefing to Telegram
 uv run python main.py --telegram-weekly    # Dispatch weekly executive summary to Telegram
 
 # Testing & Code Quality
-uv run pytest                              # Run full test suite (487 tests, offline)
+uv run pytest                              # Run full test suite (522 tests, offline)
 uv run pytest tests/test_metrics.py        # Run single test module
 uv run pytest -k "test_classify_tsb"       # Run specific test pattern
 uv run ruff check                          # Lint codebase (config in pyproject.toml)
@@ -61,6 +62,9 @@ strava_to_google_sheet/
 │   │   ├── strava_backfill.py    # Paginated full-history import + resume cursor
 │   │   ├── garmin.py             # Garmin Connect biometrics, sleep, HRV & baseline bands
 │   │   ├── garmin_workouts.py    # Structured workout generator & OTA watch sync
+│   │   ├── garmin_export.py      # Garmin data export wellness -> biometrics cache seed
+│   │   ├── fit_file.py           # Stdlib FIT decoder (sessions + records, bounds-checked)
+│   │   ├── fit_import.py         # Garmin export FIT runs -> SQLite fit_runs with per-km splits
 │   │   ├── final_surge.py        # Final Surge private iCal plan feed (fetch, cache, parse)
 │   │   ├── plan_source.py        # Single entry point for "what is planned on this day"
 │   │   ├── telegram.py           # Telegram dispatcher, daily/weekly briefs, interactive bot
@@ -72,6 +76,7 @@ strava_to_google_sheet/
 │   │   ├── gear.py               # Shoe & bike cumulative mileage tracker & alert thresholds
 │   │   ├── weather_pace.py       # Temperature & wind pace slowdown adjustment
 │   │   ├── decoupling.py         # Aerobic decoupling (Pa:HR drift) per run + trend
+│   │   ├── fit_splits.py         # Per-km splits from FIT record streams (moving time only)
 │   │   ├── session_type.py       # Classify Final Surge planned sessions (hard/key) from text
 │   │   ├── ai_coach.py           # Gemini LLM qualitative coaching & Riegel predictions
 │   │   ├── coach_agent.py        # Conversational agent: 14 tools, grounded search, chat session
@@ -89,7 +94,7 @@ strava_to_google_sheet/
 │   ├── index.html                # Dashboard + tabs + floating assistant chat drawer
 │   ├── styles.css                # Glassmorphic dark design system
 │   └── app.js                    # Interaction logic, Chart.js instances, chat client
-├── tests/                        # Offline pytest suite (487 unit tests)
+├── tests/                        # Offline pytest suite (522 unit tests)
 ├── docs/                         # Modular documentation (setup, config, analytics, AI assistant, api)
 ├── main.py                       # CLI root entry point
 ├── server.py                     # Web server root entry point
@@ -133,3 +138,5 @@ strava_to_google_sheet/
    Token and cache JSON files are written via `src/storage/atomic_file.write_json_atomic` (temp file + `os.replace`, mode `0o600`).
 13. **Lint Clean**:
    `uv run ruff check` must pass. After `--fix`, review the diff: F811 can remove deliberate function-local imports (endpoints import `send_telegram_message` lazily so tests can monkeypatch it).
+14. **Garmin Export Is Untrusted Input**:
+   `--import-garmin-export` reads a user-supplied Garmin Connect GDPR export. Zips and JSON are read in memory with size caps (`FIT_MAX_FILE_MB`, `GARMIN_EXPORT_MAX_JSON_MB`); the FIT decoder is bounds-checked and raises `FitError`; nothing is extracted or executed. Imported wellness weeks never overwrite complete API-fetched weeks, and the current week is left to the live API.

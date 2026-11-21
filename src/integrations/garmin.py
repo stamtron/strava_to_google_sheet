@@ -17,6 +17,7 @@ from src.config import (
     BASELINE_MIN_WEEKS,
     BASELINE_STD_FACTOR,
     BASELINE_STD_FLOOR,
+    BASELINE_WINDOW_WEEKS,
     GARMIN_CACHE_FILE,
     GARMIN_CACHE_TTL,
     GARMIN_EMAIL,
@@ -40,6 +41,7 @@ from src.config import (
     RECOVERY_SLEEP_LOW_H,
     RECOVERY_UNKNOWN_SCORE,
 )
+from src.storage.atomic_file import write_json_atomic
 from src.timeutil import today_local
 
 logger = logging.getLogger(__name__)
@@ -116,32 +118,20 @@ def get_weekly_health_summary(start_date: date, end_date: date, client: Garmin =
 def _fetch_weekly_health_summary(start_date: date, end_date: date, client: Garmin) -> tuple[dict | None, list]:
     """Fetch a week's biometrics; also return the endpoint errors hit along the way."""
     errors: list = []
-    total_sleep_seconds = 0
-    total_nap_seconds = 0
-    valid_sleep_days = 0
-    rhr_list = []
-    hrv_list = []
-    stress_list = []
-    body_battery_charged = []
-    body_battery_drained = []
-    readiness_list = []
+    days: list[dict] = []
 
     curr = start_date
     while curr <= end_date:
         date_str = curr.isoformat()
+        day: dict = {}
 
         # 1. Sleep & Nap Data
         try:
             sleep_data = client.get_sleep_data(date_str)
             if sleep_data and "dailySleepDTO" in sleep_data:
                 dto = sleep_data["dailySleepDTO"]
-                sleep_sec = dto.get("sleepTimeSeconds") or 0
-                nap_sec = dto.get("napTimeSeconds") or 0
-                day_total_sleep = sleep_sec + nap_sec
-                if day_total_sleep > 0:
-                    total_sleep_seconds += day_total_sleep
-                    total_nap_seconds += nap_sec
-                    valid_sleep_days += 1
+                day["sleep_s"] = dto.get("sleepTimeSeconds") or 0
+                day["nap_s"] = dto.get("napTimeSeconds") or 0
         except Exception as e:
             _record_call_error(errors, "sleep", date_str, e)
 
@@ -164,9 +154,7 @@ def _fetch_weekly_health_summary(start_date: date, end_date: date, client: Garmi
 
             if not rhr_val and user_summary:
                 rhr_val = user_summary.get("restingHeartRate")
-
-            if rhr_val and float(rhr_val) > 0:
-                rhr_list.append(float(rhr_val))
+            day["rhr"] = rhr_val
         except Exception as e:
             _record_call_error(errors, "RHR", date_str, e)
 
@@ -174,9 +162,7 @@ def _fetch_weekly_health_summary(start_date: date, end_date: date, client: Garmi
         try:
             hrv_data = client.get_hrv_data(date_str)
             if hrv_data and "hrvSummary" in hrv_data:
-                last_night_avg = hrv_data["hrvSummary"].get("lastNightAvg")
-                if last_night_avg and last_night_avg > 0:
-                    hrv_list.append(last_night_avg)
+                day["hrv"] = hrv_data["hrvSummary"].get("lastNightAvg")
         except Exception as e:
             _record_call_error(errors, "HRV", date_str, e)
 
@@ -188,8 +174,7 @@ def _fetch_weekly_health_summary(start_date: date, end_date: date, client: Garmi
                 stress_avg = stress_data.get("avgStressLevel")
             if not stress_avg and user_summary:
                 stress_avg = user_summary.get("averageStressLevel")
-            if stress_avg and float(stress_avg) > 0:
-                stress_list.append(float(stress_avg))
+            day["stress"] = stress_avg
         except Exception as e:
             _record_call_error(errors, "stress", date_str, e)
 
@@ -197,20 +182,11 @@ def _fetch_weekly_health_summary(start_date: date, end_date: date, client: Garmi
         try:
             bb_data = client.get_body_battery(date_str)
             if bb_data and isinstance(bb_data, list) and len(bb_data) > 0:
-                bb_entry = bb_data[0]
-                charged = bb_entry.get("charged")
-                drained = bb_entry.get("drained")
-                if charged is not None:
-                    body_battery_charged.append(float(charged))
-                if drained is not None:
-                    body_battery_drained.append(float(drained))
+                day["bb_charged"] = bb_data[0].get("charged")
+                day["bb_drained"] = bb_data[0].get("drained")
             elif user_summary:
-                ch = user_summary.get("bodyBatteryChargedValue")
-                dr = user_summary.get("bodyBatteryDrainedValue")
-                if ch is not None:
-                    body_battery_charged.append(float(ch))
-                if dr is not None:
-                    body_battery_drained.append(float(dr))
+                day["bb_charged"] = user_summary.get("bodyBatteryChargedValue")
+                day["bb_drained"] = user_summary.get("bodyBatteryDrainedValue")
         except Exception as e:
             _record_call_error(errors, "body battery", date_str, e)
 
@@ -218,44 +194,95 @@ def _fetch_weekly_health_summary(start_date: date, end_date: date, client: Garmi
         try:
             readiness_data = client.get_training_readiness(date_str)
             if readiness_data and "score" in readiness_data:
-                readiness_list.append(float(readiness_data["score"]))
+                day["readiness"] = readiness_data["score"]
             elif user_summary and "trainingReadinessScore" in user_summary:
-                readiness_list.append(float(user_summary["trainingReadinessScore"]))
+                day["readiness"] = user_summary["trainingReadinessScore"]
         except Exception as e:
             _record_call_error(errors, "training readiness", date_str, e)
 
+        days.append(day)
         curr += timedelta(days=1)
-
-    total_sleep_h = (total_sleep_seconds / 3600.0) if total_sleep_seconds > 0 else None
-    avg_sleep_h = (total_sleep_h / valid_sleep_days) if total_sleep_h and valid_sleep_days > 0 else None
-    total_nap_h = (total_nap_seconds / 3600.0) if total_nap_seconds > 0 else None
-    avg_rhr = round(sum(rhr_list) / len(rhr_list)) if rhr_list else None
-    avg_hrv = round(sum(hrv_list) / len(hrv_list)) if hrv_list else None
-    avg_stress = round(sum(stress_list) / len(stress_list)) if stress_list else None
-    avg_bb_charged = round(sum(body_battery_charged) / len(body_battery_charged)) if body_battery_charged else None
-    avg_bb_drained = round(sum(body_battery_drained) / len(body_battery_drained)) if body_battery_drained else None
-    avg_readiness = round(sum(readiness_list) / len(readiness_list)) if readiness_list else None
 
     if errors:
         logger.warning(
             "Garmin week %s..%s: %d endpoint call(s) failed (first: %s)",
             start_date, end_date, len(errors), errors[0],
         )
+    return summarize_health_days(days), errors
 
-    if not total_sleep_h and not avg_rhr and not avg_hrv and not avg_stress and not avg_bb_charged:
-        return None, errors
 
-    return {
+def _positive(value) -> float | None:
+    """Float value when it is a positive number, else None."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def _number(value) -> float | None:
+    """Float value when it is a number (zero allowed), else None."""
+    if isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def summarize_health_days(days: list[dict]) -> dict | None:
+    """
+    Average a week of daily biometrics into the cached weekly summary shape.
+
+    Each day is a dict with any of: sleep_s, nap_s (seconds), rhr, hrv, stress,
+    bb_charged, bb_drained, readiness. Missing or non-positive readings are
+    ignored (Garmin reports 0 for "not measured"); Body Battery charge/drain
+    may legitimately be 0. Returns None when the week has no usable data.
+    Shared by the live Garmin API fetch and the Garmin export importer.
+    """
+    total_sleep_seconds = 0.0
+    total_nap_seconds = 0.0
+    valid_sleep_days = 0
+    series: dict[str, list[float]] = {
+        "rhr": [], "hrv": [], "stress": [], "bb_charged": [], "bb_drained": [], "readiness": [],
+    }
+    for day in days:
+        sleep_sec = _positive(day.get("sleep_s")) or 0.0
+        nap_sec = _positive(day.get("nap_s")) or 0.0
+        if sleep_sec + nap_sec > 0:
+            total_sleep_seconds += sleep_sec + nap_sec
+            total_nap_seconds += nap_sec
+            valid_sleep_days += 1
+        for key in ("rhr", "hrv", "stress"):
+            value = _positive(day.get(key))
+            if value is not None:
+                series[key].append(value)
+        for key in ("bb_charged", "bb_drained", "readiness"):
+            value = _number(day.get(key))
+            if value is not None:
+                series[key].append(value)
+
+    def _avg(key: str) -> int | None:
+        values = series[key]
+        return round(sum(values) / len(values)) if values else None
+
+    total_sleep_h = (total_sleep_seconds / 3600.0) if total_sleep_seconds > 0 else None
+    avg_sleep_h = (total_sleep_h / valid_sleep_days) if total_sleep_h and valid_sleep_days > 0 else None
+    total_nap_h = (total_nap_seconds / 3600.0) if total_nap_seconds > 0 else None
+    summary = {
         "total_sleep_h": total_sleep_h,
         "avg_sleep_h": avg_sleep_h,
         "total_nap_h": total_nap_h,
-        "avg_rhr": avg_rhr,
-        "avg_hrv": avg_hrv,
-        "avg_stress": avg_stress,
-        "avg_bb_charged": avg_bb_charged,
-        "avg_bb_drained": avg_bb_drained,
-        "avg_readiness": avg_readiness,
-    }, errors
+        "avg_rhr": _avg("rhr"),
+        "avg_hrv": _avg("hrv"),
+        "avg_stress": _avg("stress"),
+        "avg_bb_charged": _avg("bb_charged"),
+        "avg_bb_drained": _avg("bb_drained"),
+        "avg_readiness": _avg("readiness"),
+    }
+    if not any(summary[k] for k in ("total_sleep_h", "avg_rhr", "avg_hrv", "avg_stress", "avg_bb_charged")):
+        return None
+    return summary
 
 
 def _load_garmin_cache() -> dict:
@@ -272,8 +299,7 @@ def _load_garmin_cache() -> dict:
 
 def _save_garmin_cache(cache: dict) -> None:
     try:
-        with open(GARMIN_CACHE_FILE, "w") as f:
-            json.dump(cache, f)
+        write_json_atomic(GARMIN_CACHE_FILE, cache)
     except OSError as e:
         logger.warning("Failed to write Garmin cache: %s", e)
 
@@ -359,10 +385,12 @@ def get_weekly_health_summaries(
 def compute_biometric_baselines(
     weekly_summaries: dict[str, dict] | None = None,
     min_weeks: int = BASELINE_MIN_WEEKS,
+    window_weeks: int = BASELINE_WINDOW_WEEKS,
 ) -> dict:
     """
     Compute athlete baseline normal ranges for HRV and Resting Heart Rate (RHR)
     using multi-week historical summaries (mean ± BASELINE_STD_FACTOR * std).
+    Each band uses only the latest `window_weeks` weeks that have that reading.
     """
     if weekly_summaries is None:
         cached = _load_garmin_cache()
@@ -383,6 +411,10 @@ def compute_biometric_baselines(
         rhr = summary.get("avg_rhr")
         if rhr and rhr > 0:
             rhr_values.append(float(rhr))
+
+    if window_weeks > 0:
+        hrv_values = hrv_values[-window_weeks:]
+        rhr_values = rhr_values[-window_weeks:]
 
     def _calc_band(values: list[float], factor: float = BASELINE_STD_FACTOR) -> dict:
         if len(values) < min_weeks:

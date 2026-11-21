@@ -114,6 +114,12 @@ uv run python main.py --backfill
 # Restart backfill from page 1 without resuming previous cursor
 uv run python main.py --backfill --no-resume
 
+# Import a Garmin Connect data export (request it at garmin.com > Account > Data Management).
+# Offline: run FIT files -> per-km splits for the decoupling trend (back past the Strava sync),
+# and daily sleep / RHR / HRV / stress / Body Battery -> the biometrics cache & baselines.
+# Re-running is safe; complete weeks already fetched from the Garmin API are kept.
+uv run python main.py --import-garmin-export ~/Downloads/<export-folder>
+
 # Dispatch daily briefings to Telegram manually
 uv run python main.py --telegram-next-day
 uv run python main.py --telegram-today

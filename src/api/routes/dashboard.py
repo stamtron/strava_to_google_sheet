@@ -16,10 +16,12 @@ from src.analytics.metrics import (
     calculate_polarized_distribution,
     process_activities_into_weeks,
 )
-from src.api.activity_data import get_summaries, read_history
+from src.api.activity_data import get_summaries, read_fit_runs, read_history
 from src.api.deps import internal_error
 from src.config import (
     ATHLETE_GOAL_RACES,
+    DECOUPLING_TREND_MAX_RUNS,
+    DECOUPLING_TREND_RUNS,
     GOAL_70_3_DATE,
     GOAL_HALF_MARATHON_DATE,
     HR_MAX,
@@ -91,7 +93,12 @@ def get_dashboard_data(count: int = Query(200, ge=1, le=500)):
         logger.warning("Weather fetch failed: %s", e)
         weather_outlook = []
     try:
-        biometric_baselines = compute_biometric_baselines(garmin_summaries)
+        # Baselines read every cached week (incl. Garmin export imports), not
+        # just the weeks in this activity window; the band's own window keeps it recent.
+        cached_summaries = {
+            k: v["summary"] for k, v in cached_garmin.items() if isinstance(v, dict) and v.get("summary")
+        }
+        biometric_baselines = compute_biometric_baselines({**cached_summaries, **garmin_summaries})
     except Exception as e:
         logger.warning("Baselines computation failed: %s", e)
         biometric_baselines = {}
@@ -185,16 +192,23 @@ def get_run_durability(count: int = Query(200, ge=1, le=500)):
 
 
 @router.get("/api/decoupling")
-def get_aerobic_decoupling(count: int = Query(200, ge=1, le=500)):
+def get_aerobic_decoupling(
+    count: int = Query(200, ge=1, le=500),
+    runs: int = Query(DECOUPLING_TREND_RUNS, ge=1, le=DECOUPLING_TREND_MAX_RUNS),
+):
     """
     Pa:HR aerobic decoupling trend on long steady runs (from per-km splits).
 
     Details come from the hot cache and the history store combined — the cache
     only holds what the last sync fetched, the store keeps every detail seen.
+    Runs imported from a Garmin export (`main.py --import-garmin-export`) fill in splits
+    for runs without a Strava detail and extend the trend further back.
     """
     try:
         summaries, cached_details = get_summaries(count)
         _, stored_details = read_history(count)
-        return decoupling_trend(summaries, {**stored_details, **cached_details})
+        return decoupling_trend(
+            summaries, {**stored_details, **cached_details}, limit=runs, fit_runs=read_fit_runs()
+        )
     except Exception as e:
         raise internal_error("Decoupling trend") from e

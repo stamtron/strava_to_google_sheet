@@ -48,6 +48,14 @@ All settings in StaminAI are centralized in [`src/config.py`](../src/config.py) 
 | `STRAVA_BACKFILL_PAGE_SIZE` | `200` | Activities per backfill page (Strava's API cap) |
 | `STRAVA_BACKFILL_MAX_PAGES` | `100` | Maximum pages runaway guard during backfill |
 | `STRAVA_BACKFILL_PAGE_DELAY_SEC`| `0.5` | Pause between backfill pages to protect rate limits |
+| `FIT_MAX_FILE_MB` | `50` | Garmin export import: skip FIT files/zip members larger than this |
+| `GARMIN_EXPORT_MAX_JSON_MB` | `100` | Garmin export import: skip wellness JSON files larger than this |
+| `FIT_SPLIT_METERS` | `1000` | Split length built from FIT record streams |
+| `FIT_MAX_RECORD_GAP_S` | `30` | Record gap (s) treated as a pause, not moving time |
+| `FIT_MOVING_SPEED_MS` | `0.5` | Below this speed (m/s) a record counts as standing still |
+| `FIT_MATCH_TOLERANCE_S` | `180` | Max start-time difference (s) to match a FIT run to a Strava activity |
+| `DECOUPLING_TREND_MAX_RUNS` | `200` | Upper bound for `/api/decoupling?runs=` |
+| `BASELINE_WINDOW_WEEKS` | `12` | Biometric baselines use only the latest N weeks with a reading (0 = all) |
 
 ---
 

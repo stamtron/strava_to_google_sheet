@@ -2061,12 +2061,15 @@ const DECOUPLING_STATUS = {
   unknown: { badge: "badge-unknown", label: "No data", color: "textMuted" },
 };
 
+// Garmin export imports reach back months; show more than the API default.
+const DECOUPLING_CHART_RUNS = 40;
+
 async function loadDecoupling() {
   const summaryEl = document.getElementById("decouplingSummary");
   const badgeEl = document.getElementById("decouplingBadge");
   if (!summaryEl) return;
   try {
-    const res = await apiFetch("/api/decoupling");
+    const res = await apiFetch(`/api/decoupling?runs=${DECOUPLING_CHART_RUNS}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     renderDecoupling(await res.json(), summaryEl, badgeEl);
   } catch (err) {
@@ -2082,7 +2085,7 @@ function renderDecoupling(data, summaryEl, badgeEl) {
   }
 
   const missing = data.runs_without_detail
-    ? `<span class="decoupling-note">${data.runs_without_detail} long run(s) have no split data yet. Run <code>uv run python main.py</code> to fetch details.</span>`
+    ? `<span class="decoupling-note">${data.runs_without_detail} long run(s) have no split data yet. Run <code>uv run python main.py</code> to fetch details, or import a Garmin export with <code>uv run python main.py --import-garmin-export &lt;folder&gt;</code>.</span>`
     : "";
   if (!data.count) {
     summaryEl.innerHTML = `<span class="decoupling-note">No qualifying long steady runs (60+ min, even pace, with HR) found.</span> ${missing}`;
@@ -2097,6 +2100,7 @@ function renderDecoupling(data, summaryEl, badgeEl) {
       <div class="weekly-stat"><span class="weekly-stat-label">Runs analysed</span><span class="weekly-stat-value">${data.count}</span></div>
       <div class="weekly-stat"><span class="weekly-stat-label">Target</span><span class="weekly-stat-value"><small>&lt; ${data.good_pct}%</small></span></div>
     </div>
+    ${data.fit_runs ? `<span class="decoupling-note">${data.fit_runs} of ${data.count} run(s) use splits from Garmin export FIT files.</span>` : ""}
     ${missing}`;
   renderDecouplingChart(data);
 }
@@ -2151,11 +2155,13 @@ function renderDecouplingChart(data) {
           callbacks: {
             title: (items) => {
               const r = runs[items[0].dataIndex];
-              return `${formatDateDMY(r.date)} · ${r.name || "Run"}`;
+              return `${formatDateDMY(r.date)} · ${r.name || (r.source === "fit" ? "Garmin FIT run" : "Run")}`;
             },
             afterBody: (items) => {
               const r = runs[items[0].dataIndex];
-              return [`${r.distance_km} km · ${r.duration_min} min`, `EF ${r.ef_first} → ${r.ef_second} m/min/bpm`];
+              const lines = [`${r.distance_km} km · ${r.duration_min} min`, `EF ${r.ef_first} → ${r.ef_second} m/min/bpm`];
+              if (r.source === "fit") lines.push("Splits: Garmin FIT file");
+              return lines;
             },
           },
         },

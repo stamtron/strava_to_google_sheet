@@ -34,6 +34,21 @@ CREATE INDEX IF NOT EXISTS idx_activities_date
 CREATE INDEX IF NOT EXISTS idx_activities_sport_date
     ON activities (sport_type, start_date_local);
 
+-- Runs imported from a Garmin Connect export (FIT files). Kept apart from the
+-- Strava rows: FIT history can predate the Strava backfill, and a synthetic
+-- detail payload must never overwrite a real one. `splits` is a JSON list in
+-- Strava's splits_metric shape; `start_utc` is ISO-8601 with a Z suffix.
+CREATE TABLE IF NOT EXISTS fit_runs (
+    start_utc    TEXT PRIMARY KEY,
+    start_local  TEXT NOT NULL,
+    sport        TEXT NOT NULL,
+    distance_m   REAL NOT NULL,
+    moving_time  REAL NOT NULL,
+    splits       TEXT NOT NULL,
+    source       TEXT,
+    imported_at  REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sync_state (
     key    TEXT PRIMARY KEY,
     value  TEXT NOT NULL
@@ -175,6 +190,45 @@ def get_details(conn: sqlite3.Connection, activity_ids: list | None = None) -> d
         sql += f" AND id IN ({','.join('?' * len(ids))})"
         params = ids
     return {str(r["id"]): json.loads(r["detail"]) for r in conn.execute(sql, params)}
+
+
+def upsert_fit_runs(conn: sqlite3.Connection, runs: list[dict]) -> int:
+    """
+    Insert or replace imported FIT runs, keyed by UTC start. Re-importing the
+    same export is idempotent. Returns the number of rows written.
+    """
+    now = time.time()
+    rows = [
+        (
+            r["start_utc"],
+            r["start_local"],
+            r["sport"],
+            float(r.get("distance_m") or 0),
+            float(r.get("moving_time") or 0),
+            json.dumps(r.get("splits") or []),
+            r.get("source"),
+            now,
+        )
+        for r in runs
+    ]
+    conn.executemany(
+        "INSERT OR REPLACE INTO fit_runs "
+        "(start_utc, start_local, sport, distance_m, moving_time, splits, source, imported_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    conn.commit()
+    return len(rows)
+
+
+def get_fit_runs(conn: sqlite3.Connection, min_moving_time: float = 0) -> list[dict]:
+    """Imported FIT runs (newest first) with `splits` decoded."""
+    cur = conn.execute(
+        "SELECT start_utc, start_local, sport, distance_m, moving_time, splits, source "
+        "FROM fit_runs WHERE moving_time >= ? ORDER BY start_utc DESC",
+        (min_moving_time,),
+    )
+    return [{**dict(r), "splits": json.loads(r["splits"])} for r in cur]
 
 
 def count_activities(conn: sqlite3.Connection) -> int:
