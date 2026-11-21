@@ -30,6 +30,45 @@ function apiFetch(url, options = {}) {
 
 // initApp can run more than once; Chart.js refuses to reuse a canvas that still
 // owns a chart, so drop the previous instance before building a new one.
+// ── Theme ──────────────────────────────────────────────────────────────────
+const THEME_STORAGE_KEY = "staminai-theme";
+// Mirrors the CSS `--overlay-rgb` token; chart grid colours are scriptable
+// options that read it, so `chart.update()` repaints them after a theme switch.
+let overlayRgb = "255, 255, 255";
+
+function overlayColor(alpha) {
+  return `rgba(${overlayRgb}, ${alpha})`;
+}
+
+function themedGridColor() {
+  return overlayColor(0.05);
+}
+
+function currentTheme() {
+  return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+}
+
+function applyTheme(theme) {
+  if (theme === "light") document.documentElement.setAttribute("data-theme", "light");
+  else document.documentElement.removeAttribute("data-theme");
+  overlayRgb = getComputedStyle(document.documentElement).getPropertyValue("--overlay-rgb").trim() || "255, 255, 255";
+
+  const btn = document.getElementById("themeToggleBtn");
+  if (btn) {
+    const next = theme === "light" ? "dark" : "light";
+    btn.textContent = theme === "light" ? "🌙" : "☀️";
+    btn.title = `Switch to ${next} theme`;
+    btn.setAttribute("aria-label", btn.title);
+  }
+  Object.values(Chart.instances || {}).forEach(chart => chart.update("none"));
+}
+
+function toggleTheme() {
+  const next = currentTheme() === "light" ? "dark" : "light";
+  try { localStorage.setItem(THEME_STORAGE_KEY, next); } catch (e) { /* private mode */ }
+  applyTheme(next);
+}
+
 function createChart(ctx, config) {
   const existing = Chart.getChart(ctx.canvas || ctx);
   if (existing) existing.destroy();
@@ -144,6 +183,7 @@ function getLocalDateString(d = new Date()) {
   return `${year}-${month}-${day}`;
 }
 document.addEventListener("DOMContentLoaded", () => {
+  applyTheme(currentTheme());  // the inline <head> script already picked it
   initComplianceDate();
   initApp();
   setupEventListeners();
@@ -194,6 +234,13 @@ function setupEventListeners() {
     selectWeek(e.target.value);
   });
 
+  document.getElementById("themeToggleBtn").addEventListener("click", toggleTheme);
+  // Follow OS theme changes until the user picks one explicitly.
+  window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", e => {
+    let saved = null;
+    try { saved = localStorage.getItem(THEME_STORAGE_KEY); } catch (err) { /* private mode */ }
+    if (!saved) applyTheme(e.matches ? "light" : "dark");
+  });
   document.getElementById("syncActivitiesBtn").addEventListener("click", handleActivitySync);
   document.getElementById("generateAiBtn").addEventListener("click", handleGenerateAiFeedback);
   document.getElementById("copyReportBtn").addEventListener("click", handleCopyReport);
@@ -924,7 +971,7 @@ function initCharts() {
       responsive: true,
       maintainAspectRatio: false,
       scales: {
-        y: { grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } },
+        y: { grid: { color: themedGridColor }, ticks: { color: "#94a3b8" } },
         x: { grid: { display: false }, ticks: { color: "#94a3b8" } },
       },
       plugins: { legend: { display: false } },
@@ -969,7 +1016,7 @@ function initProgressionCharts() {
         yEffort: {
           type: "linear",
           position: "left",
-          grid: { color: "rgba(255, 255, 255, 0.05)" },
+          grid: { color: themedGridColor },
           ticks: { color: "#ff0080" },
           title: { display: true, text: "Relative Effort", color: "#ff0080" },
         },
@@ -1005,7 +1052,7 @@ function initProgressionCharts() {
       responsive: true,
       maintainAspectRatio: false,
       scales: {
-        y: { stacked: true, grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } },
+        y: { stacked: true, grid: { color: themedGridColor }, ticks: { color: "#94a3b8" } },
         x: { stacked: true, grid: { display: false }, ticks: { color: "#94a3b8" } },
       },
       plugins: {
@@ -1036,7 +1083,7 @@ function initProgressionCharts() {
       responsive: true,
       maintainAspectRatio: false,
       scales: {
-        y: { grid: { color: "rgba(255, 255, 255, 0.05)" }, ticks: { color: "#94a3b8" } },
+        y: { grid: { color: themedGridColor }, ticks: { color: "#94a3b8" } },
         x: { grid: { display: false }, ticks: { color: "#94a3b8" } },
       },
       plugins: {
@@ -1073,7 +1120,7 @@ function initProgressionCharts() {
           suggestedMin: 0.5,
           suggestedMax: 2.0,
           beginAtZero: true,
-          grid: { color: "rgba(255, 255, 255, 0.05)" },
+          grid: { color: themedGridColor },
           ticks: { color: "#94a3b8" },
         },
         x: { grid: { display: false }, ticks: { color: "#94a3b8" } },
@@ -1143,7 +1190,7 @@ function initProgressionCharts() {
           yLoad: {
             type: "linear",
             position: "left",
-            grid: { color: "rgba(255, 255, 255, 0.05)" },
+            grid: { color: themedGridColor },
             ticks: { color: "#00f2fe" },
             title: { display: true, text: "Training Load (CTL / ATL)", color: "#00f2fe" },
           },
@@ -1152,7 +1199,7 @@ function initProgressionCharts() {
             position: "right",
             grid: {
               color: function(context) {
-                if (context.tick && context.tick.value === 0) return "rgba(255, 255, 255, 0.25)";
+                if (context.tick && context.tick.value === 0) return overlayColor(0.25);
                 return "transparent";
               },
             },
@@ -2345,7 +2392,7 @@ function renderGarminWorkouts(data) {
         targetStr = ` • HR: ${Math.round(s.target_value_low)}-${Math.round(s.target_value_high)} bpm`;
       }
 
-      return `<div style="font-size: 11px; color: #cbd5e1; display: flex; align-items: center; gap: 6px; padding: 2px 0;">
+      return `<div style="font-size: 11px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; padding: 2px 0;">
         <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: ${isRun ? '#f97316' : '#38bdf8'};"></span>
         <strong style="text-transform: capitalize;">${escapeHtml(s.step_type)}:</strong> ${escapeHtml(condStr)}${escapeHtml(targetStr)}
       </div>`;
@@ -2355,7 +2402,7 @@ function renderGarminWorkouts(data) {
       <div class="workout-item-card">
         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px;">
           <div>
-            <span style="font-size: 12px; font-weight: 700; color: #fff; margin-right: 8px;">${escapeHtml(w.day_name)} (${escapeHtml(w.date)})</span>
+            <span style="font-size: 12px; font-weight: 700; color: var(--text-primary); margin-right: 8px;">${escapeHtml(w.day_name)} (${escapeHtml(w.date)})</span>
             <span class="${badgeClass}">${badgeText}</span>
           </div>
           <span style="font-size: 11px; color: #64748b;">${escapeHtml(w.source || "gemini")}</span>

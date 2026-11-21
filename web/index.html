@@ -5,7 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>StaminAI — Adaptive Endurance & Recovery Platform</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <link rel="stylesheet" href="/static/styles.css?v=4.6">
+  <script>
+    // Apply the saved (or OS-preferred) theme before first paint to avoid a flash.
+    (function () {
+      var saved = null;
+      try { saved = localStorage.getItem("staminai-theme"); } catch (e) {}
+      var light = saved ? saved === "light" : window.matchMedia("(prefers-color-scheme: light)").matches;
+      if (light) document.documentElement.setAttribute("data-theme", "light");
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/styles.css?v=4.7">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
 </head>
 <body>
@@ -24,6 +33,7 @@
         </div>
       </div>
       <div class="header-actions">
+        <button id="themeToggleBtn" class="btn btn-share theme-toggle" type="button" title="Switch to light theme" aria-label="Switch to light theme">☀️</button>
         <select id="weekSelector" class="week-selector" aria-label="Select Week">
           <option value="current">Loading...</option>
         </select>
@@ -468,11 +478,11 @@ Click "Generate AI Feedback" for an analysis of your week's data, with points wo
           <div style="display: flex; align-items: center; gap: 10px;">
             <span style="font-size: 20px;">📘</span>
             <div>
-              <h3 style="font-size: 16px; margin: 0; font-weight: 700; color: #fff;">Training Indexes & Methodology Reference</h3>
+              <h3 style="font-size: 16px; margin: 0; font-weight: 700; color: var(--text-primary);">Training Indexes & Methodology Reference</h3>
               <p class="brand-subtitle" style="margin: 0;">Sports science metrics, moving averages, and clinical thresholds explained</p>
             </div>
           </div>
-          <button id="toggleIndexGuideBtn" class="bio-badge" style="cursor: pointer; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border);" title="Collapse or expand the reference guide">
+          <button id="toggleIndexGuideBtn" class="bio-badge" style="cursor: pointer; background: rgba(var(--overlay-rgb),0.06); border: 1px solid var(--glass-border);" title="Collapse or expand the reference guide">
             ℹ️ Toggle Guide
           </button>
         </div>
@@ -623,11 +633,11 @@ Click "Generate AI Feedback" for an analysis of your week's data, with points wo
   <!-- Garmin & Tacx Workouts Modal -->
   <div id="garminModal" class="modal-backdrop hidden">
     <div class="modal-content glass-panel" style="max-height: 85vh; display: flex; flex-direction: column;">
-      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 12px; margin-bottom: 14px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(var(--overlay-rgb),0.1); padding-bottom: 12px; margin-bottom: 14px;">
         <div style="display: flex; align-items: center; gap: 10px;">
           <span style="font-size: 24px;">⌚</span>
           <div>
-            <h3 style="margin: 0; font-size: 16px; font-weight: 700; color: #fff;">Sync Training Program to Garmin & Tacx</h3>
+            <h3 style="margin: 0; font-size: 16px; font-weight: 700; color: var(--text-primary);">Sync Training Program to Garmin & Tacx</h3>
             <p style="margin: 0; font-size: 12px; color: var(--text-muted, #94a3b8);">Running & Cycling sessions from Final Surge</p>
           </div>
         </div>
@@ -638,7 +648,7 @@ Click "Generate AI Feedback" for an analysis of your week's data, with points wo
         <div style="text-align: center; padding: 30px; color: #94a3b8;">Loading workouts from coach plan...</div>
       </div>
 
-      <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center;">
+      <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(var(--overlay-rgb),0.1); display: flex; justify-content: space-between; align-items: center;">
         <div id="garminStatusMsg" style="font-size: 12px; color: #94a3b8;"></div>
         <div style="display: flex; gap: 10px;">
           <button id="refreshGarminWorkoutsBtn" class="btn btn-share" style="padding: 8px 14px;">
@@ -693,6 +703,6 @@ Click "Generate AI Feedback" for an analysis of your week's data, with points wo
     </div>
   </div>
 
-  <script src="/static/app.js?v=4.13"></script>
+  <script src="/static/app.js?v=4.14"></script>
 </body>
 </html>
