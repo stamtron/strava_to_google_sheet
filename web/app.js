@@ -1752,7 +1752,7 @@ async function loadCompliance(targetDate) {
         <div class="compliance-box">
           <div class="compliance-box-title">
             <span>⚡ Strava Execution</span>
-            <span style="font-size: 11px; color: var(--text-muted);">${data.matches ? data.matches.length : 0} session(s)</span>
+            <span style="font-size: 11px; color: var(--text-muted);">${(data.matches || []).reduce((n, m) => n + (m.activity_count || 0), 0)} activity(ies)</span>
           </div>
           <div class="compliance-box-body">${matchesHtml}</div>
         </div>

@@ -181,31 +181,41 @@ def evaluate_daily_compliance(
             "unmatched_actual": [],
         }
 
-    # Match planned items with actual activities
-    matches = []
-    used_act_ids = set()
+    # Match planned items with actual activities. Same-sport activities pair with
+    # same-sport plan items in chronological order; any extra activities fold into
+    # the last plan item of that sport, so a run split into several recordings
+    # (warm-up, main set, cool-down) is scored as the one session it was.
+    acts_by_sport: dict[str, list[dict[str, Any]]] = {}
+    for act in sorted(actual_activities, key=lambda a: a.get("start_date_local") or ""):
+        sport = _map_act_sport_group(act.get("sport_type") or act.get("type", ""))
+        acts_by_sport.setdefault(sport, []).append(act)
 
-    for item in planned_items:
+    items_by_sport: dict[str, list[int]] = {}
+    for idx, item in enumerate(planned_items):
+        items_by_sport.setdefault(item["sport"], []).append(idx)
+
+    assigned: dict[int, list[dict[str, Any]]] = {}
+    for sport, item_idxs in items_by_sport.items():
+        acts = acts_by_sport.get(sport, [])
+        for pos, idx in enumerate(item_idxs):
+            is_last = pos == len(item_idxs) - 1
+            assigned[idx] = acts[pos:] if is_last else acts[pos:pos + 1]
+
+    matches = []
+    used_act_ids = {a.get("id") for acts in assigned.values() for a in acts}
+
+    for idx, item in enumerate(planned_items):
         p_sport = item["sport"]
         target_km = item["target_dist_km"]
         target_min = item["target_duration_min"]
         target_pace_sec = item["target_pace_sec"]
+        acts = assigned.get(idx, [])
 
-        best_act = None
-        for act in actual_activities:
-            act_id = act.get("id")
-            if act_id in used_act_ids:
-                continue
-            act_sport_group = _map_act_sport_group(act.get("sport_type") or act.get("type", ""))
-            if act_sport_group == p_sport:
-                best_act = act
-                used_act_ids.add(act_id)
-                break
-
-        if not best_act:
+        if not acts:
             matches.append({
                 "sport": p_sport,
                 "status": "missed",
+                "activity_count": 0,
                 "planned_km": target_km,
                 "actual_km": 0.0,
                 "planned_min": target_min,
@@ -217,9 +227,8 @@ def evaluate_daily_compliance(
             })
             continue
 
-        act_dist_m, _ = corrected_distance_and_speed(best_act)
-        act_dist_km = act_dist_m / 1000.0
-        moving_time_sec = best_act.get("moving_time") or 0
+        act_dist_km = sum(corrected_distance_and_speed(a)[0] for a in acts) / 1000.0
+        moving_time_sec = sum(a.get("moving_time") or 0 for a in acts)
         # Swim targets (e.g. "@1:45") are per 100 m; everything else is per km.
         is_swim = p_sport == "Swim"
         pace_unit_km = 0.1 if is_swim else 1.0
@@ -252,7 +261,8 @@ def evaluate_daily_compliance(
 
         matches.append({
             "sport": p_sport,
-            "activity_name": best_act.get("name", ""),
+            "activity_name": ", ".join(a.get("name", "") for a in acts),
+            "activity_count": len(acts),
             "status": item_status,
             "planned_km": target_km,
             "actual_km": round(act_dist_km, 2),

@@ -145,3 +145,43 @@ def test_greek_and_english_sport_keywords_are_detected():
     assert parse_planned_workout("Ποδήλατο 60'")[0]["sport"] == "Ride"
     assert parse_planned_workout("Bike 90'")[0]["sport"] == "Ride"
     assert parse_planned_workout("Swim 1500m")[0]["sport"] == "Swim"
+
+
+def _timed_run(act_id, km, minutes, start):
+    return {"id": act_id, "name": f"Run {act_id}", "sport_type": "Run",
+            "distance": km * 1000.0, "moving_time": minutes * 60,
+            "start_date_local": f"2026-11-21T{start}:00"}
+
+
+def test_split_recordings_of_one_planned_run_are_summed():
+    # One 9 km prescription logged as three Strava runs (main set, extra, cool-down).
+    acts = [_timed_run(3, 1.03, 3, "13:40"), _timed_run(1, 3.02, 19, "12:00"), _timed_run(2, 4.01, 22, "12:30")]
+    res = evaluate_daily_compliance("Τρέξιμο 9χλμ", acts)
+    assert len(res["matches"]) == 1
+    m = res["matches"][0]
+    assert m["activity_count"] == 3
+    assert m["actual_km"] == 8.06
+    assert m["actual_min"] == 44.0
+    assert m["dist_compliance_pct"] == round(8.06 / 9 * 100, 1)
+    assert m["activity_name"] == "Run 1, Run 2, Run 3"  # chronological
+    assert res["unmatched_actual"] == []
+
+
+def test_two_planned_runs_pair_with_two_recordings_in_order():
+    plan = "Πρωί: Τρέξιμο 5χλμ\nΑπόγευμα: Κολύμβηση 1000μ\nΒράδυ: Τρέξιμο 10χλμ"
+    acts = [_timed_run(2, 10.0, 50, "19:00"), _timed_run(1, 5.0, 25, "07:00")]
+    res = evaluate_daily_compliance(plan, acts)
+    runs = [m for m in res["matches"] if m["sport"] == "Run"]
+    assert [m["actual_km"] for m in runs] == [5.0, 10.0]
+    assert all(m["status"] == "spot_on" for m in runs)
+    swim = next(m for m in res["matches"] if m["sport"] == "Swim")
+    assert swim["status"] == "missed" and swim["activity_count"] == 0
+
+
+def test_other_sports_are_not_folded_into_a_planned_timed_run():
+    acts = [_timed_run(1, 9.0, 45, "12:00"),
+            {"id": 9, "name": "Ride", "sport_type": "Ride", "distance": 20000.0,
+             "moving_time": 3600, "start_date_local": "2026-11-21T18:00:00"}]
+    res = evaluate_daily_compliance("Τρέξιμο 9χλμ", acts)
+    assert res["matches"][0]["activity_count"] == 1
+    assert res["unmatched_actual"] == ["Ride"]
