@@ -62,3 +62,6 @@ htmlcov/
 
 # Personal drafts (not tracked)
 docs/blog/
+
+# Local data backups (personal data)
+backups/
