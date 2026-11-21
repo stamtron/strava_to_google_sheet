@@ -3,7 +3,7 @@
 import time
 from datetime import date, timedelta
 
-from src.api.server import _cache_satisfies
+from src.api.activity_data import cache_satisfies as _cache_satisfies
 from src.config import ACTIVITIES_CACHE_TTL, GARMIN_CACHE_TTL
 from src.integrations.garmin import _cache_entry_is_fresh
 

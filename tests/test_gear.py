@@ -90,7 +90,7 @@ def test_api_gear_and_performance_endpoints(monkeypatch):
         ],
         "details": {},
     }
-    monkeypatch.setattr("src.api.server._load_cache", lambda: fake_cache)
+    monkeypatch.setattr("src.api.routes.training.load_cache", lambda: fake_cache)
 
     client = TestClient(app)
 

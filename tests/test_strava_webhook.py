@@ -11,7 +11,7 @@ from src.api.server import app
 @pytest.fixture
 def verify_token(monkeypatch):
     """A real (non-placeholder) verify token, as a configured deployment has."""
-    monkeypatch.setattr("src.api.server.STRAVA_WEBHOOK_VERIFY_TOKEN", "verify_tok_789")
+    monkeypatch.setattr("src.api.routes.strava.STRAVA_WEBHOOK_VERIFY_TOKEN", "verify_tok_789")
     return "verify_tok_789"
 
 
@@ -39,7 +39,7 @@ def test_strava_webhook_handshake_bad_token(verify_token):
 
 def test_strava_webhook_handshake_rejects_default_placeholder(monkeypatch):
     # The shipped default is public; a server still using it must not subscribe.
-    monkeypatch.setattr("src.api.server.STRAVA_WEBHOOK_VERIFY_TOKEN", "STRAVA_WEBHOOK_SECRET")
+    monkeypatch.setattr("src.api.routes.strava.STRAVA_WEBHOOK_VERIFY_TOKEN", "STRAVA_WEBHOOK_SECRET")
     resp = _handshake(TestClient(app), "STRAVA_WEBHOOK_SECRET")
     assert resp.status_code == 403
     assert "not configured" in resp.json()["detail"]
@@ -51,7 +51,7 @@ def test_strava_webhook_event_post(monkeypatch):
 
     monkeypatch.setattr("src.config.STRAVA_WEBHOOK_SECRET_PARAM", "strava_sec_456")
     monkeypatch.setattr(
-        "src.api.server._process_strava_webhook_activity",
+        "src.api.routes.strava._process_strava_webhook_activity",
         lambda obj_id: processed.append(obj_id),
     )
 
@@ -98,7 +98,7 @@ def test_strava_webhook_rejects_events_when_secret_unset(monkeypatch):
     monkeypatch.setattr("src.config.STRAVA_WEBHOOK_SECRET_PARAM", "")
     processed = []
     monkeypatch.setattr(
-        "src.api.server._process_strava_webhook_activity",
+        "src.api.routes.strava._process_strava_webhook_activity",
         lambda obj_id: processed.append(obj_id),
     )
     resp = TestClient(app).post(

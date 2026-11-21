@@ -1,6 +1,6 @@
 # 🌐 REST API Reference
 
-StaminAI provides a complete FastAPI REST backend (`server.py`) serving dashboard data, telemetry analytics, AI insights, webhooks, and device sync.
+StaminAI provides a complete FastAPI REST backend (`src/api/server.py` plus feature routers in `src/api/routes/`) serving dashboard data, telemetry analytics, AI insights, webhooks, and device sync.
 
 Base URL: `http://127.0.0.1:8000`
 

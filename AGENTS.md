@@ -44,7 +44,10 @@ strava_to_google_sheet/
 │   │   ├── chat_store.py         # Chat sessions, transcripts, SqliteMemory
 │   │   └── atomic_file.py        # Atomic 0600 JSON writes for token/cache files
 │   └── api/                      # Web API Server
-│       └── server.py             # FastAPI REST endpoints & static routes
+│       ├── server.py             # App shell: lifespan, CORS, router mounts, static SPA
+│       ├── deps.py               # verify_client guard + internal_error (generic 500s)
+│       ├── activity_data.py      # Activity hot cache + SQLite history read/write
+│       └── routes/               # dashboard, strava, assistant, training, notifications
 ├── web/                          # Frontend Single Page App
 │   ├── index.html                # Dashboard + floating AI assistant chat drawer + Garmin modal
 │   ├── styles.css                # Custom glassmorphic design system
@@ -361,7 +364,15 @@ strava_to_google_sheet/
     - Returns `heat_impact` / `wind_impact` keys and `advice_keys`; bands are
       `WEATHER_HEAT_BANDS` / `WEATHER_WIND_BANDS` in config.
 
-20. **[`src/api/server.py`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/api/server.py)**
+20. **[`src/api/`](file:///Users/anastasios.stamoulak/Documents/strava_to_google_sheet/src/api/)**
+    - `server.py` builds the app (lifespan Telegram worker, CORS, `verify_client`) and
+      mounts one `APIRouter` per feature from `routes/`: `dashboard.py` (health, activities,
+      dashboard, performance, weather, durability), `strava.py` (webhook, sync, history),
+      `assistant.py` (AI insights, chat, memory), `training.py` (compliance, gear, Garmin
+      workouts), `notifications.py` (Telegram). Shared helpers: `deps.py`
+      (`verify_client`, `internal_error`) and `activity_data.py` (hot cache + history).
+    - Tests monkeypatch names on the route module that uses them
+      (e.g. `src.api.routes.dashboard.get_summaries`), not on `server`.
     - FastAPI backend exposing REST endpoints:
       - Health & Data: `GET /api/health`, `GET /api/activities`, `GET /api/dashboard`,
         `GET /api/history/status`, `POST /api/history/backfill`, `POST /api/sync`
@@ -373,7 +384,7 @@ strava_to_google_sheet/
       - Notifications: `POST /api/notifications/telegram/next-day`, `POST /api/notifications/telegram/today`, `POST /api/notifications/telegram/weekly`, `POST /api/notifications/telegram/webhook`
       - Strava Webhook: `GET /api/strava/webhook` (verification handshake),
         `POST /api/strava/webhook` (real-time activity ingestion)
-      - AI Coach & Chat: `POST /api/ai/coach`, `POST /api/ai/chat`,
+      - AI Insights & Assistant: `POST /api/ai/coach`, `POST /api/ai/chat`,
         `GET /api/coach/memory`, `DELETE /api/coach/memory/{fact_id}`, `POST /api/coach/memory/extract`
       - Web SPA & Static: `GET /`, `GET /favicon.ico`
     - Non-blocking webhook ingestion: `POST /api/strava/webhook` processes activity detail fetching,
@@ -382,7 +393,7 @@ strava_to_google_sheet/
     - Reads summaries from the SQLite store first and falls back to Strava for the
       freshness window. The `.activities_cache.json` hot cache stays in front of it —
       it protects both the DB and Strava from every dashboard poll — gated by
-      `_cache_satisfies`, which checks the TTL **and** that the cache holds enough
+      `cache_satisfies` (`activity_data.py`), which checks the TTL **and** that the cache holds enough
       activities for the requested `count` (a 20-activity cache must not answer a 50
       request).
     - `verify_client` (a global dependency) requires the `X-StaminAI-Client: web`
@@ -464,7 +475,7 @@ uv run ruff check
 uv run ruff check --fix   # review the diff: F811 fixes can drop deliberate lazy imports
 
 # Type / compile check
-uv run python -m py_compile main.py server.py src/config.py src/formatting.py src/integrations/*.py src/analytics/*.py src/storage/*.py src/api/*.py
+uv run python -m py_compile main.py server.py src/config.py src/formatting.py src/integrations/*.py src/analytics/*.py src/storage/*.py src/api/*.py src/api/routes/*.py
 
 # Frontend syntax gate (no bundler, no test runner for the SPA)
 node --check web/app.js

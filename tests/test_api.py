@@ -8,6 +8,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.api import server
+from src.api.routes import assistant as assistant_routes
+from src.api.routes import dashboard as dashboard_routes
+from src.api.routes import strava as strava_routes
+from src.api.routes import training as training_routes
 from src.config import CHAT_MESSAGE_MAX_CHARS, CHAT_WEEK_CONTEXT_MAX_CHARS
 from tests.conftest import make_activity
 
@@ -28,9 +32,9 @@ def offline_dashboard(monkeypatch):
         make_activity(2, "2026-08-05", "Ride"),
         make_activity(3, "2026-08-10", "Run"),
     ]
-    monkeypatch.setattr(server, "_get_summaries", lambda count: (acts, {}))
-    monkeypatch.setattr(server, "_load_garmin_cache", dict)
-    monkeypatch.setattr(server, "get_weekly_health_summaries", lambda ranges, max_fetch=None: {})
+    monkeypatch.setattr(dashboard_routes, "get_summaries", lambda count: (acts, {}))
+    monkeypatch.setattr(dashboard_routes, "_load_garmin_cache", dict)
+    monkeypatch.setattr(dashboard_routes, "get_weekly_health_summaries", lambda ranges, max_fetch=None: {})
     return acts
 
 
@@ -41,7 +45,7 @@ def test_dashboard_survives_weather_failure(client, offline_dashboard, monkeypat
     def boom(**_kwargs):
         raise RuntimeError("open-meteo down")
 
-    monkeypatch.setattr(server, "get_weather_outlook", boom)
+    monkeypatch.setattr(dashboard_routes, "get_weather_outlook", boom)
     resp = client.get("/api/dashboard")
     assert resp.status_code == 200
     body = resp.json()
@@ -51,12 +55,12 @@ def test_dashboard_survives_weather_failure(client, offline_dashboard, monkeypat
 
 
 def test_dashboard_analytics_failure_is_a_clean_500(client, offline_dashboard, monkeypatch):
-    monkeypatch.setattr(server, "get_weather_outlook", lambda **_k: [])
+    monkeypatch.setattr(dashboard_routes, "get_weather_outlook", lambda **_k: [])
 
     def boom(*_a, **_k):
         raise RuntimeError("secret internal detail")
 
-    monkeypatch.setattr(server, "calculate_fitness_fatigue", boom)
+    monkeypatch.setattr(dashboard_routes, "calculate_fitness_fatigue", boom)
     resp = client.get("/api/dashboard")
     assert resp.status_code == 500
     assert "secret internal detail" not in resp.text
@@ -67,7 +71,7 @@ def test_dashboard_analytics_failure_is_a_clean_500(client, offline_dashboard, m
 
 @pytest.fixture
 def stub_coach(monkeypatch):
-    monkeypatch.setattr(server, "generate_weekly_coaching_insights", lambda **_k: {"ok": True})
+    monkeypatch.setattr(assistant_routes, "generate_weekly_coaching_insights", lambda **_k: {"ok": True})
 
 
 def test_post_without_client_header_is_forbidden(client, stub_coach):
@@ -88,7 +92,7 @@ def test_post_with_client_header_is_allowed(client, stub_coach):
 
 
 def test_delete_requires_client_header(client, monkeypatch):
-    monkeypatch.setattr(server, "forget_remembered_fact", lambda fact_id: True)
+    monkeypatch.setattr(assistant_routes, "forget_remembered_fact", lambda fact_id: True)
     assert client.delete("/api/coach/memory/abc").status_code == 403
     assert client.delete("/api/coach/memory/abc", headers=CLIENT_HEADERS).status_code == 200
 
@@ -139,7 +143,7 @@ def test_webhooks_are_exempt_from_client_header_but_need_their_secret(client, mo
 
 def test_chat_rejects_oversized_message(client, monkeypatch):
     called = []
-    monkeypatch.setattr(server, "coach_chat", lambda **k: called.append(k))
+    monkeypatch.setattr(assistant_routes, "coach_chat", lambda **k: called.append(k))
     resp = client.post(
         "/api/ai/chat", json={"message": "x" * (CHAT_MESSAGE_MAX_CHARS + 1)}, headers=CLIENT_HEADERS
     )
@@ -148,7 +152,7 @@ def test_chat_rejects_oversized_message(client, monkeypatch):
 
 
 def test_chat_rejects_oversized_week_context(client, monkeypatch):
-    monkeypatch.setattr(server, "coach_chat", lambda **k: {"reply": "hi"})
+    monkeypatch.setattr(assistant_routes, "coach_chat", lambda **k: {"reply": "hi"})
     resp = client.post(
         "/api/ai/chat",
         json={"message": "hi", "week_context": {"blob": "y" * CHAT_WEEK_CONTEXT_MAX_CHARS}},
@@ -158,7 +162,7 @@ def test_chat_rejects_oversized_week_context(client, monkeypatch):
 
 
 def test_chat_accepts_normal_turn(client, monkeypatch):
-    monkeypatch.setattr(server, "coach_chat", lambda **k: {"reply": "hi", "session_id": "s1"})
+    monkeypatch.setattr(assistant_routes, "coach_chat", lambda **k: {"reply": "hi", "session_id": "s1"})
     resp = client.post("/api/ai/chat", json={"message": "how was my week?"}, headers=CLIENT_HEADERS)
     assert resp.status_code == 200
     assert resp.json()["reply"] == "hi"
@@ -171,19 +175,19 @@ def test_ai_coach_error_does_not_leak_exception_text(client, monkeypatch):
     def boom(**_k):
         raise RuntimeError("API key sk-live-123 rejected")
 
-    monkeypatch.setattr(server, "generate_weekly_coaching_insights", boom)
+    monkeypatch.setattr(assistant_routes, "generate_weekly_coaching_insights", boom)
     resp = client.post("/api/ai/coach", json={"week_summary": {}}, headers=CLIENT_HEADERS)
     assert resp.status_code == 500
     assert "sk-live-123" not in resp.text
 
 
 def test_compliance_plan_failure_is_a_clean_500(client, monkeypatch):
-    server._PLANNED_WORKOUT_CACHE.clear()
+    training_routes._PLANNED_WORKOUT_CACHE.clear()
 
     def boom(_d):
         raise RuntimeError("feed key abc123")
 
-    monkeypatch.setattr(server, "get_planned_workout_for_date", boom)
+    monkeypatch.setattr(training_routes, "get_planned_workout_for_date", boom)
     resp = client.get("/api/compliance", params={"target_date": "2026-08-10"})
     assert resp.status_code == 500
     assert "abc123" not in resp.text
@@ -199,7 +203,7 @@ def test_gear_failure_is_a_clean_500(client, monkeypatch):
         raise RuntimeError("db locked")
 
     monkeypatch.setattr("src.analytics.gear.extract_gear_summary", boom)
-    monkeypatch.setattr(server, "_load_cache", lambda: {"activities": [make_activity(1, "2026-08-03")], "details": {}})
+    monkeypatch.setattr(training_routes, "load_cache", lambda: {"activities": [make_activity(1, "2026-08-03")], "details": {}})
     resp = client.get("/api/gear")
     assert resp.status_code == 500
     assert "db locked" not in resp.text
@@ -209,7 +213,7 @@ def test_sync_failure_is_a_clean_500(client, monkeypatch):
     def boom(*_a, **_k):
         raise RuntimeError("token secret xyz789")
 
-    monkeypatch.setattr(server, "get_access_token", boom)
+    monkeypatch.setattr(strava_routes, "get_access_token", boom)
     resp = client.post("/api/sync", json={}, headers=CLIENT_HEADERS)
     assert resp.status_code == 500
     assert "xyz789" not in resp.text
@@ -225,20 +229,17 @@ def _boom(*_a, **_k):
 @pytest.mark.parametrize(
     ("target", "method", "path", "body"),
     [
-        ("get_weather_outlook", "get", "/api/weather", None),
-        ("coach_chat", "post", "/api/ai/chat", {"message": "hi"}),
-        ("list_remembered_facts", "get", "/api/coach/memory", None),
-        ("forget_remembered_fact", "delete", "/api/coach/memory/abc", None),
-        ("extract_session_facts", "post", "/api/coach/memory/extract", {"session_id": "s1"}),
+        ("src.api.routes.dashboard.get_weather_outlook", "get", "/api/weather", None),
+        ("src.api.routes.assistant.coach_chat", "post", "/api/ai/chat", {"message": "hi"}),
+        ("src.api.routes.assistant.list_remembered_facts", "get", "/api/coach/memory", None),
+        ("src.api.routes.assistant.forget_remembered_fact", "delete", "/api/coach/memory/abc", None),
+        ("src.api.routes.assistant.extract_session_facts", "post", "/api/coach/memory/extract", {"session_id": "s1"}),
         ("src.integrations.garmin_workouts.preview_week_workouts", "get", "/api/workouts/preview", None),
         ("src.integrations.garmin_workouts.sync_week_workouts_to_garmin", "post", "/api/workouts/sync", {}),
     ],
 )
 def test_endpoint_failures_are_clean_500s(client, monkeypatch, target, method, path, body):
-    if "." in target:
-        monkeypatch.setattr(target, _boom)
-    else:
-        monkeypatch.setattr(server, target, _boom)
+    monkeypatch.setattr(target, _boom)
     kwargs = {"headers": CLIENT_HEADERS}
     if body is not None:
         kwargs["json"] = body
@@ -253,9 +254,9 @@ def test_backfill_failure_is_a_clean_500(client, monkeypatch):
         def close(self):
             pass
 
-    monkeypatch.setattr(server, "get_access_token", lambda interactive=False: "tok")
-    monkeypatch.setattr(server, "init_db", _Conn)
-    monkeypatch.setattr(server, "backfill_all", _boom)
+    monkeypatch.setattr(strava_routes, "get_access_token", lambda interactive=False: "tok")
+    monkeypatch.setattr(strava_routes, "init_db", _Conn)
+    monkeypatch.setattr(strava_routes, "backfill_all", _boom)
     resp = client.post("/api/history/backfill", json={}, headers=CLIENT_HEADERS)
     assert resp.status_code == 500
     assert SECRET_MARKER not in resp.text
@@ -265,7 +266,7 @@ def test_history_status_failure_is_a_clean_500(client, monkeypatch):
     def boom(*_a, **_k):
         raise RuntimeError("disk full")
 
-    monkeypatch.setattr(server, "init_db", boom)
+    monkeypatch.setattr(strava_routes, "init_db", boom)
     resp = client.get("/api/history/status")
     assert resp.status_code == 500
     assert "disk full" not in resp.text

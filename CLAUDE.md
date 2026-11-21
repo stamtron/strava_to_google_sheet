@@ -79,7 +79,10 @@ strava_to_google_sheet/
 │   │   ├── chat_store.py         # SQLite chat sessions, transcripts, SqliteMemory
 │   │   └── atomic_file.py        # Atomic 0600 JSON writes (tokens, caches)
 │   └── api/
-│       └── server.py             # FastAPI REST endpoints & static routes
+│       ├── server.py             # App shell: lifespan, CORS, router mounts, static SPA
+│       ├── deps.py               # verify_client guard + internal_error (generic 500s)
+│       ├── activity_data.py      # Activity hot cache + SQLite history read/write
+│       └── routes/               # dashboard, strava, assistant, training, notifications
 ├── web/                          # Frontend SPA (HTML5, Vanilla CSS glassmorphic tokens, Chart.js)
 │   ├── index.html                # Dashboard + tabs + floating assistant chat drawer
 │   ├── styles.css                # Glassmorphic dark design system
