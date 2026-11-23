@@ -201,9 +201,14 @@ STRENGTH_SPORTS = ("WeightTraining", "Workout")
 TRAINING_PHASE = os.getenv("TRAINING_PHASE", "Off-Season / Base Building").strip()
 ATHLETE_GOAL_RACES = os.getenv(
     "ATHLETE_GOAL_RACES",
-    "Half Marathon (End of March 2027) & potential Ironman 70.3 (09/05/2027)",
+    "Kalambaka Challenge 21k (21/03/2027), L'Étape Greece Sparta 140km cycling (04/04/2027) & Triman 2027 Katerini half-distance triathlon (09/05/2027)",
 ).strip()
-GOAL_HALF_MARATHON_DATE = os.getenv("GOAL_HALF_MARATHON_DATE", "2027-03-28").strip()
+GOAL_HALF_MARATHON_NAME = os.getenv("GOAL_HALF_MARATHON_NAME", "Kalambaka Challenge 21k").strip()
+GOAL_HALF_MARATHON_DATE = os.getenv("GOAL_HALF_MARATHON_DATE", "2027-03-21").strip()
+GOAL_CYCLING_RACE_NAME = os.getenv("GOAL_CYCLING_RACE_NAME", "L'Étape Greece Sparta").strip()
+GOAL_CYCLING_RACE_DATE = os.getenv("GOAL_CYCLING_RACE_DATE", "2027-04-04").strip()
+GOAL_CYCLING_RACE_DISTANCE_KM = _env_float("GOAL_CYCLING_RACE_DISTANCE_KM", 140.0)
+GOAL_70_3_NAME = os.getenv("GOAL_70_3_NAME", "Triman 2027 Katerini").strip()
 GOAL_70_3_DATE = os.getenv("GOAL_70_3_DATE", "2027-05-09").strip()
 
 # Athlete Verified Personal Bests (PBs)

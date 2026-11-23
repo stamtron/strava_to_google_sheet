@@ -583,6 +583,9 @@ def test_the_system_instruction_carries_the_scope_limit_and_the_pbs():
     assert "Off-Season / Base Building" in instruction
     assert "Half Marathon" in instruction
     assert "2027-05-09" in instruction
+    assert "Kalambaka Challenge 21k" in instruction and "2027-03-21" in instruction
+    assert "Triman 2027 Katerini" in instruction
+    assert "L'Étape Greece Sparta" in instruction and "2027-04-04" in instruction
 
 
 def test_recalled_memories_are_injected_with_their_category():

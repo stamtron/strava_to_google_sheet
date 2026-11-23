@@ -616,16 +616,17 @@ function renderSeasonContext(season) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const parts = [`🌱 ${season.training_phase}`];
-    if (season.half_marathon_date) {
-      const hmDate = new Date(season.half_marathon_date + "T00:00:00");
-      const hmWeeks = Math.ceil((hmDate - today) / (7 * 86400000));
-      if (hmWeeks > 0) parts.push(`HM: ${hmWeeks}w`);
-    }
-    if (season.half_ironman_date) {
-      const imDate = new Date(season.half_ironman_date + "T00:00:00");
-      const imWeeks = Math.ceil((imDate - today) / (7 * 86400000));
-      if (imWeeks > 0) parts.push(`70.3 (09/05): ${imWeeks}w`);
-    }
+    const races = [
+      [season.half_marathon_name || "HM", season.half_marathon_date],
+      [season.cycling_race_name || "Cycling race", season.cycling_race_date],
+      [season.half_ironman_name || "70.3", season.half_ironman_date],
+    ];
+    races.forEach(([name, dateStr]) => {
+      if (!dateStr) return;
+      const raceDate = new Date(dateStr + "T00:00:00");
+      const weeks = Math.ceil((raceDate - today) / (7 * 86400000));
+      if (weeks > 0) parts.push(`${name} (${formatDateDMY(raceDate).slice(0, 5)}): ${weeks}w`);
+    });
     countdownBadge.textContent = parts.join(" • ");
   }
 }
@@ -635,7 +636,7 @@ function populateWeekSelector() {
   selector.innerHTML = "";
 
   const season = (dashboardData && dashboardData.season) || {};
-  const hmDateStr = season.half_marathon_date || "2027-03-28";
+  const hmDateStr = season.half_marathon_date || "2027-03-21";
   const imDateStr = season.half_ironman_date || "2027-05-09";
 
   const weekKeys = Object.keys(dashboardData.weeks || {}).sort().reverse();
@@ -659,7 +660,7 @@ function populateWeekSelector() {
       if (hmWeeks > 0) {
         countdownLabel = ` [${phaseShort} • ${hmWeeks}w to HM / ${imWeeks}w to 70.3]`;
       } else if (imWeeks >= 0) {
-        countdownLabel = ` [${imWeeks}w to 70.3 (09/05)]`;
+        countdownLabel = ` [${imWeeks}w to ${season.half_ironman_name || "70.3"}]`;
       }
     }
 
