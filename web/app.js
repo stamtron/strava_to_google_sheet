@@ -606,8 +606,20 @@ function renderSeasonContext(season) {
   if (phaseBadge && season.training_phase) {
     phaseBadge.textContent = `🌱 Phase: ${season.training_phase}`;
   }
-  if (goalsBadge && season.goal_races) {
-    goalsBadge.textContent = `🎯 Goals: ${season.goal_races}`;
+  if (goalsBadge) {
+    // One compact chip per goal race; the full description stays in the tooltip.
+    const goals = [
+      ["🏃", season.half_marathon_name, season.half_marathon_date],
+      ["🚴", season.cycling_race_name, season.cycling_race_date],
+      ["🏊", season.half_ironman_name, season.half_ironman_date],
+    ].filter(([, name, date]) => name && date);
+    goalsBadge.replaceChildren(...goals.map(([icon, name, dateStr]) => {
+      const chip = document.createElement("span");
+      chip.className = "bio-badge goal-chip";
+      chip.textContent = `${icon} ${name} · ${formatDateDMY(new Date(dateStr + "T00:00:00"))}`;
+      chip.title = season.goal_races || name;
+      return chip;
+    }));
   }
   if (targetRaceBadge && season.goal_races) {
     targetRaceBadge.textContent = `🎯 ${season.goal_races}`;

@@ -14,7 +14,7 @@
       if (light) document.documentElement.setAttribute("data-theme", "light");
     })();
   </script>
-  <link rel="stylesheet" href="/static/styles.css?v=4.9">
+  <link rel="stylesheet" href="/static/styles.css?v=5.0">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
 </head>
 <body>
@@ -23,12 +23,12 @@
     <header class="glass-panel">
       <div class="brand-wrapper">
         <div class="brand-icon">⚡</div>
-        <div>
+        <div class="brand-text">
           <h1 class="brand-title">StaminAI Dashboard</h1>
           <p class="brand-subtitle">Adaptive Endurance & Biometrics Analytics</p>
-          <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px;">
+          <div class="season-badges">
             <span id="seasonPhaseBadge" class="bio-badge" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.35);">🌱 Phase: Off-Season / Base Building</span>
-            <span id="seasonGoalsBadge" class="bio-badge" style="color: #10b981; border-color: rgba(16, 185, 129, 0.35);">🎯 Goals: Kalambaka Challenge 21k (21/03/2027) • L'Étape Greece Sparta (04/04/2027) • Triman 2027 Katerini (09/05/2027)</span>
+            <span id="seasonGoalsBadge" class="season-goals"></span>
           </div>
         </div>
       </div>
@@ -764,6 +764,6 @@ Click "Generate AI Feedback" for an analysis of your week's data, with points wo
     </div>
   </div>
 
-  <script src="/static/app.js?v=4.19"></script>
+  <script src="/static/app.js?v=4.20"></script>
 </body>
 </html>
